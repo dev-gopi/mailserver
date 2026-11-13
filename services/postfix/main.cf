@@ -120,11 +120,8 @@ virtual_gid_maps = static:5000
 content_filter =
 
 # Sign outgoing messages with the per-domain keys managed by the admin UI.
-# OpenDKIM remains available as a service, but a failing milter must not block
-# authenticated delivery. Re-enable these hooks after the DKIM integration is
-# validated with production keys.
-smtpd_milters =
-non_smtpd_milters =
+smtpd_milters = inet:opendkim:8891
+non_smtpd_milters = inet:opendkim:8891
 milter_default_action = accept
 milter_protocol = 6
 

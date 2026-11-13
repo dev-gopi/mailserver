@@ -13,7 +13,8 @@ import {
   testSmtpSchema,
   testSpamSchema,
   clientConfigQuerySchema,
-  deliverabilityQuerySchema
+  deliverabilityQuerySchema,
+  backupSettingsSchema
 } from "../validation/schemas";
 import { companyController } from "../controllers/company.controller";
 import { domainController } from "../controllers/domain.controller";
@@ -21,6 +22,7 @@ import { mailboxController } from "../controllers/mailbox.controller";
 import { aliasController } from "../controllers/alias.controller";
 import { auditController } from "../controllers/audit.controller";
 import { systemController } from "../controllers/system.controller";
+import { backupController } from "../controllers/backup.controller";
 
 export const adminRouter = Router();
 
@@ -89,3 +91,11 @@ adminRouter.post("/system/test-smtp", validate({ body: testSmtpSchema }), system
 adminRouter.post("/system/test-spam", validate({ body: testSpamSchema }), systemController.testSpam);
 adminRouter.get("/system/task-queue", systemController.getTaskQueueStats);
 adminRouter.get("/system/deliverability", validate({ query: deliverabilityQuerySchema }), systemController.checkDeliverability);
+
+// ── Backups & Disaster Recovery ────────────────────────────────────────────────
+adminRouter.get("/backups", backupController.list);
+adminRouter.post("/backups", backupController.create);
+adminRouter.get("/backups/settings", backupController.getSettings);
+adminRouter.put("/backups/settings", validate({ body: backupSettingsSchema }), backupController.updateSettings);
+adminRouter.delete("/backups/:filename", backupController.delete);
+adminRouter.get("/backups/:filename/download", backupController.download);

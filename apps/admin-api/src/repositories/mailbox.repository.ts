@@ -1,5 +1,8 @@
 import { db } from "../db/pool";
 import { MailboxEntity } from "../models/entities";
+import { readdir, stat } from "fs/promises";
+import path from "path";
+import { env } from "../config/env";
 
 /**
  * MailboxRepository
@@ -11,76 +14,104 @@ import { MailboxEntity } from "../models/entities";
  */
 export class MailboxRepository {
   /**
-   * List all mail users by joining virtual_users (Dovecot's view) with the
-   * base mailboxes table to retrieve admin-only columns (display_name,
-   * quota_bytes) and the domains table for the domain name.
+   * List all mail users from the base mailboxes table joined with the domains
+   * table so administrators can see and manage all mailboxes (including suspended ones).
    */
   async findAll(): Promise<MailboxEntity[]> {
     const res = await db.query<MailboxEntity>(`
       SELECT
-        vu.id,
-        vu.domain_id,
+        m.id,
+        m.domain_id,
         d.name        AS domain_name,
-        vu.email      AS address,
+        m.address,
         m.display_name,
-        vu.maildir,
+        m.maildir,
         m.quota_bytes,
-        vu.active,
+        m.active,
         m.created_at,
         m.updated_at
-      FROM   virtual_users vu
-      JOIN   mailboxes m ON m.id = vu.id
+      FROM   mailboxes m
       JOIN   domains   d ON d.id = m.domain_id
-      ORDER  BY vu.email ASC
+      ORDER  BY m.address ASC
     `);
-    return res.rows;
+    return Promise.all(res.rows.map(async (mailbox) => ({
+      ...mailbox,
+      storage_used_bytes: await this.getStorageUsedBytes(mailbox.maildir)
+    })));
+  }
+
+  private async getStorageUsedBytes(maildir: string): Promise<number> {
+    const root = path.resolve(env.mailStoragePath);
+    const mailboxPath = path.resolve(root, maildir);
+    if (mailboxPath !== root && !mailboxPath.startsWith(`${root}${path.sep}`)) {
+      throw new Error(`Invalid mailbox storage path for ${maildir}`);
+    }
+
+    const walk = async (directory: string): Promise<number> => {
+      const entries = await readdir(directory, { withFileTypes: true });
+      let total = 0;
+      for (const entry of entries) {
+        const entryPath = path.join(directory, entry.name);
+        if (entry.isDirectory()) total += await walk(entryPath);
+        else if (entry.isFile()) total += (await stat(entryPath)).size;
+      }
+      return total;
+    };
+
+    try {
+      return await walk(mailboxPath);
+    } catch (error: unknown) {
+      const code = error && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+      if (code === "ENOENT") return 0;
+      throw error;
+    }
   }
 
   /**
-   * Fetch a single mail user by id via virtual_users.
+   * Fetch a single mail user by id via base table so administrators can view/edit suspended users.
    */
   async findById(id: number): Promise<MailboxEntity | null> {
     const res = await db.query<MailboxEntity>(
       `SELECT
-         vu.id,
-         vu.domain_id,
+         m.id,
+         m.domain_id,
          d.name        AS domain_name,
-         vu.email      AS address,
+         m.address,
          m.display_name,
-         vu.maildir,
+         m.maildir,
          m.quota_bytes,
-         vu.active,
+         m.active,
          m.created_at,
          m.updated_at
-       FROM   virtual_users vu
-       JOIN   mailboxes m ON m.id = vu.id
+       FROM   mailboxes m
        JOIN   domains   d ON d.id = m.domain_id
-       WHERE  vu.id = $1`,
+       WHERE  m.id = $1`,
       [id]
     );
     return res.rows[0] || null;
   }
 
   /**
-   * Lookup by email address through virtual_users (matches Dovecot's lookup).
+   * Lookup by email address through base table.
    */
   async findByAddress(address: string): Promise<MailboxEntity | null> {
     const res = await db.query<MailboxEntity>(
       `SELECT
-         vu.id,
-         vu.domain_id,
+         m.id,
+         m.domain_id,
          d.name        AS domain_name,
-         vu.email      AS address,
+         m.address,
          m.display_name,
-         vu.maildir,
+         m.maildir,
          m.quota_bytes,
-         vu.active,
+         m.active,
          m.created_at,
          m.updated_at
-       FROM   virtual_users vu
-       JOIN   mailboxes m ON m.id = vu.id
+       FROM   mailboxes m
        JOIN   domains   d ON d.id = m.domain_id
-       WHERE  vu.email = $1`,
+       WHERE  m.address = $1`,
       [address.toLowerCase()]
     );
     return res.rows[0] || null;

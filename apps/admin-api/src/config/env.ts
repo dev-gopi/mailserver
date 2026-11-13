@@ -17,6 +17,11 @@ export const env = {
   databasePassword: process.env.PGPASSWORD,
   sessionHours: Number(process.env.SESSION_HOURS ?? 8),
   dkimKeyDir: process.env.DKIM_KEY_DIR ?? "/var/lib/opendkim/keys",
+  mailStoragePath: process.env.MAIL_STORAGE_PATH ?? "/var/mail/vhosts",
+  backupDir: process.env.BACKUP_DIR ?? "/backups",
+  webauthnRpId: process.env.WEBAUTHN_RP_ID ?? "",
+  webauthnRpName: process.env.WEBAUTHN_RP_NAME ?? "MailCore Admin Console",
+  authEncryptionKey: process.env.AUTH_ENCRYPTION_KEY ?? "",
   dkimKeyUid: Number(process.env.DKIM_KEY_UID ?? 10001),
   mailDomain: process.env.MAIL_DOMAIN ?? "",
   mailHostname: process.env.MAIL_HOSTNAME ?? "",
@@ -53,6 +58,9 @@ export const env = {
 
 if (!Number.isInteger(env.port) || env.port < 1 || env.port > 65535) {
   throw new Error("PORT must be an integer between 1 and 65535");
+}
+if (!env.authEncryptionKey) {
+  required("AUTH_ENCRYPTION_KEY");
 }
 if (!Number.isFinite(env.sessionHours) || env.sessionHours <= 0) {
   throw new Error("SESSION_HOURS must be a positive number");

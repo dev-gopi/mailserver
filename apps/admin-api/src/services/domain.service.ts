@@ -178,12 +178,18 @@ export class DomainService {
       return this.withoutVerificationToken(verified);
     } catch (err: unknown) {
       const e = err as NodeJS.ErrnoException & { message: string };
-      if (e.code === "ENOTFOUND" || e.code === "ENODATA") {
-        throw new Error(
-          `DNS lookup for '${recordName}' found no TXT records. Check your DNS provider and allow up to 48h propagation.`
-        );
-      }
-      throw err;
+      const failReason = (e.code === "ENOTFOUND" || e.code === "ENODATA")
+        ? `DNS lookup for '${recordName}' found no TXT records. Check your DNS provider and allow up to 48h propagation.`
+        : (e.message || "Domain DNS TXT verification failed");
+
+      await auditService.log(req, "domain.verify.failed", "domain", domain.id, {
+        domain: domain.name,
+        recordName,
+        reason: failReason,
+        error: failReason
+      });
+
+      throw new Error(failReason);
     }
   }
 

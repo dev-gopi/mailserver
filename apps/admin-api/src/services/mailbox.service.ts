@@ -155,12 +155,18 @@ export class MailboxService {
    * Verify a user's password against the hash stored in virtual_users /
    * mailboxes.  Mimics exactly what Dovecot does during IMAP login.
    */
-  async testUserAuth(id: number, password: string) {
+  async testUserAuth(req: Request, id: number, password: string) {
     // Use virtual_users-backed findById so only accounts Dovecot can see are tested
     const mailbox = await mailboxRepository.findById(id);
     if (!mailbox) throw new Error("Mail user not found in virtual_users");
 
     if (!mailbox.active) {
+      await auditService.log(req, "mailbox.auth.failed", "mailbox", id, {
+        address: mailbox.address,
+        active: false,
+        reason: "Account is suspended. IMAP/SMTP login rejected by Dovecot.",
+        error: "User is suspended"
+      });
       return {
         success: false,
         address: mailbox.address,
@@ -180,6 +186,15 @@ export class MailboxService {
     // Strip Dovecot scheme prefix before bcrypt.compare
     const cleanHash = storedHash.replace(/^\{BLF-CRYPT\}/i, "");
     const matches = await bcrypt.compare(password, cleanHash);
+
+    if (!matches) {
+      await auditService.log(req, "mailbox.auth.failed", "mailbox", id, {
+        address: mailbox.address,
+        active: mailbox.active,
+        reason: "Invalid password. IMAP/SMTP login rejected (Dovecot BLF-CRYPT mismatch).",
+        error: "Password verification failed"
+      });
+    }
 
     return {
       success: matches,

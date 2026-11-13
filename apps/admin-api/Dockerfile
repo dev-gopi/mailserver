@@ -22,6 +22,9 @@ FROM node:20-alpine AS production
 # Set working directory
 WORKDIR /app
 
+# Manual and scheduled backups must use real PostgreSQL dump files.
+RUN apk add --no-cache postgresql-client tar
+
 # Copy only the compiled code and necessary files from the builder
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/dist ./dist

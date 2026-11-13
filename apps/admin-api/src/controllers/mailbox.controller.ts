@@ -75,7 +75,7 @@ export class MailboxController {
     }
 
     try {
-      const result = await mailboxService.testUserAuth(id, password);
+      const result = await mailboxService.testUserAuth(req, id, password);
       return res.json(result);
     } catch (err: any) {
       return res.status(404).json({ error: err.message });

@@ -139,28 +139,6 @@ services:
       timeout: 3s
       retries: 5
 
-  backup:
-    image: postgres:16
-    environment:
-      PGHOST: ${POSTGRES_HOST:?set POSTGRES_HOST in .env}
-      PGPORT: ${POSTGRES_PORT:?set POSTGRES_PORT in .env}
-      PGDATABASE: ${POSTGRES_DB:?set POSTGRES_DB in .env}
-      PGUSER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
-      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
-      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
-    volumes:
-      - ./infrastructure/backup/backup.sh:/opt/backup/backup.sh:ro
-      - ./backups:/backups
-      - maildata:/var/mail/vhosts:ro
-    command: ["/bin/bash", "/opt/backup/backup.sh"]
-    networks:
-      - mailnet
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-
   monitor:
     image: curlimages/curl:8.10.1
     environment:
@@ -201,6 +179,7 @@ services:
       CLAMAV_PORT: ${CLAMAV_PORT:?set CLAMAV_PORT in .env}
       DKIM_KEY_DIR: /var/lib/opendkim/keys
       DKIM_KEY_UID: 10001
+      MAIL_STORAGE_PATH: /var/mail/vhosts
       MAIL_DOMAIN: ${MAIL_DOMAIN:?set MAIL_DOMAIN in .env}
       MAIL_HOSTNAME: ${MAIL_HOSTNAME:?set MAIL_HOSTNAME in .env}
       MAIL_PUBLIC_IP: ${MAIL_PUBLIC_IP:-}
@@ -213,8 +192,13 @@ services:
       POP3_STARTTLS_PORT: ${POP3_STARTTLS_PORT:?set POP3_STARTTLS_PORT in .env}
       SUBMISSION_PORT: ${SUBMISSION_PORT:?set SUBMISSION_PORT in .env}
       SMTPS_PORT: ${SMTPS_PORT:?set SMTPS_PORT in .env}
+      WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}
+      WEBAUTHN_RP_NAME: MailCore Admin Console
+      AUTH_ENCRYPTION_KEY: ${AUTH_ENCRYPTION_KEY:-}
     volumes:
+      - maildata:/var/mail/vhosts:ro
       - dkimkeys:/var/lib/opendkim
+      - ./backups:/backups
     networks:
       - mailnet
     restart: unless-stopped

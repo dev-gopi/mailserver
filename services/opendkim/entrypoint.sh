@@ -15,6 +15,11 @@ write_tables() {
     printf 'mail._domainkey.%s %s:mail:%s\n' "$domain" "$domain" "$key" >> "$key_tmp"
     printf '*@%s mail._domainkey.%s\n' "$domain" "$domain" >> "$signing_tmp"
   done < <(find "$key_dir" -mindepth 2 -maxdepth 2 -type f -name mail.private -print | sort)
+  # OpenDKIM drops privileges to the `opendkim` account after startup.  The
+  # tables must remain readable by that account both initially and after a
+  # key-refresh HUP; mktemp otherwise creates root-owned 0600 files.
+  chown opendkim:opendkim "$key_tmp" "$signing_tmp"
+  chmod 0640 "$key_tmp" "$signing_tmp"
   mv "$key_tmp" "$key_table"
   mv "$signing_tmp" "$signing_table"
 }

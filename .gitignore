@@ -19,6 +19,7 @@ apps/admin-api/coverage/
 # Local runtime data, logs, and editor files
 data/
 logs/
+backups/
 *.log
 .DS_Store
 .idea/

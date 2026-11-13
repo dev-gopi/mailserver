@@ -28,6 +28,7 @@ export interface MailboxEntity {
   password_hash?: string;
   maildir: string;
   quota_bytes: number | null;
+  storage_used_bytes?: number;
   active: boolean;
   created_at: string | Date;
   updated_at: string | Date;
@@ -94,6 +95,43 @@ export interface CompanyProfileEntity {
   updated_at: string | Date;
 }
 
+export interface BackupArchiveItem {
+  filename: string;
+  sizeBytes: number;
+  formattedSize: string;
+  createdAt: string;
+  ageDays: number;
+  hasDatabase: boolean;
+  hasMaildata: boolean;
+}
+
+export interface BackupSettingsEntity {
+  id: boolean;
+  auto_backup_enabled: boolean;
+  interval_seconds: number;
+  retention_days: number;
+  include_database: boolean;
+  include_maildata: boolean;
+  compression_level: string;
+  storage_path: string;
+  last_backup_at: string | Date | null;
+  last_backup_status: string;
+  last_backup_filename: string | null;
+  last_backup_size_bytes: number | null;
+  last_backup_error: string | null;
+  created_at: string | Date;
+  updated_at: string | Date;
+}
+
+export interface PasskeyCredential {
+  id: string;
+  rawId?: string;
+  name?: string;
+  publicKey?: string;
+  counter?: number;
+  createdAt: string;
+}
+
 export interface AdminEntity {
   id: number;
   username: string;
@@ -105,6 +143,12 @@ export interface AdminEntity {
   last_login_at: string | Date | null;
   failed_login_count: number;
   locked_until: string | Date | null;
+  totp_secret?: string | null;
+  totp_enabled?: boolean;
+  recovery_codes?: string[];
+  passkeys?: PasskeyCredential[];
+  reset_token_hash?: string | null;
+  reset_token_expires_at?: string | Date | null;
   created_at: string | Date;
   updated_at: string | Date;
 }
