@@ -1,0 +1,17 @@
+# MySQL lookup configuration for virtual_mailbox_domains
+# Postfix will use this file to check if an incoming domain is hosted here.
+
+# Database user credentials
+user = mailuser
+password = __MAIL_DB_PASSWORD__
+
+# Hostname or service name (from docker-compose)
+hosts = mail_db
+
+# Database name
+dbname = mailserver
+
+# SQL query:
+# %s is replaced by the domain part of the email (e.g. mail.local)
+# If this query returns a row, the domain is considered valid.
+query = SELECT 1 FROM virtual_domains WHERE name='%s'

@@ -1,0 +1,138 @@
+services:
+  spamassassin:
+    build: ./spamassassin
+    container_name: mail_spamassassin
+    hostname: spamd.local
+    volumes:
+      - spamdata:/home/spamd
+      - maildata:/var/mail/vhosts
+    environment:
+      - TZ=UTC
+    networks:
+      - mailnet
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 783"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+  clamav:
+    # image: clamav/clamav:stable
+    build: ./clamav
+    container_name: mail_clamav
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep clamd >/dev/null && pgrep clamsmtpd >/dev/null"]
+      interval: 15s
+      timeout: 3s
+      retries: 8
+    environment:
+      - CLAMD_CONF_MaxFileSize=25M
+      - CLAMD_CONF_MaxScanSize=100M
+    networks:
+      - mailnet
+
+  postfix:
+    build: ./postfix
+    container_name: mail_postfix
+    hostname: mail.local
+    volumes:
+      - maildata:/var/mail/vhosts
+      - ./certs:/etc/ssl/certs:ro
+      - mailspool:/var/spool/postfix
+    ports:
+      - "25:25"
+      - "587:587"
+      - "465:465"
+    networks:
+      - mailnet
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Kolkata
+      - DEBIAN_FRONTEND=noninteractive
+      - MAIL_DB_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    depends_on:
+      spamassassin:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+      dovecot:
+        condition: service_started
+      db:
+        condition: service_healthy
+
+  dovecot:
+    build: ./dovecot
+    container_name: mail_dovecot
+    hostname: dovecot.local
+    volumes:
+      - maildata:/var/mail/vhosts
+      - ./certs:/etc/ssl/certs:ro
+      - ./certs:/etc/dovecot/private:ro
+      - mailspool:/var/spool/postfix
+    ports:
+      - "143:143"
+      - "993:993"
+    networks:
+      - mailnet
+    restart: unless-stopped
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+      - MAIL_DB_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16
+    container_name: mail_db
+    hostname: db.local
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mailserver}
+      POSTGRES_USER: ${POSTGRES_USER:-mailuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      MAIL_DOMAIN: ${MAIL_DOMAIN:?set MAIL_DOMAIN in .env}
+      MAIL_ADMIN_USERNAME: ${MAIL_ADMIN_USERNAME:-admin}
+      MAIL_ADMIN_PASSWORD_HASH: ${MAIL_ADMIN_PASSWORD_HASH:?set MAIL_ADMIN_PASSWORD_HASH in .env}
+    volumes:
+      - ./sql:/docker-entrypoint-initdb.d:ro
+      - dbdata:/var/lib/postgresql/data
+    networks:
+      - mailnet
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  app:
+    build: ./server
+    container_name: mail_app
+    hostname: app.local
+    env_file:
+      - ./server/.env
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-mailserver}
+      PGUSER: ${POSTGRES_USER:-mailuser}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - mailnet
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  maildata:
+  mailspool:
+  dbdata:
+  spamdata:
+
+networks:
+  mailnet:
+    driver: bridge

@@ -1,0 +1,25 @@
+# Environment-specific secrets
+.env
+.env.*
+!.env.example
+server/.env
+!server/.env.example
+
+# TLS and DKIM private material
+certs/*.key
+certs/*.pem
+opendkim/keys/
+
+# Node build and dependency output
+server/node_modules/
+server/dist/
+server/coverage/
+*.tsbuildinfo
+
+# Local runtime data, logs, and editor files
+data/
+logs/
+*.log
+.DS_Store
+.idea/
+.vscode/

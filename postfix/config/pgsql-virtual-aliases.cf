@@ -1,0 +1,19 @@
+# MySQL lookup configuration for virtual_alias_maps
+# Postfix uses this to check if an address should be forwarded
+# (alias) to another address.
+
+# Database user credentials
+user = mailuser
+password = __MAIL_DB_PASSWORD__
+
+# Database host
+hosts = mail_db
+
+# Database name
+dbname = mailserver
+
+# SQL query:
+# %s is replaced by the full email address (e.g. info@mail.local)
+# If a destination is returned, Postfix will forward to that address
+# instead of delivering locally.
+query = SELECT destination FROM virtual_aliases WHERE source='%s'

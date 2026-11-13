@@ -1,0 +1,119 @@
+
+
+# Debian specific:  Specifying a file name will cause the first
+# line of that file to be used as the name.  The Debian default
+# is /etc/mailname.
+mydomain = mail.local
+myorigin = $mydomain
+
+smtpd_banner = $myhostname ESMTP $mail_name (Ubuntu)
+biff = no
+
+# appending .domain is the MUA's job.
+append_dot_mydomain = no
+
+# Uncomment the next line to generate "delayed mail" warnings
+#delay_warning_time = 4h
+
+readme_directory = no
+
+# See http://www.postfix.org/COMPATIBILITY_README.html -- default to 2 on
+# fresh installs.
+compatibility_level = 2
+
+
+
+# TLS parameters
+#smtpd_tls_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem
+#smtpd_tls_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
+
+smtpd_tls_cert_file=/etc/ssl/certs/cert.pem
+smtpd_tls_key_file=/etc/ssl/certs/privkey.key
+smtpd_use_tls=yes
+smtpd_tls_auth_only=no
+tls_ssl_options = 0x80
+smtpd_tls_security_level=may
+
+smtp_tls_CApath=/etc/ssl/certs
+smtp_tls_security_level=may
+smtpd_tls_loglevel=1
+smtpd_tls_session_cache_database = btree:${data_directory}/smtpd_scache
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+
+# Enable SASL authentication via Dovecot
+# Enable Dovecot for SMTP AUTH
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = private/auth
+smtpd_sasl_auth_enable = yes
+smtpd_sasl_authenticated_header = yes
+
+# Don't allow anonymous logins
+smtpd_sasl_security_options = noanonymous
+
+# Workaround for some old mail clients
+broken_sasl_auth_clients = yes
+
+# Optional: leave local domain blank (depends on your setup)
+smtpd_sasl_local_domain =
+
+# Restrictions on who can send mail
+smtpd_helo_required = yes
+disable_vrfy_command = yes
+
+smtpd_recipient_restrictions =
+    reject_invalid_hostname,
+    reject_non_fqdn_hostname,
+    reject_non_fqdn_sender,
+    reject_non_fqdn_recipient,
+    reject_unknown_sender_domain,
+    reject_unknown_recipient_domain,
+    reject_unauth_pipelining,
+    permit_sasl_authenticated,
+    permit_mynetworks,
+    reject_unauth_destination
+
+smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination
+myhostname = localhost
+alias_maps = hash:/etc/aliases
+alias_database = hash:/etc/aliases
+mydestination = $myhostname, localhost, localhost.localdomain, , localhost
+relayhost = 
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
+mailbox_size_limit = 0
+recipient_delimiter = +
+inet_interfaces = all
+inet_protocols = all
+
+
+# My config
+
+local_recipient_maps =
+
+virtual_mailbox_domains = proxy:pgsql:/etc/postfix/pgsql-virtual-domains.cf
+virtual_mailbox_maps    = proxy:pgsql:/etc/postfix/pgsql-virtual-users.cf
+#   , proxy:mysql:/etc/postfix/sql/mysql_virtual_alias_domain_mailbox_maps.cf
+virtual_alias_maps      = proxy:pgsql:/etc/postfix/pgsql-virtual-aliases.cf
+#   , proxy:mysql:/etc/postfix/sql/mysql_virtual_alias_domain_maps.cf,
+#   proxy:mysql:/etc/postfix/sql/mysql_virtual_alias_domain_catchall_maps.cf
+
+#
+submission_recipient_checks = reject_unknown_recipient_domain,permit_sasl_authenticated,reject_unauth_destination
+
+submission_sender_checks = reject_sender_login_mismatch
+
+smtpd_restriction_classes = submission_recipient_checks, submission_sender_checks
+#
+
+virtual_mailbox_base    = /var/mail/vhosts/
+
+virtual_minimum_uid = 5000
+virtual_uid_maps = static:5000
+virtual_gid_maps = static:5000
+
+#transport_maps = proxy:mysql:/etc/postfix/sql/mysql_transport_maps.cf
+
+# ClamSMTP reinjects mail on port 10025; master.cf sends it through
+# SpamAssassin before LMTP delivery to Dovecot.
+content_filter = clamav:clamav:10026
+
+virtual_transport = lmtp:unix:private/dovecot-lmtp

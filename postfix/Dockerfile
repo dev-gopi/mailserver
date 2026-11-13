@@ -1,0 +1,42 @@
+FROM ubuntu:20.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    postfix \
+    postfix-pgsql \
+    rsyslog \
+    libsasl2-modules \
+    libsasl2-modules-db \
+    ca-certificates \
+    spamc \
+    openssl \
+    net-tools \
+    telnet \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -g 5000 vmail && \
+    useradd -u 5000 -g vmail -d /var/mail -s /usr/sbin/nologin vmail
+
+RUN mv /etc/postfix/main.cf /etc/postfix/main.cf.bk
+RUN mv /etc/postfix/master.cf /etc/postfix/master.cf.bk
+
+COPY main.cf /etc/postfix/main.cf
+COPY master.cf /etc/postfix/master.cf
+COPY config/pgsql-virtual-users.cf /etc/postfix/pgsql-virtual-users.cf
+COPY config/pgsql-virtual-domains.cf /etc/postfix/pgsql-virtual-domains.cf
+COPY config/pgsql-virtual-aliases.cf /etc/postfix/pgsql-virtual-aliases.cf
+
+VOLUME ["/var/mail"]
+
+EXPOSE 25 587 465
+
+# CMD ["postfix", "start-fg"]
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+CMD ["/entrypoint.sh"]

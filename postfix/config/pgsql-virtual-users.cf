@@ -1,0 +1,19 @@
+# MySQL lookup configuration for virtual_mailbox_maps
+# Postfix uses this to find the mailbox path for a full email address.
+
+# Database user credentials
+user = mailuser
+password = __MAIL_DB_PASSWORD__
+
+# Database host
+hosts = mail_db
+
+# Database name
+dbname = mailserver
+
+# SQL query:
+# %s is replaced by the full email address (e.g. test@mail.local)
+# The query must return the relative maildir path.
+# This path will be appended to virtual_mailbox_base.
+# query = SELECT maildir FROM virtual_users WHERE email='%s' AND active=TRUE
+query = SELECT CONCAT(maildir, 'Maildir/') FROM virtual_users WHERE email='%s' AND active=TRUE
