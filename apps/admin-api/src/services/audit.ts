@@ -1,9 +1,46 @@
 import { Request } from "express";
-import { db } from "../db/pool";
+import { auditRepository } from "../repositories/audit.repository";
+import { taskQueue } from "../queue/task-queue";
 
-export async function audit(req: Request, action: string, entityType: string, entityId?: string | number, details: object = {}): Promise<void> {
-  await db.query(
-    "INSERT INTO audit_log (admin_id, action, entity_type, entity_id, ip_address, details) VALUES ($1, $2, $3, $4, $5, $6)",
-    [req.admin?.id ?? null, action, entityType, entityId?.toString() ?? null, req.ip, JSON.stringify(details)],
-  );
+export class AuditService {
+  async log(
+    req: Request,
+    action: string,
+    entityType: string,
+    entityId?: string | number,
+    details: Record<string, any> = {}
+  ): Promise<void> {
+    const adminId = req.admin?.id ?? null;
+    const ip = req.ip || req.socket.remoteAddress || null;
+    const eId = entityId !== undefined && entityId !== null ? String(entityId) : null;
+
+    // Persist via repository
+    await auditRepository.create(adminId, action, entityType, eId, ip, details);
+
+    // Also notify queue for live socket/broadcast subscribers
+    taskQueue.emit("audit.logged", {
+      adminId,
+      action,
+      entityType,
+      entityId: eId,
+      ip,
+      details,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  async getRecentLogs(limit = 100) {
+    return auditRepository.findRecent(limit);
+  }
 }
+
+export const auditService = new AuditService();
+
+// Backward compatibility export for existing usages
+export const audit = (
+  req: Request,
+  action: string,
+  entityType: string,
+  entityId?: string | number,
+  details: Record<string, any> = {}
+) => auditService.log(req, action, entityType, entityId, details);

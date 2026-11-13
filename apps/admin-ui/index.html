@@ -1,1 +1,1186 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mail Control</title><link rel="stylesheet" href="/styles.css"></head><body><main><section id="login" class="card"><h1>Mail Control</h1><p>Administrator access only.</p><form id="login-form"><label>Username<input id="username" required autocomplete="username"></label><label>Password<input id="password" type="password" required autocomplete="current-password"></label><button>Sign in</button></form><p id="login-error" class="error"></p></section><section id="setup" class="card hidden"><h1>Change initial password</h1><p>Set a new administrator password before continuing.</p><form id="password-form"><label>Current password<input id="current-password" type="password" required></label><label>New password<input id="new-password" type="password" minlength="12" required></label><button>Save password</button></form><p id="setup-error" class="error"></p></section><section id="dashboard" class="hidden"><header><h1>Mail Control</h1><button id="logout">Sign out</button></header><div id="metrics" class="metrics"></div><div class="grid"><section class="card"><h2>Company setup</h2><form id="company-form"><label>Company name<input id="company-name" required></label><label>Support email<input id="support-email" type="email"></label><label>Timezone<input id="timezone" value="UTC" required></label><button>Save company</button></form></section><section class="card"><h2>Add domain</h2><form id="domain-form"><label>Domain<input id="domain-name" placeholder="example.com" required></label><button>Add domain</button></form><div id="domains"></div></section><section class="card"><h2>Create mailbox</h2><form id="mailbox-form"><label>Email<input id="mailbox-address" type="email" required></label><label>Display name<input id="mailbox-name"></label><label>Temporary password<input id="mailbox-password" type="password" minlength="12" required></label><button>Create mailbox</button></form></section><section class="card"><h2>Mailbox users</h2><div id="mailboxes"></div></section></div><p id="notice"></p></section></main><script src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MailCore Admin — Production Mail Server Control Panel</title>
+  <meta name="description" content="Production-ready multi-tenant mail server management console for domains, user mailboxes, aliases, and security audit logs.">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <!-- AUTH: Login View -->
+  <section id="view-login" class="auth-wrapper">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="brand-badge">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        </div>
+        <h1>MailCore Admin</h1>
+        <p class="auth-subtitle">Secure Mail Server Management Console</p>
+      </div>
+
+      <form id="login-form" class="auth-form" autocomplete="on">
+        <div class="form-group">
+          <label for="username">Administrator Username</label>
+          <div class="input-with-icon">
+            <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <input id="username" type="text" placeholder="e.g. admin" required autocomplete="username" autofocus>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="password">Password</label>
+          <div class="input-with-icon">
+            <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <input id="password" type="password" placeholder="••••••••••••" required autocomplete="current-password">
+            <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('password', this)" title="Show/Hide password">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" id="btn-login" class="btn btn-primary btn-block">
+          <span>Sign In to Dashboard</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </button>
+      </form>
+
+      <div class="auth-footer">
+        <span class="badge-status-dot online"></span>
+        <span>Postfix &bull; Dovecot &bull; SpamAssassin &bull; ClamAV</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- AUTH: Force Change Password Modal View -->
+  <section id="view-setup" class="auth-wrapper hidden">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="brand-badge warning">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </div>
+        <h1>Security Update Required</h1>
+        <p class="auth-subtitle">Set a new strong password before accessing the control panel.</p>
+      </div>
+
+      <form id="password-form" class="auth-form">
+        <div class="form-group">
+          <label for="current-password">Current Password</label>
+          <input id="current-password" type="password" required>
+        </div>
+
+        <div class="form-group">
+          <label for="new-password">New Password (minimum 12 characters)</label>
+          <div class="input-with-icon">
+            <input id="new-password" type="password" minlength="12" required placeholder="Min 12 characters">
+            <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('new-password', this)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+          <div class="pw-strength-bar"><div id="pw-strength-fill" class="strength-fill"></div></div>
+          <small id="pw-hint" class="form-hint">Use uppercase, lowercase, numbers & symbols.</small>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block">Update & Continue to Console</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- MAIN APP: Dashboard Layout -->
+  <div id="view-app" class="app-layout hidden">
+    <!-- Sidebar Navigation -->
+    <aside class="app-sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          <div class="logo-text">
+            <strong>MailCore</strong>
+            <span class="logo-tag">PRO ADMIN</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Navigation links -->
+      <nav class="sidebar-nav">
+        <button type="button" class="nav-item active" data-tab="overview">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          <span>Overview</span>
+        </button>
+
+        <button type="button" class="nav-item" data-tab="mailboxes">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+          <span>Mailboxes</span>
+          <span id="badge-nav-mailboxes" class="nav-pill">0</span>
+        </button>
+
+        <button type="button" class="nav-item" data-tab="domains">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          <span>Domains</span>
+          <span id="badge-nav-domains" class="nav-pill">0</span>
+        </button>
+
+        <button type="button" class="nav-item" data-tab="aliases">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>
+          <span>Aliases & Forwarding</span>
+          <span id="badge-nav-aliases" class="nav-pill">0</span>
+        </button>
+
+        <button type="button" class="nav-item" data-tab="services">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+          <span>Services & Queue</span>
+          <span id="badge-nav-services" class="nav-pill online">Healthy</span>
+        </button>
+
+        <button type="button" class="nav-item" data-tab="audit">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span>Audit Log</span>
+        </button>
+
+        <button type="button" class="nav-item" data-tab="settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>Settings</span>
+        </button>
+      </nav>
+
+      <!-- Sidebar Footer User Profile -->
+      <div class="sidebar-user">
+        <div class="user-avatar" id="user-avatar-initials">AD</div>
+        <div class="user-info">
+          <strong id="user-display-name">Administrator</strong>
+          <span id="user-display-role" class="user-role-badge">owner</span>
+        </div>
+        <button id="btn-logout" class="btn-icon-logout" title="Sign out">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="app-main">
+      <!-- Top Bar -->
+      <header class="app-topbar">
+        <div class="topbar-left">
+          <h2 id="page-title" class="page-title">Overview</h2>
+          <span class="company-tag" id="topbar-company-name">Loading...</span>
+        </div>
+        <div class="topbar-right">
+          <div class="server-status-pill">
+            <span class="status-pulse"></span>
+            <span>Mail Services Active</span>
+          </div>
+          <button id="btn-refresh-all" class="btn btn-secondary btn-sm" title="Refresh all data">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            <span>Sync</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Content Views -->
+      <div class="content-scroll">
+        <!-- TAB 1: OVERVIEW -->
+        <section id="tab-overview" class="tab-pane active">
+          <!-- Metric Stat Cards -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon-wrapper blue">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              </div>
+              <div class="stat-content">
+                <span class="stat-label">Active Domains</span>
+                <div class="stat-number" id="stat-domains">0</div>
+                <div class="stat-sub" id="stat-domains-sub">0 verified &bull; 0 pending DNS</div>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-icon-wrapper purple">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+              </div>
+              <div class="stat-content">
+                <span class="stat-label">Mailboxes (Users)</span>
+                <div class="stat-number" id="stat-mailboxes">0</div>
+                <div class="stat-sub" id="stat-mailboxes-sub">0 active &bull; 0 suspended</div>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-icon-wrapper amber">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>
+              </div>
+              <div class="stat-content">
+                <span class="stat-label">Email Aliases</span>
+                <div class="stat-number" id="stat-aliases">0</div>
+                <div class="stat-sub">Forwarding routes configured</div>
+              </div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-icon-wrapper green">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+              </div>
+              <div class="stat-content">
+                <span class="stat-label">Total Allocated Quota</span>
+                <div class="stat-number" id="stat-quota">0 GB</div>
+                <div class="stat-sub">Across all active mailboxes</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Actions & Server Connection Cards -->
+          <div class="overview-grid">
+            <!-- Quick Actions -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Quick Actions</h3>
+                  <p class="card-desc">Rapidly provision email resources</p>
+                </div>
+              </div>
+              <div class="quick-action-buttons">
+                <button type="button" class="btn btn-primary" onclick="openModal('modal-create-mailbox')">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  <span>New Mailbox</span>
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="openModal('modal-add-domain')">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                  <span>Add Domain</span>
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="openModal('modal-create-alias')">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>
+                  <span>Create Alias</span>
+                </button>
+              </div>
+
+              <div class="mt-4">
+                <h4 class="subhead">Core Infrastructure Components</h4>
+                <div class="service-status-list">
+                  <div class="service-item">
+                    <div class="service-meta">
+                      <span class="service-dot online"></span>
+                      <div>
+                        <strong>Postfix MTA</strong>
+                        <div class="text-muted">SMTP (Port 25, 587 Submission, 465 SMTPS)</div>
+                      </div>
+                    </div>
+                    <span class="badge badge-success">Running</span>
+                  </div>
+
+                  <div class="service-item">
+                    <div class="service-meta">
+                      <span class="service-dot online"></span>
+                      <div>
+                        <strong>Dovecot MDA</strong>
+                        <div class="text-muted">IMAP (Port 143, 993 IMAPS) &bull; Maildir Storage</div>
+                      </div>
+                    </div>
+                    <span class="badge badge-success">Running</span>
+                  </div>
+
+                  <div class="service-item">
+                    <div class="service-meta">
+                      <span class="service-dot online"></span>
+                      <div>
+                        <strong>SpamAssassin & ClamAV</strong>
+                        <div class="text-muted">Real-time Anti-Spam (783) & Antivirus Filter Engine</div>
+                      </div>
+                    </div>
+                    <span class="badge badge-success">Filtering</span>
+                  </div>
+
+                  <div class="service-item">
+                    <div class="service-meta">
+                      <span class="service-dot online"></span>
+                      <div>
+                        <strong>PostgreSQL 16</strong>
+                        <div class="text-muted">Virtual domains, encrypted mailboxes, audit trail</div>
+                      </div>
+                    </div>
+                    <span class="badge badge-success">Connected</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Client Connection Settings Reference -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Client Connection Reference</h3>
+                  <p class="card-desc">Protocol settings for Outlook, Thunderbird, iOS, Android & Mac Mail</p>
+                </div>
+              </div>
+              <div class="connection-spec-table">
+                <div class="spec-row">
+                  <div class="spec-label">IMAP Server (Incoming)</div>
+                  <div class="spec-val">
+                    <code>mail.YOURDOMAIN</code> or server IP
+                    <button class="btn-copy-sm" onclick="copyText('mail.YOURDOMAIN', this)">Copy</button>
+                  </div>
+                </div>
+                <div class="spec-row">
+                  <div class="spec-label">IMAP Security & Port</div>
+                  <div class="spec-val"><strong>Port 993</strong> &bull; SSL/TLS (Implicit)</div>
+                </div>
+                <div class="spec-row">
+                  <div class="spec-label">SMTP Server (Outgoing)</div>
+                  <div class="spec-val">
+                    <code>mail.YOURDOMAIN</code> or server IP
+                    <button class="btn-copy-sm" onclick="copyText('mail.YOURDOMAIN', this)">Copy</button>
+                  </div>
+                </div>
+                <div class="spec-row">
+                  <div class="spec-label">SMTP Submission Port</div>
+                  <div class="spec-val"><strong>Port 587</strong> (STARTTLS) or <strong>Port 465</strong> (SSL)</div>
+                </div>
+                <div class="spec-row">
+                  <div class="spec-label">Authentication Method</div>
+                  <div class="spec-val">Full Email Address (e.g. <code>user@domain.com</code>) + Password</div>
+                </div>
+                <div class="spec-row">
+                  <div class="spec-label">Encryption Cipher</div>
+                  <div class="spec-val">TLS 1.2 / TLS 1.3 Strong Ciphers Only</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recent Activity Stream -->
+          <div class="card mt-4">
+            <div class="card-header flex-between">
+              <div>
+                <h3 class="card-title">Recent Administrative Activity</h3>
+                <p class="card-desc">Real-time system events, mailbox provisioning and configuration audits</p>
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="switchTab('audit')">View Full Audit Log</button>
+            </div>
+            <div id="overview-recent-activity" class="recent-activity-list">
+              <!-- Rendered via app.js -->
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 2: MAILBOXES (MANAGE USER MAILBOX) -->
+        <section id="tab-mailboxes" class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2>User Mailboxes</h2>
+              <p class="section-desc">Manage tenant user mailboxes, passwords, quotas, and service status.</p>
+            </div>
+            <div class="header-actions">
+              <button class="btn btn-primary" onclick="openModal('modal-create-mailbox')">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>Add Mailbox</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Filter Toolbar -->
+          <div class="filter-bar">
+            <div class="search-box">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="mailbox-search" placeholder="Search by email address or display name..." oninput="filterMailboxes()">
+            </div>
+            <div class="filter-selects">
+              <select id="mailbox-domain-filter" onchange="filterMailboxes()">
+                <option value="">All Domains</option>
+              </select>
+              <select id="mailbox-status-filter" onchange="filterMailboxes()">
+                <option value="">All Statuses</option>
+                <option value="active">Active Only</option>
+                <option value="suspended">Suspended Only</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Mailbox Table Card -->
+          <div class="card table-card">
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Mailbox Address & Name</th>
+                    <th>Domain</th>
+                    <th>Storage Quota</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th class="text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="mailboxes-tbody">
+                  <!-- Rendered dynamically via JS -->
+                </tbody>
+              </table>
+            </div>
+            <div id="mailbox-empty" class="empty-state hidden">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+              <h3>No mailboxes found</h3>
+              <p>Create your first mailbox to start receiving and sending emails.</p>
+              <button class="btn btn-primary btn-sm" onclick="openModal('modal-create-mailbox')">Create Mailbox</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 3: DOMAINS -->
+        <section id="tab-domains" class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2>Hosted Domains</h2>
+              <p class="section-desc">Register company domains and complete DNS ownership & MX verification.</p>
+            </div>
+            <div class="header-actions">
+              <button class="btn btn-primary" onclick="openModal('modal-add-domain')">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>Add Domain</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="card table-card">
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Domain Name</th>
+                    <th>DNS Ownership Verification</th>
+                    <th>Domain Status</th>
+                    <th>Registered At</th>
+                    <th class="text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="domains-tbody">
+                  <!-- Rendered dynamically via JS -->
+                </tbody>
+              </table>
+            </div>
+            <div id="domains-empty" class="empty-state hidden">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              <h3>No domains configured</h3>
+              <p>Add your company domain to generate DNS verification records and enable user mailboxes.</p>
+              <button class="btn btn-primary btn-sm" onclick="openModal('modal-add-domain')">Add Domain</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 4: ALIASES & FORWARDING -->
+        <section id="tab-aliases" class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2>Email Aliases & Forwarding</h2>
+              <p class="section-desc">Route incoming emails to one or more internal mailboxes or external addresses.</p>
+            </div>
+            <div class="header-actions">
+              <button class="btn btn-primary" onclick="openModal('modal-create-alias')">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>Create Alias</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Filter Toolbar for Aliases -->
+          <div class="filter-bar">
+            <div class="search-box">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="alias-search" placeholder="Search source or destination email..." oninput="filterAliases()">
+            </div>
+          </div>
+
+          <div class="card table-card">
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Source (Incoming Alias)</th>
+                    <th>Forwarding Destination</th>
+                    <th>Domain</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th class="text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="aliases-tbody">
+                  <!-- Rendered dynamically via JS -->
+                </tbody>
+              </table>
+            </div>
+            <div id="aliases-empty" class="empty-state hidden">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>
+              <h3>No email aliases configured</h3>
+              <p>Create aliases like <code>support@domain.com</code> or <code>sales@domain.com</code> to forward incoming messages.</p>
+              <button class="btn btn-primary btn-sm" onclick="openModal('modal-create-alias')">Create Alias</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB: SERVICES & QUEUE MANAGEMENT -->
+        <section id="tab-services" class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2>Services, Mail Queue & Diagnostics</h2>
+              <p class="section-desc">Live cluster health monitoring, Postfix queue management, and interactive SMTP/Spam diagnostic tests.</p>
+            </div>
+            <div class="header-actions">
+              <button class="btn btn-secondary btn-sm" onclick="runDiagnosticsNow()">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                <span>Run Health Probes</span>
+              </button>
+              <button class="btn btn-primary btn-sm" onclick="triggerFlushQueue()">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                <span>Flush Mail Queue</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Services Health Probes Grid -->
+          <div class="card mb-4">
+            <div class="card-header flex-between">
+              <div>
+                <h3 class="card-title">Live Infrastructure Services</h3>
+                <p class="card-desc">Real-time socket latency & protocol handshake status across cluster daemons</p>
+              </div>
+              <span id="services-last-checked" class="text-muted" style="font-size: 0.8rem;">Checked just now</span>
+            </div>
+            <div id="services-health-grid" class="services-health-grid">
+              <!-- Rendered dynamically via JS -->
+            </div>
+          </div>
+
+          <!-- Mail Queue & Background Queue Cards -->
+          <div class="overview-grid mb-4">
+            <!-- Mail Queue Card -->
+            <div class="card">
+              <div class="card-header flex-between">
+                <div>
+                  <h3 class="card-title">Postfix Mail Queue</h3>
+                  <p class="card-desc">Messages awaiting remote delivery or local spooling</p>
+                </div>
+                <button class="btn btn-secondary btn-xs" onclick="refreshQueueStatus()">Refresh Queue</button>
+              </div>
+              <div class="queue-stats-row">
+                <div class="queue-stat-item">
+                  <span class="queue-stat-number" id="queue-active-count">0</span>
+                  <span class="queue-stat-label">Active / Incoming</span>
+                </div>
+                <div class="queue-stat-item">
+                  <span class="queue-stat-number" id="queue-deferred-count">0</span>
+                  <span class="queue-stat-label">Deferred / Retrying</span>
+                </div>
+                <div class="queue-stat-item">
+                  <span class="queue-stat-number" id="queue-total-count">0</span>
+                  <span class="queue-stat-label">Total in Spool</span>
+                </div>
+              </div>
+              <div class="mt-4 flex-between">
+                <span class="text-muted" style="font-size: 0.85rem;" id="queue-status-text">Queue status: Clean & Idle</span>
+                <button class="btn btn-primary btn-sm" onclick="triggerFlushQueue()">Flush Queue Now</button>
+              </div>
+            </div>
+
+            <!-- Asynchronous Task Queue & Redis -->
+            <div class="card">
+              <div class="card-header flex-between">
+                <div>
+                  <h3 class="card-title">Task Queue & Redis Engine</h3>
+                  <p class="card-desc">Asynchronous workers for DNS verifications and background jobs</p>
+                </div>
+                <span id="taskqueue-backend-badge" class="badge badge-success">Redis Connected</span>
+              </div>
+              <div class="queue-stats-row">
+                <div class="queue-stat-item">
+                  <span class="queue-stat-number" id="taskqueue-pending">0</span>
+                  <span class="queue-stat-label">Pending Jobs</span>
+                </div>
+                <div class="queue-stat-item">
+                  <span class="queue-stat-number" id="taskqueue-completed">0</span>
+                  <span class="queue-stat-label">Completed Jobs</span>
+                </div>
+                <div class="queue-stat-item">
+                  <span class="queue-stat-number" id="taskqueue-failed">0</span>
+                  <span class="queue-stat-label">Failed Jobs</span>
+                </div>
+              </div>
+              <div class="mt-4 text-muted" style="font-size: 0.8rem;" id="taskqueue-details-text">
+                Workers online &bull; Job timeout: 30s &bull; Auto-retry: 3 attempts
+              </div>
+            </div>
+          </div>
+
+          <!-- Diagnostic Testing Tools -->
+          <div class="overview-grid">
+            <!-- Diagnostic SMTP Delivery Test -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Diagnostic SMTP Delivery Test</h3>
+                  <p class="card-desc">Simulate message submission through Postfix MTA and verify route</p>
+                </div>
+              </div>
+              <form id="form-test-smtp" onsubmit="handleTestSmtp(event)">
+                <div class="form-group">
+                  <label for="test-smtp-recipient">Recipient Email</label>
+                  <input id="test-smtp-recipient" type="email" placeholder="e.g. admin@yourdomain.com" required>
+                </div>
+                <div class="form-group">
+                  <label for="test-smtp-subject">Subject</label>
+                  <input id="test-smtp-subject" type="text" value="System Health Check Probe" required>
+                </div>
+                <div class="form-group">
+                  <label for="test-smtp-body">Message Content</label>
+                  <textarea id="test-smtp-body" rows="3" required>Diagnostic probe sent from MailCore Admin console to verify end-to-end SMTP mail routing.</textarea>
+                </div>
+                <button type="submit" id="btn-send-test-smtp" class="btn btn-primary btn-sm">
+                  <span>Send Diagnostic Email</span>
+                </button>
+              </form>
+            </div>
+
+            <!-- Diagnostic SpamAssassin Scoring Test -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Spam Filter Scoring Analyzer</h3>
+                  <p class="card-desc">Test SpamAssassin rules, heuristic scoring, and quarantine triggers</p>
+                </div>
+              </div>
+              <form id="form-test-spam" onsubmit="handleTestSpam(event)">
+                <div class="form-group">
+                  <label for="test-spam-content">Message Headers & Body</label>
+                  <textarea id="test-spam-content" rows="4" placeholder="Paste email content here to evaluate against SpamAssassin engine..." required></textarea>
+                </div>
+                <div class="pw-generator-row mb-4">
+                  <button type="button" class="btn btn-secondary btn-xs" onclick="insertGtubeSpam()">
+                    <span>Insert GTUBE Test String</span>
+                  </button>
+                  <button type="button" class="btn btn-secondary btn-xs" onclick="insertCleanEmail()">
+                    <span>Insert Clean Email</span>
+                  </button>
+                </div>
+                <button type="submit" id="btn-analyze-spam" class="btn btn-primary btn-sm">
+                  <span>Analyze Message Score</span>
+                </button>
+              </form>
+              <div id="spam-test-result" class="alert-box alert-info mt-3 hidden">
+                <!-- Populated via JS -->
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 5: AUDIT LOG -->
+        <section id="tab-audit" class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2>Audit Log & Security History</h2>
+              <p class="section-desc">Tamper-evident log of all administrator actions, mailbox creations, logins, and DNS checks.</p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="loadAuditLogs()">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              <span>Refresh Log</span>
+            </button>
+          </div>
+
+          <div class="card table-card">
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Action</th>
+                    <th>Entity</th>
+                    <th>IP Address</th>
+                    <th>Event Details</th>
+                  </tr>
+                </thead>
+                <tbody id="audit-tbody">
+                  <!-- Rendered dynamically via JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 6: SETTINGS -->
+        <section id="tab-settings" class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2>System & Company Settings</h2>
+              <p class="section-desc">Manage organization profile, administrator credentials, and mail cluster preferences.</p>
+            </div>
+          </div>
+
+          <div class="settings-grid">
+            <!-- Company Profile -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Company Profile</h3>
+                  <p class="card-desc">Organization details for system notifications and reports</p>
+                </div>
+              </div>
+
+              <form id="company-profile-form" class="settings-form">
+                <div class="form-group">
+                  <label for="company-name">Organization / Company Name</label>
+                  <input id="company-name" type="text" required placeholder="e.g. Acme Corp">
+                </div>
+
+                <div class="form-group">
+                  <label for="legal-name">Legal Entity Name</label>
+                  <input id="legal-name" type="text" placeholder="e.g. Acme Corporation Pvt. Ltd.">
+                </div>
+
+                <div class="form-group">
+                  <label for="support-email">Central Support Email</label>
+                  <input id="support-email" type="email" placeholder="support@yourdomain.com">
+                </div>
+
+                <div class="form-group">
+                  <label for="timezone">Default Timezone</label>
+                  <input id="timezone" type="text" value="UTC" required placeholder="e.g. UTC, Asia/Kolkata, America/New_York">
+                </div>
+
+                <div class="form-group">
+                  <label for="address">Postal / Registered Address</label>
+                  <textarea id="address" rows="3" placeholder="Headquarters street address..."></textarea>
+                </div>
+
+                <button type="submit" class="btn btn-primary">Save Company Profile</button>
+              </form>
+            </div>
+
+            <!-- Admin Password Change -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Change Admin Password</h3>
+                  <p class="card-desc">Rotate your administrator session credentials</p>
+                </div>
+              </div>
+
+              <form id="settings-password-form" class="settings-form">
+                <div class="form-group">
+                  <label for="settings-current-pw">Current Admin Password</label>
+                  <input id="settings-current-pw" type="password" required>
+                </div>
+
+                <div class="form-group">
+                  <label for="settings-new-pw">New Password (min 12 characters)</label>
+                  <div class="input-with-icon">
+                    <input id="settings-new-pw" type="password" minlength="12" required>
+                    <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('settings-new-pw', this)">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label for="settings-confirm-pw">Confirm New Password</label>
+                  <input id="settings-confirm-pw" type="password" minlength="12" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary">Update Password</button>
+              </form>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- MODALS -->
+
+  <!-- MODAL 1: Create Mailbox -->
+  <div id="modal-create-mailbox" class="modal-backdrop hidden" onclick="handleBackdropClick(event, 'modal-create-mailbox')">
+    <div class="modal-window">
+      <div class="modal-header">
+        <div>
+          <h3>Create New Mailbox</h3>
+          <p class="modal-subtitle">Provision an email account with Dovecot storage and Postfix SMTP credentials.</p>
+        </div>
+        <button type="button" class="btn-close-modal" onclick="closeModal('modal-create-mailbox')">&times;</button>
+      </div>
+
+      <form id="form-create-mailbox" onsubmit="handleCreateMailbox(event)">
+        <div class="modal-body">
+          <div id="modal-mailbox-domain-alert" class="alert-box alert-warning hidden">
+            <strong>No verified domains available.</strong> You must add and verify a domain before creating mailboxes.
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-2">
+              <label for="mb-prefix">Email Address Prefix</label>
+              <div class="email-input-split">
+                <input id="mb-prefix" type="text" placeholder="username" required pattern="^[a-zA-Z0-9._%+-]+$" oninput="updateMailboxPreview()" autocomplete="off">
+                <span class="at-symbol">@</span>
+                <select id="mb-domain-select" required onchange="updateMailboxPreview()">
+                  <!-- Populated from verified domains -->
+                </select>
+              </div>
+              <small class="form-hint">Address: <code id="mb-preview-email">...</code></small>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="mb-display-name">Display Name (Optional)</label>
+            <input id="mb-display-name" type="text" placeholder="e.g. John Doe, Sales Dept">
+          </div>
+
+          <div class="form-group">
+            <label for="mb-password">Mailbox Password</label>
+            <div class="input-with-icon">
+              <input id="mb-password" type="password" minlength="12" required placeholder="Minimum 12 characters" autocomplete="new-password">
+              <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('mb-password', this)" title="Show/Hide">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+            <div class="pw-generator-row">
+              <button type="button" class="btn btn-secondary btn-xs" onclick="generatePasswordFor('mb-password')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                <span>Generate Strong Password</span>
+              </button>
+              <button type="button" class="btn btn-secondary btn-xs" onclick="copyPasswordFrom('mb-password', this)">
+                <span>Copy Password</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Storage Quota Limit</label>
+            <div class="quota-presets">
+              <button type="button" class="btn-preset" data-quota="1073741824" onclick="setQuotaPreset(1073741824, this)">1 GB</button>
+              <button type="button" class="btn-preset active" data-quota="5368709120" onclick="setQuotaPreset(5368709120, this)">5 GB</button>
+              <button type="button" class="btn-preset" data-quota="10737418240" onclick="setQuotaPreset(10737418240, this)">10 GB</button>
+              <button type="button" class="btn-preset" data-quota="26843545600" onclick="setQuotaPreset(26843545600, this)">25 GB</button>
+              <button type="button" class="btn-preset" data-quota="0" onclick="setQuotaPreset(0, this)">Unlimited</button>
+            </div>
+            <input type="hidden" id="mb-quota-bytes" value="5368709120">
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modal-create-mailbox')">Cancel</button>
+          <button type="submit" id="btn-submit-mailbox" class="btn btn-primary">Create Mailbox</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 2: Edit Mailbox -->
+  <div id="modal-edit-mailbox" class="modal-backdrop hidden" onclick="handleBackdropClick(event, 'modal-edit-mailbox')">
+    <div class="modal-window">
+      <div class="modal-header">
+        <div>
+          <h3>Edit Mailbox</h3>
+          <p id="edit-mb-address" class="modal-subtitle font-mono text-bold">user@domain.com</p>
+        </div>
+        <button type="button" class="btn-close-modal" onclick="closeModal('modal-edit-mailbox')">&times;</button>
+      </div>
+
+      <form id="form-edit-mailbox" onsubmit="handleEditMailboxSubmit(event)">
+        <input type="hidden" id="edit-mb-id">
+
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="edit-mb-display-name">Display Name</label>
+            <input id="edit-mb-display-name" type="text" placeholder="e.g. John Doe">
+          </div>
+
+          <div class="form-group">
+            <label for="edit-mb-password">Reset Password (leave empty to keep unchanged)</label>
+            <div class="input-with-icon">
+              <input id="edit-mb-password" type="password" minlength="12" placeholder="Leave blank to keep existing password">
+              <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('edit-mb-password', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+            <div class="pw-generator-row">
+              <button type="button" class="btn btn-secondary btn-xs" onclick="generatePasswordFor('edit-mb-password')">Generate New Password</button>
+              <button type="button" class="btn btn-secondary btn-xs" onclick="copyPasswordFrom('edit-mb-password', this)">Copy Password</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Storage Quota Limit</label>
+            <div class="quota-presets" id="edit-quota-presets">
+              <button type="button" class="btn-preset" data-quota="1073741824" onclick="setEditQuotaPreset(1073741824, this)">1 GB</button>
+              <button type="button" class="btn-preset" data-quota="5368709120" onclick="setEditQuotaPreset(5368709120, this)">5 GB</button>
+              <button type="button" class="btn-preset" data-quota="10737418240" onclick="setEditQuotaPreset(10737418240, this)">10 GB</button>
+              <button type="button" class="btn-preset" data-quota="26843545600" onclick="setEditQuotaPreset(26843545600, this)">25 GB</button>
+              <button type="button" class="btn-preset" data-quota="0" onclick="setEditQuotaPreset(0, this)">Unlimited</button>
+            </div>
+            <input type="hidden" id="edit-mb-quota-bytes">
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="edit-mb-active">
+              <span>Mailbox account is Active (uncheck to suspend sending & receiving)</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modal-edit-mailbox')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 3: Mailbox Connection Guide (Client Setup) -->
+  <div id="modal-client-guide" class="modal-backdrop hidden" onclick="handleBackdropClick(event, 'modal-client-guide')">
+    <div class="modal-window modal-lg">
+      <div class="modal-header">
+        <div>
+          <h3>Mailbox Client Configuration</h3>
+          <p id="guide-mailbox-address" class="modal-subtitle font-mono text-bold">user@domain.com</p>
+        </div>
+        <button type="button" class="btn-close-modal" onclick="closeModal('modal-client-guide')">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <p class="mb-4">Use the settings below to connect this mailbox in any email client (Microsoft Outlook, Apple Mail, Mozilla Thunderbird, iOS, Android, or webmail).</p>
+
+        <div class="guide-grid">
+          <div class="guide-card">
+            <div class="guide-card-head">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+              <strong>Incoming Server (IMAP)</strong>
+            </div>
+            <div class="guide-row">
+              <span>Server Hostname:</span>
+              <div class="val-copy"><code id="guide-imap-host">mail.domain.com</code> <button class="btn-copy-sm" onclick="copyElementText('guide-imap-host', this)">Copy</button></div>
+            </div>
+            <div class="guide-row">
+              <span>Port:</span>
+              <strong>993 (SSL/TLS)</strong>
+            </div>
+            <div class="guide-row">
+              <span>Username:</span>
+              <div class="val-copy"><code id="guide-imap-user">user@domain.com</code> <button class="btn-copy-sm" onclick="copyElementText('guide-imap-user', this)">Copy</button></div>
+            </div>
+            <div class="guide-row">
+              <span>Authentication:</span>
+              <span>Normal Password</span>
+            </div>
+          </div>
+
+          <div class="guide-card">
+            <div class="guide-card-head">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              <strong>Outgoing Server (SMTP)</strong>
+            </div>
+            <div class="guide-row">
+              <span>Server Hostname:</span>
+              <div class="val-copy"><code id="guide-smtp-host">mail.domain.com</code> <button class="btn-copy-sm" onclick="copyElementText('guide-smtp-host', this)">Copy</button></div>
+            </div>
+            <div class="guide-row">
+              <span>Submission Port:</span>
+              <strong>587 (STARTTLS) or 465 (SSL)</strong>
+            </div>
+            <div class="guide-row">
+              <span>Username:</span>
+              <div class="val-copy"><code id="guide-smtp-user">user@domain.com</code> <button class="btn-copy-sm" onclick="copyElementText('guide-smtp-user', this)">Copy</button></div>
+            </div>
+            <div class="guide-row">
+              <span>Authentication:</span>
+              <span>Same as Incoming (Required)</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="guide-info-box mt-4">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          <div>
+            <strong>Spam & Antivirus Protection Active:</strong>
+            <span>All incoming messages are filtered by ClamAV and SpamAssassin before delivery into the user's Maildir spool.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" onclick="closeModal('modal-client-guide')">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 4: Add Domain -->
+  <div id="modal-add-domain" class="modal-backdrop hidden" onclick="handleBackdropClick(event, 'modal-add-domain')">
+    <div class="modal-window">
+      <div class="modal-header">
+        <div>
+          <h3>Add Domain</h3>
+          <p class="modal-subtitle">Register a domain for virtual hosting and mailbox provisioning.</p>
+        </div>
+        <button type="button" class="btn-close-modal" onclick="closeModal('modal-add-domain')">&times;</button>
+      </div>
+
+      <form id="form-add-domain" onsubmit="handleAddDomainSubmit(event)">
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="new-domain-name">Domain Name (FQDN)</label>
+            <input id="new-domain-name" type="text" placeholder="e.g. yourcompany.com" required pattern="^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$">
+            <small class="form-hint">Do not include http:// or www. Example: <code>acme.org</code></small>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modal-add-domain')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add Domain & Get DNS Records</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 5: DNS Setup & Verify Wizard -->
+  <div id="modal-dns-wizard" class="modal-backdrop hidden" onclick="handleBackdropClick(event, 'modal-dns-wizard')">
+    <div class="modal-window modal-lg">
+      <div class="modal-header">
+        <div>
+          <h3>DNS Configuration & Verification</h3>
+          <p id="dns-modal-domain-name" class="modal-subtitle font-mono text-bold">example.com</p>
+        </div>
+        <button type="button" class="btn-close-modal" onclick="closeModal('modal-dns-wizard')">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div id="dns-verify-status-banner" class="alert-box mb-4">
+          <!-- Populated dynamically: Verified vs Pending -->
+        </div>
+
+        <p class="mb-4 text-muted">Add the following DNS records to your domain's DNS provider (e.g. Cloudflare, Route53, Namecheap, GoDaddy):</p>
+
+        <div class="dns-record-card highlight">
+          <div class="dns-record-header">
+            <span class="badge badge-primary">1. OWNERSHIP VERIFICATION (REQUIRED)</span>
+            <span class="dns-type">TXT Record</span>
+          </div>
+          <div class="dns-fields">
+            <div class="dns-field">
+              <span class="dns-field-label">Host / Record Name:</span>
+              <div class="val-copy"><code id="dns-txt-name">_mail-admin.example.com</code> <button class="btn-copy-sm" onclick="copyElementText('dns-txt-name', this)">Copy</button></div>
+            </div>
+            <div class="dns-field">
+              <span class="dns-field-label">Record Value / Token:</span>
+              <div class="val-copy"><code id="dns-txt-val" class="break-all">...</code> <button class="btn-copy-sm" onclick="copyElementText('dns-txt-val', this)">Copy</button></div>
+            </div>
+          </div>
+          <div class="dns-verify-action">
+            <button type="button" id="btn-trigger-verify" class="btn btn-success" onclick="verifyDomainNow()">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+              <span>Verify DNS Record Now</span>
+            </button>
+            <span id="dns-verify-spinner" class="spinner-small hidden"></span>
+          </div>
+        </div>
+
+        <div class="dns-record-card mt-3">
+          <div class="dns-record-header">
+            <span class="badge badge-secondary">2. INCOMING MAIL ROUTING</span>
+            <span class="dns-type">MX Record</span>
+          </div>
+          <div class="dns-fields">
+            <div class="dns-field">
+              <span class="dns-field-label">Host:</span>
+              <code>@</code>
+            </div>
+            <div class="dns-field">
+              <span class="dns-field-label">Priority:</span>
+              <code>10</code>
+            </div>
+            <div class="dns-field">
+              <span class="dns-field-label">Points to (Mail Server):</span>
+              <div class="val-copy"><code id="dns-mx-val">mail.example.com</code> <button class="btn-copy-sm" onclick="copyElementText('dns-mx-val', this)">Copy</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dns-record-card mt-3">
+          <div class="dns-record-header">
+            <span class="badge badge-secondary">3. EMAIL AUTHENTICATION (SPF)</span>
+            <span class="dns-type">TXT Record</span>
+          </div>
+          <div class="dns-fields">
+            <div class="dns-field">
+              <span class="dns-field-label">Host:</span>
+              <code>@</code>
+            </div>
+            <div class="dns-field">
+              <span class="dns-field-label">Value:</span>
+              <div class="val-copy"><code>v=spf1 mx ~all</code> <button class="btn-copy-sm" onclick="copyText('v=spf1 mx ~all', this)">Copy</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dns-record-card mt-3">
+          <div class="dns-record-header">
+            <span class="badge badge-secondary">4. DMARC POLICY</span>
+            <span class="dns-type">TXT Record</span>
+          </div>
+          <div class="dns-fields">
+            <div class="dns-field">
+              <span class="dns-field-label">Host:</span>
+              <div class="val-copy"><code id="dns-dmarc-host">_dmarc.example.com</code> <button class="btn-copy-sm" onclick="copyElementText('dns-dmarc-host', this)">Copy</button></div>
+            </div>
+            <div class="dns-field">
+              <span class="dns-field-label">Value:</span>
+              <div class="val-copy"><code id="dns-dmarc-val">v=DMARC1; p=quarantine;</code> <button class="btn-copy-sm" onclick="copyElementText('dns-dmarc-val', this)">Copy</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" onclick="closeModal('modal-dns-wizard')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 6: Create Alias -->
+  <div id="modal-create-alias" class="modal-backdrop hidden" onclick="handleBackdropClick(event, 'modal-create-alias')">
+    <div class="modal-window">
+      <div class="modal-header">
+        <div>
+          <h3>Create Email Alias</h3>
+          <p class="modal-subtitle">Route incoming mail to an existing mailbox or external destination.</p>
+        </div>
+        <button type="button" class="btn-close-modal" onclick="closeModal('modal-create-alias')">&times;</button>
+      </div>
+
+      <form id="form-create-alias" onsubmit="handleCreateAliasSubmit(event)">
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Source Address (Incoming Alias)</label>
+            <div class="email-input-split">
+              <input id="alias-prefix" type="text" placeholder="support" required pattern="^[a-zA-Z0-9._%+-]+$">
+              <span class="at-symbol">@</span>
+              <select id="alias-domain-select" required>
+                <!-- Populated dynamically -->
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="alias-destination">Forwarding Destination (Deliver To)</label>
+            <input id="alias-destination" type="email" placeholder="e.g. team@yourdomain.com or external@gmail.com" required>
+            <small class="form-hint">Can be an internal mailbox or an external mail provider.</small>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modal-create-alias')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Alias</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Script logic -->
+  <script src="/app.js"></script>
+</body>
+</html>
