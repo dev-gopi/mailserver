@@ -8,6 +8,7 @@ services:
       - TZ=${TZ:?set TZ in .env}
     networks:
       - mailnet
+      - filternet
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pgrep -x spamd >/dev/null"]
@@ -31,6 +32,7 @@ services:
       - clamavdata:/var/lib/clamav
     networks:
       - mailnet
+      - filternet
 
   opendkim:
     build: ./services/opendkim
@@ -65,6 +67,7 @@ services:
       - "${SMTPS_PORT:?set SMTPS_PORT in .env}:465"
     networks:
       - mailnet
+      - filternet
     restart: unless-stopped
     environment:
       - TZ=${TZ:?set TZ in .env}
@@ -249,3 +252,9 @@ volumes:
 networks:
   mailnet:
     driver: bridge
+  filternet:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/28

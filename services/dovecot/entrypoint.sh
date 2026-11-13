@@ -24,6 +24,10 @@ chmod -R 750 /var/mail/vhosts
 # Fix permissions so vmail can write to /var/mail/vhosts
 chown -R vmail:vmail /var/mail/vhosts
 
+# Ensure the shared Postfix spool socket directory exists before Dovecot tries
+# to create its unix listeners there. Do not change its ownership: Postfix owns
+# this directory, while the Dovecot listener sockets are owned by vmail.
+mkdir -p /var/spool/postfix/private
 
 # Ensure /run/dovecot exists and is accessible by vmail
 mkdir -p /run/dovecot

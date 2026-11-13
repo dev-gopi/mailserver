@@ -76,13 +76,15 @@ smtpd_recipient_restrictions =
     permit_mynetworks,
     reject_unauth_destination
 
-smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination
+smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated reject_unauth_destination
 myhostname = __MAIL_HOSTNAME__
 alias_maps = hash:/etc/aliases
 alias_database = hash:/etc/aliases
 mydestination = localhost, localhost.localdomain
 relayhost = 
-mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128 172.16.0.0/12
+# Only the private filtering network may reinject scanned mail on port 10025.
+# Public SMTP, submission, and SMTPS never trust the Docker service network.
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128 172.16.0.0/12 [::1]/128 172.30.0.0/28
 mailbox_size_limit = 0
 recipient_delimiter = +
 inet_interfaces = all

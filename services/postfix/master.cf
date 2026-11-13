@@ -10,6 +10,7 @@
 #               (yes)   (yes)   (no)    (never) (100)
 # ==========================================================================
 smtp      inet n       -       n       -       -       smtpd
+  # Inbound SMTP: scan through ClamAV before delivery
   -o content_filter=clamav:clamav:10026
 #smtp      inet  n       -       y       -       1       postscreen
 #smtpd     pass  -       -       y       -       -       smtpd

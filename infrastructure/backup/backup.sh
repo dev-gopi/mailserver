@@ -27,6 +27,6 @@ while true; do
   fi
   rm -rf "$workdir"
 
-  find /backups -type f -name 'mail-*.tar.gz' -mtime +"$BACKUP_RETENTION_DAYS" -delete
+  find /backups -type f \( -name 'mail-*.tar.gz' -o -name 'mail-*.tar.gz.sha256' \) -mtime +"$BACKUP_RETENTION_DAYS" -delete
   sleep "$BACKUP_INTERVAL_SECONDS"
 done

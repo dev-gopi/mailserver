@@ -33,7 +33,10 @@ Start the complete stack in the background with one command:
 docker compose up --build -d
 ```
 
-Open `http://localhost:8080` for the administrator dashboard. Docker named volumes
+Open `http://localhost:8080` for the administrator dashboard during local-only
+development. HTTPS is intentionally disabled in this mode; do not expose this
+port to an untrusted network or use it for production administration.
+Docker named volumes
 `dbdata`, `maildata`, `mailspool`, and `spamdata` preserve database, mailbox, queue, and
 SpamAssassin data across restarts. Do not use `docker compose down -v` unless you explicitly
 want to permanently remove that data.

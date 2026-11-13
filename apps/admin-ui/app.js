@@ -815,9 +815,11 @@ async function populateDomainSelectors() {
   }
 
   const mbSelect = $('mb-domain-select');
+  const userSelect = $('user-domain-select');
   const aliasSelect = $('alias-domain-select');
   const mbFilter = $('mailbox-domain-filter');
   const domainAlert = $('modal-mailbox-domain-alert');
+  const userDomainAlert = $('modal-user-domain-alert');
 
   if (mbSelect) {
     if (virtualDomains.length === 0) {
@@ -826,6 +828,16 @@ async function populateDomainSelectors() {
     } else {
       mbSelect.innerHTML = virtualDomains.map((d) => '<option value="' + d.name + '">' + d.name + '</option>').join('');
       if (domainAlert) domainAlert.classList.add('hidden');
+    }
+  }
+
+  if (userSelect) {
+    if (virtualDomains.length === 0) {
+      userSelect.innerHTML = '<option value="">No verified domains</option>';
+      if (userDomainAlert) userDomainAlert.classList.remove('hidden');
+    } else {
+      userSelect.innerHTML = virtualDomains.map((d) => '<option value="' + d.name + '">' + d.name + '</option>').join('');
+      if (userDomainAlert) userDomainAlert.classList.add('hidden');
     }
   }
 
@@ -866,6 +878,12 @@ function updateMailboxPreview() {
 function setQuotaPreset(quotaBytes, btn) {
   $("mb-quota-bytes").value = quotaBytes;
   document.querySelectorAll(".quota-presets .btn-preset").forEach((b) => b.classList.remove("active"));
+  if (btn) btn.classList.add("active");
+}
+
+function setUserQuotaPreset(quotaBytes, btn) {
+  $("user-quota-bytes").value = quotaBytes;
+  document.querySelectorAll("#user-quota-presets .btn-preset").forEach((b) => b.classList.remove("active"));
   if (btn) btn.classList.add("active");
 }
 
@@ -910,10 +928,53 @@ async function handleCreateMailbox(event) {
     showToast("Mailbox Created", `Mailbox ${fullAddress} is ready for email traffic.`, "success");
     await refreshAllData();
   } catch (err) {
-    showToast("Creation Failed", err.message, "error");
+    showToast("Mailbox Creation Failed", err.message, "error");
   } finally {
     btn.disabled = false;
     btn.textContent = "Create";
+  }
+}
+
+// Create User Handler
+async function handleCreateUser(event) {
+  event.preventDefault();
+  const prefix = $("user-prefix").value.trim().toLowerCase();
+  const domain = $("user-domain-select").value;
+  const displayName = $("user-display-name").value.trim();
+  const password = $("user-password").value;
+  const quotaBytes = Number($("user-quota-bytes").value) || null;
+  const btn = $("btn-submit-user");
+
+  if (!domain) {
+    showToast("Domain Required", "You must configure and verify a domain first.", "error");
+    return;
+  }
+
+  const fullAddress = `${prefix}@${domain}`;
+  btn.disabled = true;
+  btn.textContent = "Creating User...";
+
+  try {
+    await request("/api/users", {
+      method: "POST",
+      body: JSON.stringify({
+        address: fullAddress,
+        displayName: displayName || undefined,
+        password,
+        quotaBytes: quotaBytes && quotaBytes > 0 ? quotaBytes : undefined
+      })
+    });
+
+    closeModal("modal-create-user");
+    event.target.reset();
+    setUserQuotaPreset(5368709120, document.querySelector('#user-quota-presets .btn-preset[data-quota="5368709120"]'));
+    showToast("User Created", `User ${fullAddress} is ready for email traffic.`, "success");
+    await refreshAllData();
+  } catch (err) {
+    showToast("User Creation Failed", err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Create User";
   }
 }
 

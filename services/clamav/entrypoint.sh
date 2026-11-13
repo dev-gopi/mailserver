@@ -23,24 +23,31 @@ if ! (echo > /dev/tcp/127.0.0.1/3310) 2>/dev/null; then
 fi
 
 # clamsmtpd accepts its configuration file as a positional argument and this
-# release accepts only a numeric OutAddress. Resolve Docker's postfix service
-# name at startup so network recreation does not leave a stale IP in config.
-postfix_ip=""
-for _ in $(seq 1 30); do
-  postfix_ip=$(getent ahostsv4 postfix | awk 'NR == 1 { print $1 }')
-  [ -n "$postfix_ip" ] && break
-  sleep 1
-done
-if [ -z "$postfix_ip" ]; then
-  echo "[ERROR] Unable to resolve the postfix service" >&2
-  exit 1
-fi
-sed "s|postfix:10025|${postfix_ip}:10025|" /etc/clamsmtpd.conf > /tmp/clamsmtpd.conf
-rm -f /var/run/clamsmtpd.pid
-clamsmtpd -f /tmp/clamsmtpd.conf -p /var/run/clamsmtpd.pid
+# release accepts only a numeric OutAddress. The postfix container IP can change
+# whenever the container is recreated (e.g. after a restart). To avoid ClamSMTP
+# forwarding to a stale IP, we use a wrapper loop that re-resolves the hostname
+# and re-launches clamsmtpd whenever it exits. This also means a Postfix restart
+# does not require a manual clamav container restart.
 
-# ClamSMTP daemonizes; keep PID 1 alive while supervising both daemons so a
-# proxy crash is visible to Compose and results in a clean restart.
+restart_clamsmtpd() {
+  local postfix_ip=""
+  for _ in $(seq 1 30); do
+    postfix_ip=$(getent ahostsv4 postfix | awk 'NR == 1 { print $1 }')
+    [ -n "$postfix_ip" ] && break
+    sleep 1
+  done
+  if [ -z "$postfix_ip" ]; then
+    echo "[ERROR] Unable to resolve the postfix service" >&2
+    return 1
+  fi
+  sed "s|postfix:10025|${postfix_ip}:10025|" /etc/clamsmtpd.conf > /tmp/clamsmtpd.conf
+  rm -f /var/run/clamsmtpd.pid
+  clamsmtpd -f /tmp/clamsmtpd.conf -p /var/run/clamsmtpd.pid
+}
+
+restart_clamsmtpd
+
+# Wait for clamsmtpd to write its PID file and confirm it is running.
 for _ in $(seq 1 10); do
   if [ -s /var/run/clamsmtpd.pid ] && kill -0 "$(cat /var/run/clamsmtpd.pid)" 2>/dev/null; then
     break
@@ -53,9 +60,9 @@ if [ ! -s /var/run/clamsmtpd.pid ] || ! kill -0 "$(cat /var/run/clamsmtpd.pid)" 
 fi
 
 while kill -0 "$clamd_pid" 2>/dev/null; do
-  if ! pgrep -x clamsmtpd >/dev/null 2>&1; then
-    echo "[ERROR] clamsmtpd stopped unexpectedly" >&2
-    exit 1
+  if ! kill -0 "$(cat /var/run/clamsmtpd.pid 2>/dev/null)" 2>/dev/null; then
+    echo "[WARN] clamsmtpd stopped; re-resolving postfix IP and restarting..." >&2
+    restart_clamsmtpd || exit 1
   fi
   sleep 2
 done
