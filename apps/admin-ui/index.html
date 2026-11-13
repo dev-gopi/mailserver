@@ -113,10 +113,10 @@
           <span>Overview</span>
         </button>
 
-        <button type="button" class="nav-item" data-tab="mailboxes">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
-          <span>Mailboxes</span>
-          <span id="badge-nav-mailboxes" class="nav-pill">0</span>
+        <button type="button" class="nav-item" data-tab="users">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span>Users</span>
+          <span id="badge-nav-users" class="nav-pill">0</span>
         </button>
 
         <button type="button" class="nav-item" data-tab="domains">
@@ -365,17 +365,21 @@
           </div>
         </section>
 
-        <!-- TAB 2: MAILBOXES (MANAGE USER MAILBOX) -->
-        <section id="tab-mailboxes" class="tab-pane">
+        <!-- TAB 2: USERS (MAILBOX ACCOUNTS) -->
+        <section id="tab-users" class="tab-pane">
           <div class="section-header">
             <div>
-              <h2>User Mailboxes</h2>
-              <p class="section-desc">Manage tenant user mailboxes, passwords, quotas, and service status.</p>
+              <h2>Users & Mailbox Accounts</h2>
+              <p class="section-desc">Manage normal user accounts who sign in via Thunderbird, Outlook, Apple Mail, or webmail using IMAP and send mail via SMTP.</p>
             </div>
             <div class="header-actions">
+              <button class="btn btn-secondary" onclick="openClientGuide('', '')">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                <span>Thunderbird Setup Guide</span>
+              </button>
               <button class="btn btn-primary" onclick="openModal('modal-create-mailbox')">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                <span>Add Mailbox</span>
+                <span>Add Normal User</span>
               </button>
             </div>
           </div>
@@ -384,7 +388,7 @@
           <div class="filter-bar">
             <div class="search-box">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-              <input type="text" id="mailbox-search" placeholder="Search by email address or display name..." oninput="filterMailboxes()">
+              <input type="text" id="mailbox-search" placeholder="Search by user name or email address..." oninput="filterMailboxes()">
             </div>
             <div class="filter-selects">
               <select id="mailbox-domain-filter" onchange="filterMailboxes()">
@@ -404,9 +408,10 @@
               <table class="data-table">
                 <thead>
                   <tr>
-                    <th>Mailbox Address & Name</th>
+                    <th>User & Email Address</th>
                     <th>Domain</th>
                     <th>Storage Quota</th>
+                    <th>Protocols</th>
                     <th>Status</th>
                     <th>Created</th>
                     <th class="text-right">Actions</th>
@@ -418,10 +423,10 @@
               </table>
             </div>
             <div id="mailbox-empty" class="empty-state hidden">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
-              <h3>No mailboxes found</h3>
-              <p>Create your first mailbox to start receiving and sending emails.</p>
-              <button class="btn btn-primary btn-sm" onclick="openModal('modal-create-mailbox')">Create Mailbox</button>
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <h3>No normal users created yet</h3>
+              <p>Create your first user account to connect in Mozilla Thunderbird or Outlook and start sending/receiving emails.</p>
+              <button class="btn btn-primary btn-sm" onclick="openModal('modal-create-mailbox')">Create User Account</button>
             </div>
           </div>
         </section>
@@ -1119,7 +1124,24 @@
 
         <div class="dns-record-card mt-3">
           <div class="dns-record-header">
-            <span class="badge badge-secondary">4. DMARC POLICY</span>
+            <span class="badge badge-secondary">4. DKIM SIGNING (REQUIRED)</span>
+            <span class="dns-type">TXT Record</span>
+          </div>
+          <div class="dns-fields">
+            <div class="dns-field">
+              <span class="dns-field-label">Host / Record Name:</span>
+              <div class="val-copy"><code id="dns-dkim-host">mail._domainkey.example.com</code> <button class="btn-copy-sm" onclick="copyElementText('dns-dkim-host', this)">Copy</button></div>
+            </div>
+            <div class="dns-field">
+              <span class="dns-field-label">Value:</span>
+              <div class="val-copy"><code id="dns-dkim-val" class="break-all">v=DKIM1; k=rsa; p=...</code> <button class="btn-copy-sm" onclick="copyElementText('dns-dkim-val', this)">Copy</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dns-record-card mt-3">
+          <div class="dns-record-header">
+            <span class="badge badge-secondary">5. DMARC POLICY</span>
             <span class="dns-type">TXT Record</span>
           </div>
           <div class="dns-fields">
@@ -1175,6 +1197,47 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeModal('modal-create-alias')">Cancel</button>
           <button type="submit" class="btn btn-primary">Create Alias</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 7: Test User Login (IMAP / SMTP Authentication) -->
+  <div id="modal-test-user-auth" class="modal-backdrop hidden" onclick="handleBackdropClick(event, 'modal-test-user-auth')">
+    <div class="modal-window">
+      <div class="modal-header">
+        <div>
+          <h3>Test User Login (IMAP & SMTP)</h3>
+          <p id="test-auth-user-address" class="modal-subtitle font-mono text-bold">user@domain.com</p>
+        </div>
+        <button type="button" class="btn-close-modal" onclick="closeModal('modal-test-user-auth')">&times;</button>
+      </div>
+
+      <form id="form-test-user-auth" onsubmit="handleTestUserAuthSubmit(event)">
+        <input type="hidden" id="test-auth-user-id">
+        <div class="modal-body">
+          <p class="text-muted" style="font-size: 0.85rem;">
+            Test this user's password directly against Dovecot Blowfish crypt hash to confirm they can connect in Thunderbird (Port 993 IMAP) and send mail via Postfix (Port 587/465 SMTP).
+          </p>
+
+          <div class="form-group">
+            <label for="test-auth-password">Enter User Password</label>
+            <div class="input-with-icon">
+              <input id="test-auth-password" type="password" required placeholder="User password...">
+              <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('test-auth-password', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div id="test-auth-result-box" class="alert-box alert-info hidden">
+            <!-- Populated via JS -->
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modal-test-user-auth')">Close</button>
+          <button type="submit" id="btn-submit-test-auth" class="btn btn-primary">Verify Credentials</button>
         </div>
       </form>
     </div>

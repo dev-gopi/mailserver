@@ -33,6 +33,22 @@ export const openapi = {
     },
     "/api/domains/{id}/verify": { post: { security: [{ bearerAuth: [] }], summary: "Verify _mail-admin.<domain> DNS TXT ownership token" } },
 
+    "/api/users": {
+      get: { security: [{ bearerAuth: [] }], summary: "List normal mailbox users" },
+      post: { security: [{ bearerAuth: [] }], summary: "Create normal mailbox user (for Thunderbird / IMAP / SMTP)" }
+    },
+    "/api/users/client-config": {
+      get: { security: [{ bearerAuth: [] }], summary: "Get Thunderbird, Outlook & Apple Mail client connection configuration (JSON or XML)" }
+    },
+    "/api/users/{id}": {
+      get: { security: [{ bearerAuth: [] }], summary: "Get user details" },
+      patch: { security: [{ bearerAuth: [] }], summary: "Update user password, quota, display name, or active status" },
+      delete: { security: [{ bearerAuth: [] }], summary: "Delete mailbox user" }
+    },
+    "/api/users/{id}/test-auth": {
+      post: { security: [{ bearerAuth: [] }], summary: "Test user password against Dovecot BLF-CRYPT for IMAP & SMTP login" }
+    },
+
     "/api/mailboxes": {
       get: { security: [{ bearerAuth: [] }], summary: "List mailbox users" },
       post: { security: [{ bearerAuth: [] }], summary: "Create mailbox user" }

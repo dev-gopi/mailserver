@@ -23,12 +23,15 @@ export class SystemService {
     return {
       company: profile,
       counts: {
+        // Active = what Dovecot / Postfix sees
         domains: dStats.active,
         mailboxes: mStats.active,
         aliases: aStats.active,
+        // Admin totals
         domainsTotal: dStats.total,
         domainsVerified: dStats.verified,
         domainsPending: dStats.pending,
+        domainsVirtual: dStats.virtualCount,
         mailboxesTotal: mStats.total,
         mailboxesSuspended: mStats.suspended,
         totalQuotaBytes: mStats.totalQuotaBytes,
@@ -51,27 +54,22 @@ export class SystemService {
 
   async flushMailQueue(req: Request) {
     const result = await systemRepository.flushMailQueue();
-    await taskQueue.enqueue("queue:flush-mail", { triggeredBy: req.admin?.username });
     await auditService.log(req, "system.queue.flush", "system", "postfix-spool", result);
     return result;
   }
 
   async testSmtp(req: Request, input: { recipient: string; subject: string; body: string }) {
-    // Queues and executes SMTP diagnostic delivery probe
-    const job = await taskQueue.enqueue("mail:test-delivery", input);
-    await auditService.log(req, "system.test.smtp", "system", job.id, {
-      recipient: input.recipient,
-      subject: input.subject
-    });
-    return {
-      status: "queued",
-      jobId: job.id,
-      message: `Diagnostic SMTP test job registered for delivery to ${input.recipient}`
-    };
+    void req;
+    void input;
+    // TODO: integrate with Postfix sendmail binary or nodemailer with SMTP relay
+    throw new Error("SMTP diagnostic delivery is not configured. Set up an SMTP relay in env.");
   }
 
   async testSpam(req: Request, input: { content: string }) {
-    const isSpamPattern = input.content.includes("XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X");
+    // Pattern-match GTUBE anti-spam test string
+    const isSpamPattern = input.content.includes(
+      "XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X"
+    );
     const score = isSpamPattern ? 1000.0 : 0.2;
     const isSpam = score >= 5.0;
 

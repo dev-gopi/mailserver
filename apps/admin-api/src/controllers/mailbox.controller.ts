@@ -64,6 +64,35 @@ export class MailboxController {
       return res.status(404).json({ error: err.message });
     }
   }
+
+  async testAuth(req: Request, res: Response) {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id)) return res.status(400).json({ error: "Invalid user ID" });
+
+    const { password } = req.body;
+    if (typeof password !== "string" || !password) {
+      return res.status(400).json({ error: "password string is required to test IMAP/SMTP login" });
+    }
+
+    try {
+      const result = await mailboxService.testUserAuth(id, password);
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(404).json({ error: err.message });
+    }
+  }
+
+  async getClientConfig(req: Request, res: Response) {
+    const target = (req.query.email || req.query.domain || "") as string;
+    const config = mailboxService.getClientConfig(target);
+
+    if (req.query.format === "xml") {
+      res.setHeader("Content-Type", "application/xml");
+      return res.send(config.thunderbirdXml);
+    }
+
+    return res.json(config);
+  }
 }
 
 export const mailboxController = new MailboxController();

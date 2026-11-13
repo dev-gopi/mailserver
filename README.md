@@ -1,7 +1,7 @@
 # Local mail-server stack
 
 This is a Docker Compose virtual-mailbox mail server. It contains Postfix, Dovecot,
-PostgreSQL, SpamAssassin, ClamAV, and an Express/TypeScript admin API.
+PostgreSQL, SpamAssassin, ClamAV, OpenDKIM, and an Express/TypeScript admin API.
 
 Read [the project audit](docs/PROJECT_AUDIT.md) before exposing any service publicly.
 
@@ -60,8 +60,12 @@ domains at `/api/domains`, then manage mailbox users and aliases at `/api/mailbo
 `/api/aliases`.
 
 The admin dashboard and Swagger UI are available at `http://localhost:8080/` and
-`http://localhost:8080/docs`; the OpenAPI document is at `/openapi.json`. New domains require DNS TXT verification before mailboxes can be created. The
+`http://localhost:8080/docs`; the OpenAPI document is at `/openapi.json`. New domains require DNS TXT verification before mailboxes can be created. The DNS Setup dialog also generates a unique 2048-bit DKIM key for each domain: publish its `mail._domainkey` TXT record and OpenDKIM begins signing mail within a few seconds. The
 bootstrap `mail.local` domain is verified only for local testing.
+
+The admin API currently reports SMTP diagnostic delivery and Postfix queue inspection/flush
+as unavailable rather than simulating success. These operations require a worker or a
+Postfix command bridge to be deployed alongside the API.
 
 ## Legacy notes
 

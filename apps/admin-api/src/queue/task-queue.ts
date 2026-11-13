@@ -1,6 +1,5 @@
-import net from "net";
 import { EventEmitter } from "events";
-import { env } from "../config/env";
+import { createClient } from "redis";
 
 export interface QueueJob<T = any> {
   id: string;
@@ -17,156 +16,135 @@ export interface QueueJob<T = any> {
 
 export type JobHandler<T = any> = (job: QueueJob<T>) => Promise<any>;
 
-class TaskQueue extends EventEmitter {
-  private memoryQueue: QueueJob[] = [];
-  private completedJobs: QueueJob[] = [];
-  private handlers: Map<string, JobHandler> = new Map();
-  private isProcessing = false;
+const QUEUE = process.env.REDIS_QUEUE || "mail_tasks";
+
+export class TaskQueue extends EventEmitter {
+  private readonly memoryQueue: QueueJob[] = [];
+  private readonly completedJobs: QueueJob[] = [];
+  private readonly handlers = new Map<string, JobHandler>();
+  private readonly redis = createClient({
+    socket: { host: process.env.REDIS_HOST || "redis", port: Number(process.env.REDIS_PORT || 6379), reconnectStrategy: () => false }
+  });
+  private worker: any = null;
   private redisConnected = false;
-  private redisClient: net.Socket | null = null;
-  private redisHost: string;
-  private redisPort: number;
+  private processing = false;
 
-  constructor() {
+  constructor(start = true) {
     super();
-    this.redisHost = process.env.REDIS_HOST || "redis";
-    this.redisPort = Number(process.env.REDIS_PORT || 6379);
-
-    // Attempt Redis connection in background
-    this.tryConnectRedis();
-
-    // Start background processing loop
-    setInterval(() => this.processNext(), 500);
+    this.redis.on("ready", () => { this.redisConnected = true; this.emit("connected", { backend: "redis" }); });
+    this.redis.on("end", () => { this.redisConnected = false; });
+    this.redis.on("error", () => { this.redisConnected = false; });
+    void this.connect(start);
   }
 
-  private tryConnectRedis(): void {
-    const socket = new net.Socket();
-    socket.setTimeout(2500);
-
-    socket.connect(this.redisPort, this.redisHost, () => {
-      this.redisConnected = true;
-      this.redisClient = socket;
-      this.emit("connected", { backend: "redis", host: this.redisHost, port: this.redisPort });
-      // Send PING
-      socket.write("*1\r\n$4\r\nPING\r\n");
-    });
-
-    socket.on("data", (data) => {
-      const resp = data.toString();
-      if (resp.includes("PONG")) {
-        this.redisConnected = true;
+  private async connect(start: boolean) {
+    try {
+      await this.redis.connect();
+      if (start) {
+        this.worker = this.redis.duplicate();
+        await this.worker.connect();
+        void this.consume();
       }
-    });
-
-    socket.on("error", () => {
+    } catch {
       this.redisConnected = false;
-      this.redisClient = null;
-    });
-
-    socket.on("close", () => {
-      this.redisConnected = false;
-      this.redisClient = null;
-      // Retry in 15 seconds
-      setTimeout(() => this.tryConnectRedis(), 15000);
-    });
+      if (start) setInterval(() => void this.connect(true), 15000).unref();
+    }
   }
 
-  public registerHandler<T>(name: string, handler: JobHandler<T>): void {
+  private async consume() {
+    while (this.worker?.isReady) {
+      try {
+        const item = await this.worker.brPop(QUEUE, 1);
+        if (item) await this.execute(JSON.parse(item.element) as QueueJob);
+      } catch {
+        this.redisConnected = false;
+        break;
+      }
+    }
+  }
+
+  registerHandler<T>(name: string, handler: JobHandler<T>): void {
     this.handlers.set(name, handler);
   }
 
-  public async enqueue<T>(name: string, data: T, options: { maxAttempts?: number } = {}): Promise<QueueJob<T>> {
+  async enqueue<T>(name: string, data: T, options: { maxAttempts?: number } = {}): Promise<QueueJob<T>> {
     const job: QueueJob<T> = {
-      id: `job_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-      name,
-      data,
-      status: "pending",
-      attempts: 0,
-      maxAttempts: options.maxAttempts ?? 3,
-      createdAt: Date.now()
+      id: `job_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+      name, data, status: "pending", attempts: 0,
+      maxAttempts: options.maxAttempts ?? 3, createdAt: Date.now()
     };
-
-    if (this.redisConnected && this.redisClient) {
-      try {
-        const payload = JSON.stringify(job);
-        // Redis LPUSH mail_tasks <payload>
-        const cmd = `*3\r\n$5\r\nLPUSH\r\n$10\r\nmail_tasks\r\n$${Buffer.byteLength(payload)}\r\n${payload}\r\n`;
-        this.redisClient.write(cmd);
-      } catch {
-        // Fallback to memory
-        this.memoryQueue.push(job);
-      }
-    } else {
-      this.memoryQueue.push(job);
-    }
-
+    const payload = JSON.stringify(job);
+    if (this.redisConnected) {
+      try { await this.redis.lPush(QUEUE, payload); }
+      catch { this.memoryQueue.push(job); }
+    } else this.memoryQueue.push(job);
     this.emit("enqueued", job);
+    if (!this.redisConnected) void this.processMemory();
     return job;
   }
 
-  private async processNext(): Promise<void> {
-    if (this.isProcessing) return;
-    if (this.memoryQueue.length === 0) return;
-
-    const job = this.memoryQueue.find((j) => j.status === "pending");
+  private async processMemory() {
+    if (this.processing) return;
+    const job = this.memoryQueue.find((candidate) => candidate.status === "pending");
     if (!job) return;
+    await this.execute(job);
+    if (job.status === "pending") setTimeout(() => void this.processMemory(), 25);
+    else void this.processMemory();
+  }
 
+  private async execute(job: QueueJob) {
     const handler = this.handlers.get(job.name);
     if (!handler) {
       job.status = "failed";
       job.error = `No handler registered for task: ${job.name}`;
+      this.finishMemory(job);
       return;
     }
-
-    this.isProcessing = true;
+    this.processing = true;
     job.status = "processing";
     job.attempts++;
-
     try {
-      const result = await handler(job);
+      job.result = await handler(job);
       job.status = "completed";
-      job.result = result;
       job.completedAt = Date.now();
       this.emit("completed", job);
-    } catch (err: any) {
-      if (job.attempts < job.maxAttempts) {
-        job.status = "pending"; // will retry
-      } else {
+    } catch (error: any) {
+      if (job.attempts < job.maxAttempts) job.status = "pending";
+      else {
         job.status = "failed";
-        job.error = err.message || "Execution error";
+        job.error = error?.message || "Execution error";
         this.emit("failed", job);
       }
     } finally {
-      this.isProcessing = false;
-      // Keep recent 100 finished jobs for status inspection
-      if (job.status === "completed" || job.status === "failed") {
-        const idx = this.memoryQueue.indexOf(job);
-        if (idx !== -1) {
-          this.memoryQueue.splice(idx, 1);
-          this.completedJobs.unshift(job);
-          if (this.completedJobs.length > 100) this.completedJobs.pop();
-        }
-      }
+      this.processing = false;
+      this.finishMemory(job);
     }
   }
 
-  public getStats() {
+  private finishMemory(job: QueueJob) {
+    if (job.status === "completed" || job.status === "failed") {
+      const index = this.memoryQueue.indexOf(job);
+      if (index >= 0) this.memoryQueue.splice(index, 1);
+      this.completedJobs.unshift(job);
+      if (this.completedJobs.length > 100) this.completedJobs.pop();
+    }
+  }
+
+  async getStats() {
+    let redisPending = 0;
+    if (this.redisConnected) {
+      try { redisPending = await this.redis.lLen(QUEUE); } catch { /* health is reported below */ }
+    }
     return {
       backend: this.redisConnected ? "redis" : "memory_resilient",
-      redisHost: this.redisHost,
-      redisPort: this.redisPort,
-      pendingCount: this.memoryQueue.filter((j) => j.status === "pending").length,
+      redisHost: process.env.REDIS_HOST || "redis",
+      redisPort: Number(process.env.REDIS_PORT || 6379),
+      pendingCount: this.memoryQueue.filter((j) => j.status === "pending").length + redisPending,
       processingCount: this.memoryQueue.filter((j) => j.status === "processing").length,
       completedCount: this.completedJobs.filter((j) => j.status === "completed").length,
       failedCount: this.completedJobs.filter((j) => j.status === "failed").length,
-      recentJobs: this.completedJobs.slice(0, 10).map((j) => ({
-        id: j.id,
-        name: j.name,
-        status: j.status,
-        attempts: j.attempts,
-        createdAt: j.createdAt,
-        completedAt: j.completedAt
-      }))
+      recentJobs: this.completedJobs.slice(0, 10).map(({ id, name, status, attempts, createdAt, completedAt }) =>
+        ({ id, name, status, attempts, createdAt, completedAt }))
     };
   }
 }

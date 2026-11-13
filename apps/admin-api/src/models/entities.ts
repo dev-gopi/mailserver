@@ -1,6 +1,11 @@
 /**
  * Core Domain Entities & Type Definitions
+ *
+ * Base-table entities are used for admin management operations.
+ * Virtual-view types mirror what Postfix / Dovecot actually see.
  */
+
+// ── Base Table Entities ────────────────────────────────────────────────────────
 
 export interface DomainEntity {
   id: number;
@@ -16,8 +21,10 @@ export interface MailboxEntity {
   id: number;
   domain_id: number;
   domain_name?: string;
+  /** Canonical email address (= virtual_users.email) */
   address: string;
   display_name: string | null;
+  /** Never returned to clients; only used internally for auth checks */
   password_hash?: string;
   maildir: string;
   quota_bytes: number | null;
@@ -35,6 +42,45 @@ export interface AliasEntity {
   active: boolean;
   created_at: string | Date;
 }
+
+// ── Virtual View Types (mirrors Postfix / Dovecot view columns) ────────────────
+
+/**
+ * virtual_domains view:
+ *   SELECT id, name FROM domains WHERE active AND verified_at IS NOT NULL
+ */
+export interface VirtualDomain {
+  id: number;
+  name: string;
+}
+
+/**
+ * virtual_users view:
+ *   SELECT id, domain_id, address AS email, password_hash AS password, maildir, active
+ *   FROM mailboxes
+ */
+export interface VirtualUser {
+  id: number;
+  domain_id: number;
+  email: string;
+  /** Raw hash as Dovecot stores it (may contain {BLF-CRYPT} prefix). Never expose to clients. */
+  password: string;
+  maildir: string;
+  active: boolean;
+}
+
+/**
+ * virtual_aliases view:
+ *   SELECT id, domain_id, source, destination FROM aliases WHERE active
+ */
+export interface VirtualAlias {
+  id: number;
+  domain_id: number;
+  source: string;
+  destination: string;
+}
+
+// ── Admin / Auth Entities ──────────────────────────────────────────────────────
 
 export interface CompanyProfileEntity {
   id: boolean;
@@ -71,8 +117,10 @@ export interface AuditLogEntity {
   entity_type: string;
   entity_id: string | null;
   ip_address: string | null;
-  details: Record<string, any>;
+  details: Record<string, unknown>;
 }
+
+// ── System / Monitoring Types ──────────────────────────────────────────────────
 
 export interface ServiceHealthStatus {
   service: string;
@@ -101,6 +149,7 @@ export interface SystemMetrics {
     domainsTotal: number;
     domainsVerified: number;
     domainsPending: number;
+    domainsVirtual: number;
     mailboxesTotal: number;
     mailboxesSuspended: number;
     totalQuotaBytes: number;

@@ -111,7 +111,9 @@ export class SystemRepository {
     const probes = await Promise.all([
       this.probeTcp("postfix", "Postfix MTA (SMTP/Submission)", postfixHost, 25),
       this.probeTcp("dovecot", "Dovecot MDA (IMAP)", dovecotHost, 143),
-      this.probeTcp("spamassassin", "SpamAssassin Filter", spamdHost, 783, "SPAMC/1.2 PING\r\n"),
+      // spamd expects command first, followed by the SPAMC protocol version
+      // and a blank line terminating the headers.
+      this.probeTcp("spamassassin", "SpamAssassin Filter", spamdHost, 783, "PING SPAMC/1.5\r\n\r\n"),
       this.probeTcp("clamav", "ClamAV Engine", clamHost, 3310, "PING\r\n"),
       this.probeTcp("redis", "Redis Queue & Cache", redisHost, 6379, "*1\r\n$4\r\nPING\r\n")
     ]);
@@ -120,23 +122,33 @@ export class SystemRepository {
   }
 
   async getMailQueueStatus(): Promise<MailQueueStatus> {
-    // In production with shared spool, this queries the mailspool directory / spool status
-    // or inspects virtual delivery state
-    return {
-      activeCount: 0,
-      deferredCount: 0,
-      totalCount: 0,
-      queueStatus: "idle",
-      lastFlushedAt: new Date().toISOString()
-    };
+    const output = await this.postfixBridge("STATUS");
+    const lines = output.split(/\r?\n/).filter(Boolean);
+    const summary = lines.find((line) => /requests?/i.test(line)) || "";
+    const match = summary.match(/(?:in\s+)?(\d+)\s+requests?/i);
+    const total = match ? Number(match[1]) : 0;
+    return { activeCount: total, deferredCount: 0, totalCount: total,
+      queueStatus: total > 100 ? "congested" : total ? "processing" : "idle" };
   }
 
   async flushMailQueue(): Promise<{ success: boolean; message: string; flushedAt: string }> {
-    return {
-      success: true,
-      message: "Postfix queue flush signal dispatched successfully",
-      flushedAt: new Date().toISOString()
-    };
+    await this.postfixBridge("FLUSH");
+    return { success: true, message: "Postfix queue flush requested", flushedAt: new Date().toISOString() };
+  }
+
+  private postfixBridge(command: "STATUS" | "FLUSH"): Promise<string> {
+    const host = process.env.POSTFIX_HOST || "postfix";
+    const port = Number(process.env.POSTFIX_BRIDGE_PORT || 2526);
+    return new Promise((resolve, reject) => {
+      const socket = new net.Socket();
+      let output = "";
+      socket.setTimeout(3000);
+      socket.connect(port, host, () => socket.write(`${command}\n`));
+      socket.on("data", (chunk) => { output += chunk.toString(); });
+      socket.on("end", () => resolve(output));
+      socket.on("timeout", () => { socket.destroy(); reject(new Error("Postfix queue bridge timed out")); });
+      socket.on("error", (error) => reject(new Error(`Postfix queue bridge unavailable: ${error.message}`)));
+    });
   }
 }
 

@@ -12,7 +12,7 @@ services:
       - mailnet
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 783"]
+      test: ["CMD-SHELL", "pgrep -x spamd >/dev/null"]
       interval: 15s
       timeout: 3s
       retries: 5
@@ -34,6 +34,20 @@ services:
       - clamavdata:/var/lib/clamav
     networks:
       - mailnet
+
+  opendkim:
+    build: ./services/opendkim
+    container_name: mail_opendkim
+    restart: unless-stopped
+    volumes:
+      - dkimkeys:/var/lib/opendkim
+    networks:
+      - mailnet
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8891"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
 
   postfix:
     build: ./services/postfix
@@ -58,6 +72,11 @@ services:
       spamassassin:
         condition: service_healthy
       clamav:
+        # ClamSMTP reinjects mail into Postfix, so Postfix must be started
+        # before ClamAV waits for its Docker address. Health is still exposed
+        # to monitoring, without creating a startup dependency cycle.
+        condition: service_started
+      opendkim:
         condition: service_healthy
       dovecot:
         condition: service_started
@@ -139,9 +158,14 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       POSTFIX_HOST: postfix
+      POSTFIX_BRIDGE_PORT: 2526
       DOVECOT_HOST: dovecot
       SPAMASSASSIN_HOST: spamassassin
       CLAMAV_HOST: clamav
+      DKIM_KEY_DIR: /var/lib/opendkim/keys
+      DKIM_KEY_UID: 10001
+    volumes:
+      - dkimkeys:/var/lib/opendkim
     networks:
       - mailnet
     restart: unless-stopped
@@ -174,6 +198,7 @@ volumes:
   dbdata:
   spamdata:
   clamavdata:
+  dkimkeys:
   redisdata:
 
 networks:

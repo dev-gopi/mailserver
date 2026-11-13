@@ -30,7 +30,7 @@ compatibility_level = 2
 smtpd_tls_cert_file=/etc/ssl/certs/cert.pem
 smtpd_tls_key_file=/etc/ssl/certs/privkey.key
 smtpd_use_tls=yes
-smtpd_tls_auth_only=no
+smtpd_tls_auth_only=yes
 tls_ssl_options = 0x80
 smtpd_tls_security_level=may
 
@@ -115,5 +115,11 @@ virtual_gid_maps = static:5000
 # ClamSMTP reinjects mail on port 10025; master.cf sends it through
 # SpamAssassin before LMTP delivery to Dovecot.
 content_filter = clamav:clamav:10026
+
+# Sign outgoing messages with the per-domain keys managed by the admin UI.
+smtpd_milters = inet:opendkim:8891
+non_smtpd_milters = $smtpd_milters
+milter_default_action = accept
+milter_protocol = 6
 
 virtual_transport = lmtp:unix:private/dovecot-lmtp

@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "npm run build && node --test test/*.test.js",
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "nodemon src/index.ts"
@@ -29,6 +29,7 @@
     "express-rate-limit": "^8.7.4",
     "helmet": "^8.3.0",
     "pg": "^8.23.1",
+    "redis": "^4.7.1",
     "swagger-ui-express": "^5.0.1",
     "zod": "^4.6.7"
   }

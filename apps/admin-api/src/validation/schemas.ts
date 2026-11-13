@@ -43,6 +43,10 @@ export const mailboxPatchSchema = z.object({
   quotaBytes: z.number().int().positive().optional().nullable()
 });
 
+export const mailboxTestAuthSchema = z.object({
+  password: z.string().min(1, "Password is required").max(256)
+});
+
 export const aliasCreateSchema = z.object({
   source: z.string().email("Invalid source email address"),
   destination: z.string().email("Invalid destination email address")

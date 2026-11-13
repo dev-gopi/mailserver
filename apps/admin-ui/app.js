@@ -108,12 +108,14 @@ function switchTab(tabId) {
     pane.classList.remove("active");
   });
 
-  const activePane = $(`tab-${tabId}`);
+  const targetPaneId = tabId === "users" || tabId === "mailboxes" ? "tab-users" : `tab-${tabId}`;
+  const activePane = $(targetPaneId);
   if (activePane) activePane.classList.add("active");
 
   const titles = {
     overview: "Overview",
-    mailboxes: "Mailboxes",
+    users: "Users & Mailbox Accounts",
+    mailboxes: "Users & Mailbox Accounts",
     domains: "Hosted Domains",
     aliases: "Email Aliases & Forwarding",
     services: "Services, Mail Queue & Diagnostics",
@@ -280,8 +282,8 @@ async function refreshAllData() {
       request("/api/dashboard"),
       request("/api/company"),
       request("/api/domains"),
-      request("/api/mailboxes"),
-      request("/api/aliases")
+      request("/api/users"),      // Uses virtual_users view (Dovecot-compatible)
+      request("/api/aliases")     // Admin view — includes inactive aliases
     ]);
 
     state.dashboardData = dashboard;
@@ -326,7 +328,7 @@ function renderOverview() {
 
   // Badges in Nav
   $("badge-nav-domains").textContent = state.domains.length;
-  $("badge-nav-mailboxes").textContent = state.mailboxes.length;
+  if ($("badge-nav-users")) $("badge-nav-users").textContent = state.mailboxes.length;
   $("badge-nav-aliases").textContent = state.aliases.length;
 
   // Recent activity stream
@@ -417,6 +419,12 @@ function renderMailboxes() {
           </span>
         </td>
         <td>
+          <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+            <span class="badge badge-success" style="font-size: 0.72rem; padding: 2px 6px;">IMAP 993</span>
+            <span class="badge badge-success" style="font-size: 0.72rem; padding: 2px 6px;">SMTP 587</span>
+          </div>
+        </td>
+        <td>
           <span class="badge ${m.active ? "badge-success" : "badge-danger"}">
             <span class="badge-status-dot ${m.active ? "online" : "offline"}"></span>
             ${m.active ? "Active" : "Suspended"}
@@ -425,16 +433,19 @@ function renderMailboxes() {
         <td>${formatDate(m.created_at)}</td>
         <td class="text-right">
           <div class="table-actions">
-            <button class="btn-action-icon" title="Client Connection Setup Guide" onclick="openClientGuide('${m.address}', '${m.domain_name}')">
+            <button class="btn-action-icon" title="Thunderbird & Mail Client Setup Guide" onclick="openClientGuide('${m.address}', '${m.domain_name}')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
             </button>
-            <button class="btn-action-icon" title="Edit Mailbox / Password / Quota" onclick="openEditMailbox(${m.id})">
+            <button class="btn-action-icon" title="Test User IMAP / SMTP Password" onclick="openTestUserAuth(${m.id}, '${m.address}')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </button>
+            <button class="btn-action-icon" title="Edit User / Password / Quota" onclick="openEditMailbox(${m.id})">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
             </button>
-            <button class="btn-action-icon ${m.active ? "danger" : "verify"}" title="${m.active ? "Suspend Mailbox" : "Activate Mailbox"}" onclick="toggleMailboxActive(${m.id}, ${!m.active})">
+            <button class="btn-action-icon ${m.active ? "danger" : "verify"}" title="${m.active ? "Suspend User" : "Activate User"}" onclick="toggleMailboxActive(${m.id}, ${!m.active})">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${m.active ? '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>' : '<polyline points="20 6 9 17 4 12"/>'}</svg>
             </button>
-            <button class="btn-action-icon danger" title="Delete Mailbox" onclick="deleteMailbox(${m.id}, '${m.address}')">
+            <button class="btn-action-icon danger" title="Delete User" onclick="deleteMailbox(${m.id}, '${m.address}')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
             </button>
           </div>
@@ -449,31 +460,44 @@ function filterMailboxes() {
 }
 
 // Mailbox Domain Selector Populator
-function populateDomainSelectors() {
-  const verifiedDomains = state.domains.filter((d) => d.active && d.verified_at);
-  const mbSelect = $("mb-domain-select");
-  const aliasSelect = $("alias-domain-select");
-  const mbFilter = $("mailbox-domain-filter");
-  const domainAlert = $("modal-mailbox-domain-alert");
+// Uses /api/domains/active which returns only virtual_domains (Postfix-visible domains)
+async function populateDomainSelectors() {
+  // Fetch virtual domains from server — these are guaranteed active + verified
+  let virtualDomains = [];
+  try {
+    virtualDomains = await request('/api/domains/active');
+  } catch {
+    // Fallback: derive from full domain list already in state
+    virtualDomains = state.domains.filter((d) => d.active && d.verified_at);
+  }
+
+  const mbSelect = $('mb-domain-select');
+  const aliasSelect = $('alias-domain-select');
+  const mbFilter = $('mailbox-domain-filter');
+  const domainAlert = $('modal-mailbox-domain-alert');
 
   if (mbSelect) {
-    if (verifiedDomains.length === 0) {
-      mbSelect.innerHTML = `<option value="">No verified domains</option>`;
-      if (domainAlert) domainAlert.classList.remove("hidden");
+    if (virtualDomains.length === 0) {
+      mbSelect.innerHTML = '<option value="">No verified domains</option>';
+      if (domainAlert) domainAlert.classList.remove('hidden');
     } else {
-      mbSelect.innerHTML = verifiedDomains.map((d) => `<option value="${d.name}">${d.name}</option>`).join("");
-      if (domainAlert) domainAlert.classList.add("hidden");
+      mbSelect.innerHTML = virtualDomains.map((d) => '<option value="' + d.name + '">' + d.name + '</option>').join('');
+      if (domainAlert) domainAlert.classList.add('hidden');
     }
   }
 
   if (aliasSelect) {
-    aliasSelect.innerHTML = verifiedDomains.map((d) => `<option value="${d.name}">${d.name}</option>`).join("");
+    aliasSelect.innerHTML = virtualDomains.length === 0
+      ? '<option value="">No verified domains</option>'
+      : virtualDomains.map((d) => '<option value="' + d.name + '">' + d.name + '</option>').join('');
   }
 
   if (mbFilter) {
     const currentVal = mbFilter.value;
     const allDomainNames = state.domains.map((d) => d.name);
-    mbFilter.innerHTML = `<option value="">All Domains</option>` + allDomainNames.map((name) => `<option value="${name}" ${name === currentVal ? "selected" : ""}>${name}</option>`).join("");
+    mbFilter.innerHTML = '<option value="">All Domains</option>' + allDomainNames.map(
+      (name) => '<option value="' + name + '"' + (name === currentVal ? ' selected' : '') + '>' + name + '</option>'
+    ).join('');
   }
 
   updateMailboxPreview();
@@ -624,15 +648,74 @@ async function deleteMailbox(id, address) {
   }
 }
 
-// Client Guide Modal
-function openClientGuide(address, domain) {
-  const host = domain ? `mail.${domain}` : window.location.hostname;
-  $("guide-mailbox-address").textContent = address;
+// Client Guide Modal (Thunderbird / Outlook / Apple Mail)
+function openClientGuide(address = "", domain = "") {
+  let userAddr = address;
+  let domName = domain;
+
+  if (!userAddr) {
+    const firstMb = state.mailboxes[0];
+    userAddr = firstMb ? firstMb.address : "user@yourdomain.com";
+    domName = firstMb ? (firstMb.domain_name || firstMb.address.split("@")[1]) : (state.domains[0]?.name || window.location.hostname);
+  }
+
+  const host = domName ? `mail.${domName}` : window.location.hostname;
+  $("guide-mailbox-address").textContent = userAddr;
   $("guide-imap-host").textContent = host;
-  $("guide-imap-user").textContent = address;
+  $("guide-imap-user").textContent = userAddr;
   $("guide-smtp-host").textContent = host;
-  $("guide-smtp-user").textContent = address;
+  $("guide-smtp-user").textContent = userAddr;
   openModal("modal-client-guide");
+}
+
+// Test User IMAP & SMTP Login Credentials
+function openTestUserAuth(id, address) {
+  $("test-auth-user-id").value = id;
+  $("test-auth-user-address").textContent = address;
+  $("test-auth-password").value = "";
+  const resultBox = $("test-auth-result-box");
+  if (resultBox) {
+    resultBox.classList.add("hidden");
+    resultBox.innerHTML = "";
+  }
+  openModal("modal-test-user-auth");
+}
+
+async function handleTestUserAuthSubmit(event) {
+  event.preventDefault();
+  const id = $("test-auth-user-id").value;
+  const password = $("test-auth-password").value;
+  const btn = $("btn-submit-test-auth");
+  const resultBox = $("test-auth-result-box");
+
+  btn.disabled = true;
+  btn.textContent = "Verifying...";
+
+  try {
+    const res = await request(`/api/users/${id}/test-auth`, {
+      method: "POST",
+      body: JSON.stringify({ password })
+    });
+
+    resultBox.classList.remove("hidden");
+    if (res.success) {
+      resultBox.className = "alert-box alert-success";
+      resultBox.innerHTML = `<strong>Authentication Succeeded:</strong> ${escapeHtml(res.message)}<div class="mt-3"><small>Ready for Mozilla Thunderbird (IMAP: 993 SSL) and Postfix (SMTP: 587 STARTTLS).</small></div>`;
+      showToast("Login Succeeded", "Password verified against Dovecot Blowfish crypt.", "success");
+    } else {
+      resultBox.className = "alert-box alert-warning";
+      resultBox.innerHTML = `<strong>Authentication Failed:</strong> ${escapeHtml(res.message)}`;
+      showToast("Login Failed", res.message, "warning");
+    }
+  } catch (err) {
+    resultBox.classList.remove("hidden");
+    resultBox.className = "alert-box alert-warning";
+    resultBox.innerHTML = `<strong>Error:</strong> ${escapeHtml(err.message)}`;
+    showToast("Auth Error", err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Verify Credentials";
+  }
 }
 
 // 3. Domain Management & DNS Setup
@@ -727,6 +810,8 @@ function openDnsWizard(domainId) {
   $("dns-mx-val").textContent = `mail.${domain.name}`;
   $("dns-dmarc-host").textContent = `_dmarc.${domain.name}`;
   $("dns-dmarc-val").textContent = `v=DMARC1; p=quarantine; rua=mailto:postmaster@${domain.name}`;
+  $("dns-dkim-host").textContent = domain.dkimTxtRecord?.name || `mail._domainkey.${domain.name}`;
+  $("dns-dkim-val").textContent = domain.dkimTxtRecord?.value || "DKIM key pending...";
 
   const btnVerify = $("btn-trigger-verify");
   if (isVerified) {

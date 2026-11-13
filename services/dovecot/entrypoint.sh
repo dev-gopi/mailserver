@@ -4,6 +4,10 @@ set -e
 : "${MAIL_DB_PASSWORD:?MAIL_DB_PASSWORD must be set}"
 escaped_password=$(printf '%s' "$MAIL_DB_PASSWORD" | sed 's/[&|\\]/\\&/g')
 sed -i "s|__MAIL_DB_PASSWORD__|${escaped_password}|g" /etc/dovecot/dovecot-sql.conf.ext
+if grep -q '__MAIL_DB_PASSWORD__' /etc/dovecot/dovecot-sql.conf.ext; then
+  echo "Dovecot database password injection failed" >&2
+  exit 1
+fi
 
 # Ensure /var/mail/vhosts exists
 mkdir -p /var/mail/vhosts

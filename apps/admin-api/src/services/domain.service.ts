@@ -1,19 +1,84 @@
 import crypto from "crypto";
 import { resolveTxt } from "dns/promises";
+import { promises as fs } from "fs";
+import path from "path";
 import { Request } from "express";
+import { env } from "../config/env";
+import { DomainEntity } from "../models/entities";
 import { domainRepository } from "../repositories/domain.repository";
 import { auditService } from "./audit";
-import { taskQueue } from "../queue/task-queue";
 
 export class DomainService {
+  private keyPath(domainName: string) {
+    const root = path.resolve(env.dkimKeyDir);
+    const directory = path.resolve(root, domainName);
+    if (!directory.startsWith(`${root}${path.sep}`)) throw new Error("Invalid domain name");
+    return {
+      directory,
+      privateKey: path.join(directory, "mail.private"),
+      publicKey: path.join(directory, "mail.public")
+    };
+  }
+
+  private async ensureDkimKey(domainName: string) {
+    const paths = this.keyPath(domainName);
+    try {
+      const publicKey = await fs.readFile(paths.publicKey, "utf8");
+      return publicKey.trim();
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: "pkcs1", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "der" }
+    });
+    const dnsValue = (publicKey as Buffer).toString("base64");
+    await fs.mkdir(paths.directory, { recursive: true, mode: 0o750 });
+    await fs.writeFile(paths.privateKey, privateKey, { mode: 0o640 });
+    await fs.writeFile(paths.publicKey, dnsValue, { mode: 0o640 });
+    await Promise.all([
+      fs.chown(paths.directory, env.dkimKeyUid, env.dkimKeyUid),
+      fs.chown(paths.privateKey, env.dkimKeyUid, env.dkimKeyUid),
+      fs.chown(paths.publicKey, env.dkimKeyUid, env.dkimKeyUid)
+    ]);
+    return dnsValue;
+  }
+
+  private async withDkimRecord(domain: DomainEntity) {
+    const publicKey = await this.ensureDkimKey(domain.name);
+    return {
+      ...domain,
+      dkimTxtRecord: {
+        name: `mail._domainkey.${domain.name}`,
+        value: `v=DKIM1; k=rsa; p=${publicKey}`
+      }
+    };
+  }
+
+  /**
+   * Admin-facing: returns ALL domains from the base table with DKIM info.
+   * Includes unverified and disabled domains so admins can manage them.
+   */
   async getAllDomains() {
-    return domainRepository.findAll();
+    const domains = await domainRepository.findAll();
+    return Promise.all(domains.map((d) => this.withDkimRecord(d)));
+  }
+
+  /**
+   * Mail-delivery-facing: returns only domains in virtual_domains (active +
+   * verified) — the same set Postfix accepts mail for.
+   * Used by API consumers that need a list of mail-active domains.
+   */
+  async getActiveDomains() {
+    return domainRepository.findAllVirtual();
   }
 
   async getDomainById(id: number) {
     const domain = await domainRepository.findById(id);
     if (!domain) throw new Error("Domain not found");
-    return domain;
+    return this.withDkimRecord(domain);
   }
 
   async createDomain(req: Request, name: string) {
@@ -25,14 +90,12 @@ export class DomainService {
 
     const verificationToken = crypto.randomBytes(24).toString("base64url");
     const domain = await domainRepository.create(cleanName, verificationToken);
+    const domainWithDkim = await this.withDkimRecord(domain);
 
     await auditService.log(req, "domain.create", "domain", domain.id, { name: domain.name });
 
-    // Enqueue background DNS lookup job
-    await taskQueue.enqueue("dns:verify-domain", { domainId: domain.id, domainName: domain.name });
-
     return {
-      ...domain,
+      ...domainWithDkim,
       dnsTxtRecord: {
         name: `_mail-admin.${domain.name}`,
         value: verificationToken
@@ -59,9 +122,12 @@ export class DomainService {
       const verified = await domainRepository.markVerified(domain.id);
       await auditService.log(req, "domain.verify", "domain", domain.id, { name: domain.name });
       return verified;
-    } catch (err: any) {
-      if (err.code === "ENOTFOUND" || err.code === "ENODATA") {
-        throw new Error(`DNS lookup for '${recordName}' found no TXT records. Please check your DNS provider propagation.`);
+    } catch (err: unknown) {
+      const e = err as NodeJS.ErrnoException & { message: string };
+      if (e.code === "ENOTFOUND" || e.code === "ENODATA") {
+        throw new Error(
+          `DNS lookup for '${recordName}' found no TXT records. Check your DNS provider and allow up to 48h propagation.`
+        );
       }
       throw err;
     }
@@ -80,11 +146,16 @@ export class DomainService {
       const deleted = await domainRepository.delete(id);
       if (!deleted) throw new Error("Domain not found");
 
+      await fs.rm(this.keyPath(deleted.name).directory, { recursive: true, force: true });
+
       await auditService.log(req, "domain.delete", "domain", id, { name: deleted.name });
       return deleted;
-    } catch (err: any) {
-      if (err.code === "23503") {
-        throw new Error("Cannot delete domain: active mailboxes or email aliases are attached to it. Delete them first.");
+    } catch (err: unknown) {
+      const e = err as { code?: string; message?: string };
+      if (e.code === "23503") {
+        throw new Error(
+          "Cannot delete domain: active mailboxes or email aliases are attached to it. Remove them first."
+        );
       }
       throw err;
     }

@@ -39,7 +39,8 @@ export class SystemController {
       const result = await systemService.flushMailQueue(req);
       return res.json(result);
     } catch (err: any) {
-      return res.status(500).json({ error: err.message || "Queue flush failed" });
+      const status = err.message?.includes("not available") ? 501 : 500;
+      return res.status(status).json({ error: err.message || "Queue flush failed" });
     }
   }
 
@@ -51,7 +52,8 @@ export class SystemController {
       const result = await systemService.testSmtp(req, req.body);
       return res.json(result);
     } catch (err: any) {
-      return res.status(500).json({ error: err.message || "SMTP test failed" });
+      const status = err.message?.includes("not configured") ? 501 : 500;
+      return res.status(status).json({ error: err.message || "SMTP test failed" });
     }
   }
 

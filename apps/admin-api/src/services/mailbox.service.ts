@@ -5,6 +5,10 @@ import { domainRepository } from "../repositories/domain.repository";
 import { auditService } from "./audit";
 
 export class MailboxService {
+  /**
+   * Returns all mail users joined from virtual_users (Dovecot's view).
+   * Active flag reflects what Dovecot actually sees.
+   */
   async getAllMailboxes() {
     return mailboxRepository.findAll();
   }
@@ -31,10 +35,20 @@ export class MailboxService {
       throw new Error("Invalid email address format");
     }
 
-    // Verify domain is verified and active
+    // Domain must be active, verified AND present in virtual_domains (i.e. Postfix accepts it)
     const domain = await domainRepository.findActiveVerifiedByName(domainName);
     if (!domain) {
-      throw new Error(`Domain "${domainName}" is not active and verified. Verify the domain first.`);
+      throw new Error(
+        `Domain "${domainName}" is not active and verified. Verify the domain first.`
+      );
+    }
+
+    // Cross-check: confirm virtual_domains also exposes this domain
+    const virtualDomain = await domainRepository.findVirtualByName(domainName);
+    if (!virtualDomain) {
+      throw new Error(
+        `Domain "${domainName}" is not in the virtual_domains view. It must be active and verified before creating mailboxes.`
+      );
     }
 
     const existing = await mailboxRepository.findByAddress(address);
@@ -42,9 +56,9 @@ export class MailboxService {
       throw new Error(`Mailbox with address "${address}" already exists`);
     }
 
-    // Dovecot blowfish crypt format
-    const saltRounds = 12;
-    const bcryptHash = await bcrypt.hash(input.password, saltRounds);
+    // Store with Dovecot-compatible {BLF-CRYPT} prefix so virtual_users.password
+    // is directly usable by Dovecot's authentication driver.
+    const bcryptHash = await bcrypt.hash(input.password, 12);
     const passwordHash = `{BLF-CRYPT}${bcryptHash}`;
     const maildir = `${domainName}/${local}/`;
 
@@ -97,7 +111,8 @@ export class MailboxService {
     }
 
     if (updates.quotaBytes !== undefined) {
-      repoUpdates.quotaBytes = updates.quotaBytes && updates.quotaBytes > 0 ? updates.quotaBytes : null;
+      repoUpdates.quotaBytes =
+        updates.quotaBytes && updates.quotaBytes > 0 ? updates.quotaBytes : null;
     }
 
     const updated = await mailboxRepository.update(id, repoUpdates);
@@ -114,11 +129,126 @@ export class MailboxService {
   }
 
   async deleteMailbox(req: Request, id: number) {
+    // Fetch via virtual_users first so we have the address
+    const target = await mailboxRepository.findById(id);
+    if (!target) throw new Error("Mailbox not found");
+
     const deleted = await mailboxRepository.delete(id);
     if (!deleted) throw new Error("Mailbox not found");
 
-    await auditService.log(req, "mailbox.delete", "mailbox", id, { address: deleted.address });
+    await auditService.log(req, "mailbox.delete", "mailbox", id, { address: target.address });
     return deleted;
+  }
+
+  /**
+   * Verify a user's password against the hash stored in virtual_users /
+   * mailboxes.  Mimics exactly what Dovecot does during IMAP login.
+   */
+  async testUserAuth(id: number, password: string) {
+    // Use virtual_users-backed findById so only accounts Dovecot can see are tested
+    const mailbox = await mailboxRepository.findById(id);
+    if (!mailbox) throw new Error("Mail user not found in virtual_users");
+
+    if (!mailbox.active) {
+      return {
+        success: false,
+        address: mailbox.address,
+        active: false,
+        imapReady: false,
+        smtpReady: false,
+        message: "Account is suspended. IMAP/SMTP login rejected by Dovecot."
+      };
+    }
+
+    // Retrieve the raw hash from base table (virtual_users.password = mailboxes.password_hash)
+    const storedHash = await mailboxRepository.getPasswordHash(id);
+    if (!storedHash) {
+      throw new Error("No password hash found for this user");
+    }
+
+    // Strip Dovecot scheme prefix before bcrypt.compare
+    const cleanHash = storedHash.replace(/^\{BLF-CRYPT\}/i, "");
+    const matches = await bcrypt.compare(password, cleanHash);
+
+    return {
+      success: matches,
+      address: mailbox.address,
+      active: mailbox.active,
+      imapReady: matches && mailbox.active,
+      smtpReady: matches && mailbox.active,
+      dovecotScheme: "BLF-CRYPT",
+      message: matches
+        ? "Credentials valid! User can authenticate via Thunderbird / IMAP (993 SSL) and SMTP (587 STARTTLS)."
+        : "Invalid password. IMAP/SMTP login rejected (Dovecot BLF-CRYPT mismatch)."
+    };
+  }
+
+  /**
+   * Returns Thunderbird / Apple Mail / Outlook auto-configure payload for a
+   * given email address or domain.
+   */
+  getClientConfig(emailOrDomain?: string) {
+    let domain = "yourdomain.com";
+    let email = "user@yourdomain.com";
+
+    if (emailOrDomain) {
+      if (emailOrDomain.includes("@")) {
+        email = emailOrDomain;
+        domain = emailOrDomain.split("@")[1];
+      } else {
+        domain = emailOrDomain;
+        email = `user@${domain}`;
+      }
+    }
+
+    const mailHost = `mail.${domain}`;
+
+    const thunderbirdXml = `<?xml version="1.0" encoding="UTF-8"?>
+<clientConfig version="1.1">
+  <emailProvider id="${domain}">
+    <domain>${domain}</domain>
+    <displayName>Mail Server (${domain})</displayName>
+    <displayShortName>${domain}</displayShortName>
+    <incomingServer type="imap">
+      <hostname>${mailHost}</hostname>
+      <port>993</port>
+      <socketType>SSL</socketType>
+      <authentication>password-cleartext</authentication>
+      <username>${email}</username>
+    </incomingServer>
+    <outgoingServer type="smtp">
+      <hostname>${mailHost}</hostname>
+      <port>587</port>
+      <socketType>STARTTLS</socketType>
+      <authentication>password-cleartext</authentication>
+      <username>${email}</username>
+    </outgoingServer>
+  </emailProvider>
+</clientConfig>`;
+
+    return {
+      domain,
+      email,
+      incoming: {
+        protocol: "IMAP",
+        hostname: mailHost,
+        port: 993,
+        socketType: "SSL/TLS",
+        authentication: "Normal password",
+        username: email
+      },
+      outgoing: {
+        protocol: "SMTP",
+        hostname: mailHost,
+        port: 587,
+        socketType: "STARTTLS",
+        alternativePort: 465,
+        alternativeSocketType: "SSL/TLS",
+        authentication: "Normal password",
+        username: email
+      },
+      thunderbirdXml
+    };
   }
 
   async getMailboxStats() {

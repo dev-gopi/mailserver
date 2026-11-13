@@ -65,7 +65,9 @@ export class AuthService {
     }
 
     const hashed = await bcrypt.hash(newPassword, 12);
-    await adminRepository.updatePassword(req.admin!.id, hashed);
+    const token = (req.header("authorization") || "").replace(/^Bearer\s+/i, "");
+    await adminRepository.updatePassword(req.admin!.id, hashed, token ? tokenHash(token) : undefined);
+    // Keep the current authenticated session usable while invalidating all other sessions.
     await auditService.log(req, "admin.password.change", "admin", req.admin!.id);
   }
 

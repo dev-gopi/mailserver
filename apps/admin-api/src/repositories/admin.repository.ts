@@ -57,11 +57,32 @@ export class AdminRepository {
     );
   }
 
-  async updatePassword(id: number, passwordHash: string): Promise<void> {
-    await db.query(
-      "UPDATE admins SET password_hash = $1, must_change_password = FALSE, password_changed_at = now() WHERE id = $2",
-      [passwordHash, id]
-    );
+  async updatePassword(id: number, passwordHash: string, currentTokenHash?: string): Promise<void> {
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "UPDATE admins SET password_hash = $1, must_change_password = FALSE, password_changed_at = now() WHERE id = $2",
+        [passwordHash, id]
+      );
+      if (currentTokenHash) {
+        await client.query(
+          "UPDATE admin_sessions SET revoked_at = now() WHERE admin_id = $1 AND revoked_at IS NULL AND token_hash <> $2",
+          [id, currentTokenHash]
+        );
+      } else {
+        await client.query(
+          "UPDATE admin_sessions SET revoked_at = now() WHERE admin_id = $1 AND revoked_at IS NULL",
+          [id]
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
 

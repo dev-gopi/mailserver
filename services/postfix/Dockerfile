@@ -1,4 +1,4 @@
-FROM ubuntu:20.04
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -13,6 +13,7 @@ RUN apt-get update \
     spamc \
     openssl \
     net-tools \
+    socat \
     telnet \
     nano \
     && apt-get clean \
@@ -37,6 +38,8 @@ EXPOSE 25 587 465
 # CMD ["postfix", "start-fg"]
 
 COPY entrypoint.sh /entrypoint.sh
+COPY postfix-bridge.sh /usr/local/bin/postfix-bridge.sh
 RUN chmod +x /entrypoint.sh
+RUN chmod 750 /usr/local/bin/postfix-bridge.sh && chown root:root /usr/local/bin/postfix-bridge.sh
 
 CMD ["/entrypoint.sh"]

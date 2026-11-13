@@ -16,6 +16,8 @@ export const env = {
   databaseUser: process.env.PGUSER,
   databasePassword: process.env.PGPASSWORD,
   sessionHours: Number(process.env.SESSION_HOURS ?? 8),
+  dkimKeyDir: process.env.DKIM_KEY_DIR ?? "/var/lib/opendkim/keys",
+  dkimKeyUid: Number(process.env.DKIM_KEY_UID ?? 10001),
 };
 
 if (!env.databaseUrl && (!env.databaseHost || !env.databaseName || !env.databaseUser || !env.databasePassword)) {

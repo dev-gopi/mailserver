@@ -4,8 +4,14 @@ import { domainRepository } from "../repositories/domain.repository";
 import { auditService } from "./audit";
 
 export class AliasService {
+  /** Admin view — all aliases including inactive ones. */
   async getAllAliases() {
     return aliasRepository.findAll();
+  }
+
+  /** Mail-routing view — only active aliases (mirrors virtual_aliases). */
+  async getActiveAliases() {
+    return aliasRepository.findAllActive();
   }
 
   async getAliasById(id: number) {
@@ -21,9 +27,20 @@ export class AliasService {
     const domainPart = cleanSource.split("@")[1];
     if (!domainPart) throw new Error("Invalid source email address");
 
+    // Domain must be active, verified, and present in virtual_domains
     const domain = await domainRepository.findActiveVerifiedByName(domainPart);
     if (!domain) {
-      throw new Error(`Domain "${domainPart}" is not active and verified. Verify the domain first.`);
+      throw new Error(
+        `Domain "${domainPart}" is not active and verified. Verify the domain first.`
+      );
+    }
+
+    // Also confirm Postfix can accept mail for this domain
+    const virtualDomain = await domainRepository.findVirtualByName(domainPart);
+    if (!virtualDomain) {
+      throw new Error(
+        `Domain "${domainPart}" is not in virtual_domains. It must be active and verified.`
+      );
     }
 
     try {
