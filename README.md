@@ -13,7 +13,10 @@ Read [the project audit](docs/PROJECT_AUDIT.md) before exposing any service publ
    admin; generate `MAIL_ADMIN_PASSWORD_HASH` from the command in that file.
 2. Create locally trusted development certificates, or mount real certificates for a domain
    you control. Private keys are intentionally ignored by Git.
-3. Review `infrastructure/database/init/00-schema.sql`; the database contains only the
+3. For local development, generate a fresh local-only certificate with
+   `./infrastructure/tls/generate-dev-cert.sh`. For production, mount a CA-issued
+   certificate and private key for `MAIL_HOSTNAME` at `secrets/tls/cert.pem` and
+   `secrets/tls/privkey.key` instead. Review `infrastructure/database/init/00-schema.sql`; the database contains only the
    administrator defined in `.env`.
 4. Validate configuration with `docker compose config`, then build/start with
    `docker compose up --build`.

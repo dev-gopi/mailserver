@@ -1,0 +1,2 @@
+password = "$2$tptfxqfqt4nrk7m7sh5u7zfm6hks3czy$abc6qmztwob8kz86awa3m3x5huowwqksgxsr81wd1c99ti7uo3sy";
+enable_password = "$2$tptfxqfqt4nrk7m7sh5u7zfm6hks3czy$abc6qmztwob8kz86awa3m3x5huowwqksgxsr81wd1c99ti7uo3sy";

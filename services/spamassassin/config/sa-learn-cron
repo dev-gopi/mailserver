@@ -2,8 +2,9 @@
 set -e
 
 DBPATH=/var/lib/spamassassin/.spamassassin
-SPAMFOLDER=/var/mail/vhosts/*/Spam/cur
-HAMFOLDER=/var/mail/vhosts/*/Maildir/cur
+# Dovecot stores each account in /var/mail/vhosts/<domain>/<user>/Maildir.
+SPAMFOLDER=/var/mail/vhosts/*/*/Maildir/Junk/cur
+HAMFOLDER=/var/mail/vhosts/*/*/Maildir/cur
 
 sa-learn --sync --dbpath $DBPATH
 sa-learn --spam --dbpath $DBPATH $SPAMFOLDER || true
