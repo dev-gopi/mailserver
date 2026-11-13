@@ -226,9 +226,9 @@ docker compose down
 mailboxes, database state, DKIM keys, and filtering data. Use it only for a
 deliberate disposable reset.
 
-See [the integration test report](docs/INTEGRATION_TEST_REPORT_2026-11-13.md)
-for the latest local end-to-end checks, and read
-[the project audit](docs/PROJECT_AUDIT.md) before public exposure.
+Read [the project audit](docs/PROJECT_AUDIT.md) before public exposure. Keep
+any local integration-test evidence alongside the deployment rather than
+treating it as a substitute for production deliverability testing.
 
 ## Repository layout
 

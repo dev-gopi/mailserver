@@ -180,7 +180,7 @@
         <div style="margin-top: 16px;">
           <div style="font-size: 0.78rem; font-weight: 600; color: #64748b; margin-bottom: 6px;">Need host terminal recovery? Run on server:</div>
           <div class="cli-command-box">
-            <code>docker exec -it mailserver-api npm run reset-admin-password -- admin &lt;new_password&gt;</code>
+            <code>docker compose exec app node dist/scripts/reset-password.js admin &lt;new_password&gt;</code>
             <button type="button" class="btn btn-xs btn-secondary" onclick="copyCliRecoveryCommand()">Copy</button>
           </div>
         </div>
@@ -1392,17 +1392,17 @@
               <ol style="margin: 0; padding-left: 20px; font-size: 0.85rem; line-height: 1.8; color: #334155;">
                 <li>Extract the backup archive to a temporary directory:
                   <div class="cli-command-box" style="margin: 4px 0 10px 0;">
-                    <code>tar -xzf /backups/mail-TIMESTAMP.tar.gz -C /tmp/restore</code>
+                    <code>mkdir -p /tmp/restore &amp;&amp; tar -xzf ./backups/mail-TIMESTAMP.tar.gz -C /tmp/restore</code>
                   </div>
                 </li>
                 <li>Restore PostgreSQL database tables and credentials:
                   <div class="cli-command-box" style="margin: 4px 0 10px 0;">
-                    <code>docker exec -i mailserver-db pg_restore -U mailuser -d mailserver &lt; /tmp/restore/database.dump</code>
+                    <code>docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' &lt; /tmp/restore/database.dump</code>
                   </div>
                 </li>
                 <li>Restore mailbox email storage (Maildir format):
                   <div class="cli-command-box" style="margin: 4px 0 10px 0;">
-                    <code>tar -xzf /tmp/restore/maildata.tar.gz -C /var/mail/vhosts/</code>
+                    <code>docker compose run --rm --no-deps --entrypoint sh dovecot -c 'tar -xzf /tmp/restore/maildata.tar.gz -C /var/mail/vhosts'</code>
                   </div>
                 </li>
               </ol>

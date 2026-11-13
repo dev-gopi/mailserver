@@ -2475,7 +2475,7 @@ async function handleForgotPasswordSubmit(event) {
 }
 
 function copyCliRecoveryCommand() {
-  const cmd = "docker exec -it mailserver-api npm run reset-admin-password -- admin <new_password>";
+  const cmd = "docker compose exec app node dist/scripts/reset-password.js admin <new_password>";
   navigator.clipboard?.writeText(cmd).then(() => {
     showToast("Copied to Clipboard", "Paste and replace <new_password> in terminal.", "info");
   }).catch(() => {
