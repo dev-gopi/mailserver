@@ -2517,7 +2517,7 @@ async function handlePasskeyLogin() {
       method: "POST",
       body: JSON.stringify({
         challengeId: options.challengeId,
-        credentialId: credential.id
+        credential: serializeAuthenticationCredential(credential)
       })
     });
 
@@ -2750,7 +2750,7 @@ async function startPasskeyRegister() {
   if (!name) return;
 
   try {
-    const options = await request("/auth/passkey/register-options");
+    const options = await request("/auth/passkey/register-options", { method: "POST" });
     const challengeBuf = base64urlToBuffer(options.challenge);
     const userIdBuf = base64urlToBuffer(options.user.id);
 
@@ -2775,11 +2775,7 @@ async function startPasskeyRegister() {
       method: "POST",
       body: JSON.stringify({
         challengeId: options.challengeId,
-        credential: {
-          id: credential.id,
-          rawId: bufferToBase64url(credential.rawId),
-          type: credential.type
-        },
+        credential: serializeRegistrationCredential(credential),
         name
       })
     });
@@ -2790,6 +2786,37 @@ async function startPasskeyRegister() {
     if (err.name === "NotAllowedError" || err.name === "AbortError") return;
     showToast("Registration Failed", err.message, "error");
   }
+}
+
+function serializeRegistrationCredential(credential) {
+  return {
+    id: credential.id,
+    rawId: bufferToBase64url(credential.rawId),
+    type: credential.type,
+    response: {
+      clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+      attestationObject: bufferToBase64url(credential.response.attestationObject),
+      transports: typeof credential.response.getTransports === "function"
+        ? credential.response.getTransports()
+        : []
+    }
+  };
+}
+
+function serializeAuthenticationCredential(credential) {
+  return {
+    id: credential.id,
+    rawId: bufferToBase64url(credential.rawId),
+    type: credential.type,
+    response: {
+      clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+      authenticatorData: bufferToBase64url(credential.response.authenticatorData),
+      signature: bufferToBase64url(credential.response.signature),
+      userHandle: credential.response.userHandle
+        ? bufferToBase64url(credential.response.userHandle)
+        : null
+    }
+  };
 }
 
 async function deletePasskey(passkeyId) {

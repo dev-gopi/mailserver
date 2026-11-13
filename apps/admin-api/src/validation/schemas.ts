@@ -112,16 +112,21 @@ export const passkeyRegisterSchema = z.object({
   challengeId: z.string().min(1, "Challenge ID is required"),
   credential: z.object({
     id: z.string().min(1, "Credential ID is required"),
-    rawId: z.string().optional(),
-    type: z.string().optional(),
-    response: z.record(z.string(), z.any()).optional()
+    rawId: z.string().min(1, "Credential raw ID is required"),
+    type: z.literal("public-key"),
+    response: z.record(z.string(), z.any())
   }),
   name: z.string().max(80).optional()
 });
 
 export const passkeyLoginVerifySchema = z.object({
   challengeId: z.string().min(1, "Challenge ID is required"),
-  credentialId: z.string().min(1, "Credential ID is required")
+  credential: z.object({
+    id: z.string().min(1, "Credential ID is required"),
+    rawId: z.string().min(1, "Credential raw ID is required"),
+    type: z.literal("public-key"),
+    response: z.record(z.string(), z.any())
+  })
 });
 
 export const backupSettingsSchema = z.object({

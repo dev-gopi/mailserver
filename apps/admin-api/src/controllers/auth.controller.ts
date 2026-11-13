@@ -110,8 +110,8 @@ export class AuthController {
 
   async verifyPasskeyLogin(req: Request, res: Response) {
     try {
-      const { challengeId, credentialId } = req.body;
-      const result = await authService.verifyPasskeyLogin(req, challengeId, credentialId);
+      const { challengeId, credential } = req.body;
+      const result = await authService.verifyPasskeyLogin(req, challengeId, credential);
       return res.json(result);
     } catch (err: any) {
       return res.status(401).json({ error: err.message || "Passkey authentication failed" });

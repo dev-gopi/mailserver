@@ -127,8 +127,9 @@ export interface PasskeyCredential {
   id: string;
   rawId?: string;
   name?: string;
-  publicKey?: string;
-  counter?: number;
+  publicKey: string;
+  counter: number;
+  transports?: string[];
   createdAt: string;
 }
 

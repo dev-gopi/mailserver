@@ -98,7 +98,7 @@ authRouter.post(
   authController.regenerateRecoveryCodes
 );
 
-authRouter.get(
+authRouter.post(
   "/passkey/register-options",
   requireAdmin,
   authController.getPasskeyRegisterOptions

@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { randomUUID, randomBytes } from "crypto";
 import { Request } from "express";
+import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
 import { env } from "../config/env";
 import { adminRepository } from "../repositories/admin.repository";
 import { createToken, tokenHash } from "../middleware/auth";
@@ -18,6 +19,8 @@ interface MfaPendingSession {
 interface PasskeyPendingChallenge {
   challenge: string;
   adminId?: number;
+  origin: string;
+  rpId: string;
   expiresAt: number;
 }
 
@@ -54,6 +57,17 @@ export class AuthService {
     }
 
     return requestHostname;
+  }
+
+  private getWebAuthnOrigin(req: Request): string {
+    const origin = req.header("origin");
+    if (!origin) throw new Error("Passkey requests must include a browser Origin header.");
+    const parsed = new URL(origin);
+    const rpId = this.getWebAuthnRpId(req);
+    if (parsed.hostname !== rpId && !parsed.hostname.endsWith("." + rpId)) {
+      throw new Error("Passkey origin does not match the configured relying party.");
+    }
+    return parsed.origin;
   }
 
   private cleanupExpiredSessions() {
@@ -289,77 +303,41 @@ export class AuthService {
     };
   }
 
-  // Passkey WebAuthn Flows
-  //
-  // SECURITY: The current implementation issues a challenge and returns
-  // registration/authentication options to the browser, but the verifyPasskeyRegister
-  // path does NOT cryptographically verify the WebAuthn authenticator response
-  // (clientDataJSON signature, authenticatorData, or public key). Similarly,
-  // verifyPasskeyLogin does not verify the assertion signature against the stored
-  // credential public key — it only checks whether the credential ID exists in the
-  // database, which is an authentication bypass.
-  //
-  // Until @simplewebauthn/server (or equivalent) is integrated and the credential
-  // public key is stored at registration time, the registration and login endpoints
-  // are gated behind this guard so they fail fast with a clear error rather than
-  // silently granting access.
-  //
-  // TODO: install @simplewebauthn/server, store the credential publicKey and
-  // counter at registration, and call verifyRegistrationResponse /
-  // verifyAuthenticationResponse in the two verify methods below.
-  private static WEBAUTHN_SIGNATURE_VERIFICATION_ENABLED = false;
-
   async getPasskeyRegisterOptions(req: Request) {
-    if (!AuthService.WEBAUTHN_SIGNATURE_VERIFICATION_ENABLED) {
-      throw new Error(
-        "Passkey registration is temporarily unavailable. Full WebAuthn signature verification has not been configured yet."
-      );
-    }
-
     const admin = await adminRepository.findById(req.admin!.id);
     if (!admin) throw new Error("Admin not found");
 
     const challengeId = randomUUID();
-    const challenge = randomBytes(32).toString("base64url");
-    this.passkeyChallenges.set(challengeId, {
+    const challenge = Uint8Array.from(randomBytes(32));
+    const rpId = this.getWebAuthnRpId(req);
+    const origin = this.getWebAuthnOrigin(req);
+
+    const options = await generateRegistrationOptions({
+      rpID: rpId,
+      rpName: env.webauthnRpName || "MailCore Admin Console",
+      userID: new TextEncoder().encode(String(admin.id)),
+      userName: admin.username,
+      userDisplayName: admin.username,
       challenge,
+      attestationType: "none",
+      timeout: 60000,
+      authenticatorSelection: { residentKey: "preferred", userVerification: "preferred" },
+      excludeCredentials: (admin.passkeys || []).map((passkey: PasskeyCredential) => ({
+        id: passkey.id,
+        transports: passkey.transports
+      }))
+    });
+    this.passkeyChallenges.set(challengeId, {
+      challenge: options.challenge,
       adminId: admin.id,
+      origin,
+      rpId,
       expiresAt: Date.now() + 5 * 60 * 1000
     });
-
-    const rpId = this.getWebAuthnRpId(req);
-    return {
-      challengeId,
-      challenge,
-      rp: {
-        id: rpId,
-        name: env.webauthnRpName || "MailCore Admin Console"
-      },
-      user: {
-        id: Buffer.from(String(admin.id)).toString("base64url"),
-        name: admin.username,
-        displayName: admin.username
-      },
-      pubKeyCredParams: [
-        { alg: -7, type: "public-key" },
-        { alg: -257, type: "public-key" }
-      ],
-      timeout: 60000,
-      attestation: "none",
-      authenticatorSelection: {
-        residentKey: "preferred",
-        userVerification: "preferred"
-      }
-    };
+    return { challengeId, ...options };
   }
 
   async verifyPasskeyRegister(req: Request, challengeId: string, credential: any, name?: string) {
-    if (!AuthService.WEBAUTHN_SIGNATURE_VERIFICATION_ENABLED) {
-      throw new Error(
-        "Passkey registration is temporarily unavailable. Full WebAuthn signature verification has not been configured yet."
-      );
-    }
-
     this.cleanupExpiredSessions();
     const pending = this.passkeyChallenges.get(challengeId);
     if (!pending || pending.expiresAt < Date.now()) {
@@ -373,17 +351,25 @@ export class AuthService {
       throw new Error("Admin not found");
     }
 
-    if (!credential || !credential.id) {
-      throw new Error("Invalid credential data received from browser.");
+    const verification = await verifyRegistrationResponse({
+      response: credential,
+      expectedChallenge: pending.challenge,
+      expectedOrigin: pending.origin,
+      expectedRPID: pending.rpId,
+      requireUserVerification: true
+    });
+    if (!verification.verified || !verification.registrationInfo) {
+      throw new Error("Passkey registration could not be verified.");
     }
 
-    // TODO: Call verifyRegistrationResponse from @simplewebauthn/server here and
-    // persist the returned credential.publicKey and credential.counter alongside the
-    // passkey so that assertion signatures can be verified at login time.
+    const registeredCredential = verification.registrationInfo.credential;
     const newPasskey: PasskeyCredential = {
       id: credential.id,
-      rawId: credential.rawId || credential.id,
+      rawId: credential.rawId,
       name: name || "Security Key",
+      publicKey: Buffer.from(registeredCredential.publicKey).toString("base64url"),
+      counter: registeredCredential.counter,
+      transports: credential.response?.transports,
       createdAt: new Date().toISOString()
     };
 
@@ -399,46 +385,28 @@ export class AuthService {
   }
 
   async getPasskeyLoginOptions(req: Request) {
-    if (!AuthService.WEBAUTHN_SIGNATURE_VERIFICATION_ENABLED) {
-      throw new Error(
-        "Passkey login is temporarily unavailable. Full WebAuthn signature verification has not been configured yet."
-      );
-    }
-
     this.cleanupExpiredSessions();
     const challengeId = randomUUID();
-    const challenge = randomBytes(32).toString("base64url");
-    this.passkeyChallenges.set(challengeId, {
+    const challenge = Uint8Array.from(randomBytes(32));
+    const rpId = this.getWebAuthnRpId(req);
+    const origin = this.getWebAuthnOrigin(req);
+
+    const options = await generateAuthenticationOptions({
+      rpID: rpId,
       challenge,
+      timeout: 60000,
+      userVerification: "required"
+    });
+    this.passkeyChallenges.set(challengeId, {
+      challenge: options.challenge,
+      origin,
+      rpId,
       expiresAt: Date.now() + 5 * 60 * 1000
     });
-
-    const passkeyIds = await adminRepository.listPasskeyIds();
-    const rpId = this.getWebAuthnRpId(req);
-
-    return {
-      challengeId,
-      challenge,
-      rpId,
-      timeout: 60000,
-      userVerification: "preferred",
-      allowCredentials: passkeyIds.map((id) => ({
-        id,
-        type: "public-key"
-      }))
-    };
+    return { challengeId, ...options };
   }
 
-  async verifyPasskeyLogin(req: Request, challengeId: string, credentialId: string) {
-    // SECURITY: This endpoint MUST NOT grant access without cryptographic signature
-    // verification. The check below ensures it stays disabled until the full
-    // WebAuthn verification stack is in place.
-    if (!AuthService.WEBAUTHN_SIGNATURE_VERIFICATION_ENABLED) {
-      throw new Error(
-        "Passkey login is temporarily unavailable. Full WebAuthn signature verification has not been configured yet."
-      );
-    }
-
+  async verifyPasskeyLogin(req: Request, challengeId: string, credential: any) {
     this.cleanupExpiredSessions();
     const pending = this.passkeyChallenges.get(challengeId);
     if (!pending || pending.expiresAt < Date.now()) {
@@ -446,15 +414,32 @@ export class AuthService {
       throw new Error("Passkey login session expired. Please try again.");
     }
 
-    // TODO: Call verifyAuthenticationResponse from @simplewebauthn/server here,
-    // passing pending.challenge, the stored publicKey, and the credential counter.
-    // Only call finalizeSuccessfulLogin after the library confirms the signature.
-    const admin = await adminRepository.findAdminByPasskeyId(credentialId);
+    const admin = await adminRepository.findAdminByPasskeyId(credential.id);
     if (!admin || !admin.active) {
       throw new Error("Passkey not recognized or account is inactive.");
     }
+    const storedPasskey = (admin.passkeys || []).find((passkey: PasskeyCredential) => passkey.id === credential.id);
+    if (!storedPasskey?.publicKey || storedPasskey.counter === undefined) {
+      throw new Error("This passkey uses an obsolete registration. Register it again.");
+    }
+
+    const verification = await verifyAuthenticationResponse({
+      response: credential,
+      expectedChallenge: pending.challenge,
+      expectedOrigin: pending.origin,
+      expectedRPID: pending.rpId,
+      requireUserVerification: true,
+      credential: {
+        id: storedPasskey.id,
+        publicKey: Buffer.from(storedPasskey.publicKey, "base64url"),
+        counter: storedPasskey.counter,
+        transports: storedPasskey.transports
+      }
+    });
+    if (!verification.verified) throw new Error("Passkey signature verification failed.");
 
     this.passkeyChallenges.delete(challengeId);
+    await adminRepository.updatePasskeyCounter(admin.id, storedPasskey.id, verification.authenticationInfo.newCounter);
     return this.finalizeSuccessfulLogin(req, admin, "passkey");
   }
 

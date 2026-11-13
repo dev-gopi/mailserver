@@ -170,6 +170,17 @@ export class AdminRepository {
     return res.rows.map((row) => row.id);
   }
 
+  async updatePasskeyCounter(adminId: number, passkeyId: string, counter: number): Promise<void> {
+    await db.query(
+      `UPDATE admins SET passkeys = (
+         SELECT COALESCE(jsonb_agg(CASE WHEN elem->>'id' = $1
+           THEN jsonb_set(elem, '{counter}', to_jsonb($2::integer)) ELSE elem END), '[]'::jsonb)
+         FROM jsonb_array_elements(COALESCE(passkeys, '[]'::jsonb)) elem
+       ) WHERE id = $3`,
+      [passkeyId, counter, adminId]
+    );
+  }
+
   async resetPasswordWithRecovery(username: string, recoveryCode: string, newPasswordHash: string): Promise<boolean> {
     const normalized = recoveryCode.trim().toUpperCase().replace(/[\s-]/g, "");
     const client = await db.connect();
