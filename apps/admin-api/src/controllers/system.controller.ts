@@ -73,6 +73,15 @@ export class SystemController {
     const stats = await systemService.getTaskQueueStats();
     return res.json(stats);
   }
+
+  async checkDeliverability(req: Request, res: Response) {
+    try {
+      const domain = typeof req.query.domain === "string" ? req.query.domain : undefined;
+      return res.json(await systemService.checkDeliverability(domain));
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Deliverability check failed" });
+    }
+  }
 }
 
 export const systemController = new SystemController();

@@ -21,6 +21,7 @@ export const env = {
   mailDomain: process.env.MAIL_DOMAIN ?? "",
   mailHostname: process.env.MAIL_HOSTNAME ?? "",
   mailPublicIp: process.env.MAIL_PUBLIC_IP ?? "",
+  alertWebhookUrl: process.env.ALERT_WEBHOOK_URL ?? "",
   dns: {
     mxPriority: Number(process.env.MX_PRIORITY ?? 10),
     spfRecord: process.env.SPF_RECORD ?? "v=spf1 mx ~all",

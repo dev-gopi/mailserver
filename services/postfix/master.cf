@@ -9,7 +9,7 @@
 # service type  private unpriv  chroot  wakeup  maxproc command + args
 #               (yes)   (yes)   (no)    (never) (100)
 # ==========================================================================
-smtp      inet  n       -       n       -       -       smtpd
+smtp      inet n       -       n       -       -       smtpd
   -o content_filter=clamav:clamav:10026
 #smtp      inet  n       -       y       -       1       postscreen
 #smtpd     pass  -       -       y       -       -       smtpd
@@ -143,7 +143,7 @@ mailman   unix  -       n       n       -       -       pipe
 #  flags=Rq user=vmail argv=/usr/bin/spamc -d spamassassin -p 783 -f -e /usr/sbin/sendmail -oi -f ${sender} ${recipient}
 
 spamassassin unix  -     n       n       -       -       pipe
-  flags=Rq user=nobody argv=/usr/bin/spamc -d spamassassin -p 783 -f -e /usr/sbin/sendmail -G -oi -- ${recipient}
+  flags=Rq user=nobody argv=/usr/bin/spamc -d spamassassin -p 783 -f -e /usr/sbin/sendmail -G -oi ${recipient}
 
 dovecot   unix   -       n       n       -       -       pipe
   flags=DRhu user=vmail:vmail argv=/usr/lib/dovecot/deliver -d ${recipient}
@@ -164,8 +164,11 @@ scan      unix  -       -       n       -       10      smtp
 
 10025     inet n  -       n       -       -       smtpd
   -o content_filter=spamassassin
+  -o smtpd_tls_security_level=none
+  -o smtpd_sasl_auth_enable=no
   -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks
   -o smtpd_helo_restrictions=
-  -o smtpd_client_restrictions=
+  -o smtpd_client_restrictions=permit_mynetworks,reject
   -o smtpd_sender_restrictions=
   -o smtpd_recipient_restrictions=permit_mynetworks,reject
+  -o smtpd_relay_restrictions=permit_mynetworks,reject

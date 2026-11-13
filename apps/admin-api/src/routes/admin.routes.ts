@@ -12,7 +12,8 @@ import {
   aliasPatchSchema,
   testSmtpSchema,
   testSpamSchema,
-  clientConfigQuerySchema
+  clientConfigQuerySchema,
+  deliverabilityQuerySchema
 } from "../validation/schemas";
 import { companyController } from "../controllers/company.controller";
 import { domainController } from "../controllers/domain.controller";
@@ -87,3 +88,4 @@ adminRouter.post("/system/queue/flush", systemController.flushMailQueue);
 adminRouter.post("/system/test-smtp", validate({ body: testSmtpSchema }), systemController.testSmtp);
 adminRouter.post("/system/test-spam", validate({ body: testSpamSchema }), systemController.testSpam);
 adminRouter.get("/system/task-queue", systemController.getTaskQueueStats);
+adminRouter.get("/system/deliverability", validate({ query: deliverabilityQuerySchema }), systemController.checkDeliverability);

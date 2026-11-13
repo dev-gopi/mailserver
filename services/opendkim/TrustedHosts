@@ -2,3 +2,4 @@
 ::1
 mail.local
 postfix
+172.16.0.0/12

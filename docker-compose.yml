@@ -20,9 +20,9 @@ services:
     build: ./services/clamav
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pgrep clamd >/dev/null && pgrep clamsmtpd >/dev/null"]
+      test: ["CMD-SHELL", "pidof clamd >/dev/null && pidof clamsmtpd >/dev/null"]
       interval: 15s
-      timeout: 3s
+      timeout: 10s
       retries: 8
     environment:
       - CLAMD_CONF_MaxFileSize=25M
@@ -138,6 +138,44 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+
+  backup:
+    image: postgres:16
+    environment:
+      PGHOST: ${POSTGRES_HOST:?set POSTGRES_HOST in .env}
+      PGPORT: ${POSTGRES_PORT:?set POSTGRES_PORT in .env}
+      PGDATABASE: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      PGUSER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - ./infrastructure/backup/backup.sh:/opt/backup/backup.sh:ro
+      - ./backups:/backups
+      - maildata:/var/mail/vhosts:ro
+    command: ["/bin/bash", "/opt/backup/backup.sh"]
+    networks:
+      - mailnet
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+
+  monitor:
+    image: curlimages/curl:8.10.1
+    environment:
+      HEALTH_URL: http://${ADMIN_UI_API_HOST:?set ADMIN_UI_API_HOST in .env}:${API_PORT:?set API_PORT in .env}/health
+      MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-60}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+    command: ["/bin/sh", "/opt/monitor/monitor.sh"]
+    volumes:
+      - ./infrastructure/monitor/monitor.sh:/opt/monitor/monitor.sh:ro
+    networks:
+      - mailnet
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
 
   app:
     build: ./apps/admin-api

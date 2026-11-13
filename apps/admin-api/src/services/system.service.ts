@@ -7,8 +7,85 @@ import { companyRepository } from "../repositories/company.repository";
 import { auditRepository } from "../repositories/audit.repository";
 import { auditService } from "./audit";
 import { taskQueue } from "../queue/task-queue";
+import { resolve4, resolveMx, resolveTxt, reverse } from "dns/promises";
+import { env } from "../config/env";
 
 export class SystemService {
+  async checkDeliverability(domain = env.mailDomain) {
+    const checks: Array<{
+      name: string;
+      status: "pass" | "warn" | "fail";
+      details: string;
+    }> = [];
+    const check = async (
+      name: string,
+      lookup: () => Promise<string>,
+      details: (value: string) => string
+    ) => {
+      try {
+        checks.push({ name, status: "pass", details: details(await lookup()) });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "DNS lookup failed";
+        checks.push({ name, status: "fail", details: message });
+      }
+    };
+
+    await check("Mail hostname A record", async () => {
+      const addresses = await resolve4(env.mailHostname);
+      return addresses.join(", ");
+    }, (value) => `${env.mailHostname} resolves to ${value}`);
+
+    await check("Domain MX record", async () => {
+      const records = await resolveMx(domain);
+      return records.map((record) => `${record.exchange} (priority ${record.priority})`).join(", ");
+    }, (value) => `${domain} routes mail to ${value}`);
+
+    await check("SPF record", async () => {
+      const records = await resolveTxt(domain);
+      const value = records.map((record) => record.join("")).find((item) => item.toLowerCase().startsWith("v=spf1"));
+      if (!value) throw new Error("No v=spf1 TXT record found");
+      return value;
+    }, (value) => value ? `Published: ${value}` : "No v=spf1 TXT record found");
+
+    await check("DKIM record", async () => {
+      const records = await resolveTxt(`mail._domainkey.${domain}`);
+      const value = records.map((record) => record.join("")).find((item) => item.toLowerCase().includes("v=dkim1"));
+      if (!value) throw new Error("No DKIM TXT record found");
+      return value;
+    }, (value) => value ? "mail selector is published" : "No DKIM TXT record found");
+
+    await check("DMARC record", async () => {
+      const records = await resolveTxt(`_dmarc.${domain}`);
+      const value = records.map((record) => record.join("")).find((item) => item.toLowerCase().startsWith("v=dmarc1"));
+      if (!value) throw new Error("No DMARC TXT record found");
+      return value;
+    }, (value) => value ? `Published: ${value}` : "No DMARC TXT record found");
+
+    if (env.mailPublicIp) {
+      await check("Reverse DNS / PTR", async () => {
+        const names = await reverse(env.mailPublicIp);
+        return names.join(", ");
+      }, (value) => `PTR resolves to ${value}`);
+    } else {
+      checks.push({
+        name: "Reverse DNS / PTR",
+        status: "warn",
+        details: "MAIL_PUBLIC_IP is not configured"
+      });
+    }
+
+    const failed = checks.filter((item) => item.status === "fail").length;
+    const warnings = checks.filter((item) => item.status === "warn").length;
+    return {
+      domain,
+      mailHostname: env.mailHostname,
+      publicIpConfigured: Boolean(env.mailPublicIp),
+      status: failed ? "fail" : warnings ? "warn" : "pass",
+      checks,
+      checkedAt: new Date().toISOString()
+    };
+  }
+
   async getDashboardOverview() {
     const [profile, dStats, mStats, aStats, recent, services, queue] = await Promise.all([
       companyRepository.get(),

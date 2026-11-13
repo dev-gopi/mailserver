@@ -319,6 +319,39 @@ async function refreshAllData() {
 }
 
 // 1. Overview Renderer
+function renderOverviewConnectionReference(config) {
+  if (!config) return;
+  $("overview-imap-host").textContent = config.incoming.hostname;
+  $("overview-imap-port").textContent = `Port ${config.incoming.port}`;
+  $("overview-smtp-host").textContent = config.outgoing.hostname;
+  $("overview-smtp-port").textContent = `Port ${config.outgoing.port}`;
+  $("overview-smtps-port").textContent = `Port ${config.outgoing.alternativePort}`;
+}
+
+function renderInfrastructureSummary(services = []) {
+  const byService = Object.fromEntries(services.map((service) => [service.service, service]));
+  const setStatus = (id, service) => {
+    const element = $(id);
+    if (!element || !service) return;
+    const healthy = service.status === "healthy";
+    element.className = `badge ${healthy ? "badge-success" : "badge-danger"}`;
+    element.textContent = healthy ? "Healthy" : service.status;
+  };
+  const postfix = byService.postfix;
+  const dovecot = byService.dovecot;
+  const spamassassin = byService.spamassassin;
+  const database = byService.postgresql;
+
+  if (postfix) $("infra-postfix-details").textContent = `SMTP service port ${postfix.port}`;
+  if (dovecot) $("infra-dovecot-details").textContent = `IMAP service port ${dovecot.port} • Maildir Storage`;
+  if (spamassassin) $("infra-filter-details").textContent = `SpamAssassin service port ${spamassassin.port} • ClamAV filter engine`;
+  if (database) $("infra-database-name").textContent = database.displayName;
+  setStatus("infra-postfix-status", postfix);
+  setStatus("infra-dovecot-status", dovecot);
+  setStatus("infra-filter-status", spamassassin);
+  setStatus("infra-database-status", database);
+}
+
 function renderOverview() {
   const d = state.dashboardData;
   if (!d) return;
@@ -344,39 +377,6 @@ function renderOverview() {
   if (!d.recentActivity || d.recentActivity.length === 0) {
     container.innerHTML = `<div class="empty-state"><p>No administrative activities recorded yet.</p></div>`;
     return;
-  }
-
-  function renderOverviewConnectionReference(config) {
-    if (!config) return;
-    $("overview-imap-host").textContent = config.incoming.hostname;
-    $("overview-imap-port").textContent = `Port ${config.incoming.port}`;
-    $("overview-smtp-host").textContent = config.outgoing.hostname;
-    $("overview-smtp-port").textContent = `Port ${config.outgoing.port}`;
-    $("overview-smtps-port").textContent = `Port ${config.outgoing.alternativePort}`;
-  }
-
-  function renderInfrastructureSummary(services = []) {
-    const byService = Object.fromEntries(services.map((service) => [service.service, service]));
-    const setStatus = (id, service) => {
-      const element = $(id);
-      if (!element || !service) return;
-      const healthy = service.status === "healthy";
-      element.className = `badge ${healthy ? "badge-success" : "badge-danger"}`;
-      element.textContent = healthy ? "Healthy" : service.status;
-    };
-    const postfix = byService.postfix;
-    const dovecot = byService.dovecot;
-    const spamassassin = byService.spamassassin;
-    const database = byService.postgresql;
-
-    if (postfix) $("infra-postfix-details").textContent = `SMTP service port ${postfix.port}`;
-    if (dovecot) $("infra-dovecot-details").textContent = `IMAP service port ${dovecot.port} • Maildir Storage`;
-    if (spamassassin) $("infra-filter-details").textContent = `SpamAssassin service port ${spamassassin.port} • ClamAV filter engine`;
-    if (database) $("infra-database-name").textContent = database.displayName;
-    setStatus("infra-postfix-status", postfix);
-    setStatus("infra-dovecot-status", dovecot);
-    setStatus("infra-filter-status", spamassassin);
-    setStatus("infra-database-status", database);
   }
 
   container.innerHTML = d.recentActivity.map((item) => {
@@ -539,6 +539,15 @@ async function populateDomainSelectors() {
     mbFilter.innerHTML = '<option value="">All Domains</option>' + allDomainNames.map(
       (name) => '<option value="' + name + '"' + (name === currentVal ? ' selected' : '') + '>' + name + '</option>'
     ).join('');
+  }
+
+  const deliverabilityDomain = $("deliverability-domain");
+  if (deliverabilityDomain) {
+    const currentVal = deliverabilityDomain.value;
+    deliverabilityDomain.innerHTML = '<option value="">Select verified domain</option>' +
+      virtualDomains.map((domain) =>
+        `<option value="${escapeHtml(domain.name)}"${domain.name === currentVal ? " selected" : ""}>${escapeHtml(domain.name)}</option>`
+      ).join("");
   }
 
   updateMailboxPreview();
@@ -1224,6 +1233,33 @@ function renderQueueStats(queue = {}, taskQueue = {}) {
     $("queue-status-text").textContent = isClean
       ? "Postfix spool is clear & idle (0 messages queued)"
       : `${queue.totalCount} messages awaiting delivery in spool`;
+  }
+
+  async function runDeliverabilityCheck() {
+    const domain = $("deliverability-domain")?.value;
+    const result = $("deliverability-result");
+    if (!domain || !result) return;
+
+    result.innerHTML = `<p class="text-muted">Checking DNS and reverse DNS for ${escapeHtml(domain)}...</p>`;
+    try {
+      const report = await request(`/api/system/deliverability?domain=${encodeURIComponent(domain)}`);
+      const statusClass = report.status === "pass"
+        ? "alert-success"
+        : report.status === "warn" ? "alert-warning" : "alert-danger";
+      result.className = `alert-box ${statusClass}`;
+      result.innerHTML = `
+        <strong>Deliverability status: ${escapeHtml(report.status.toUpperCase())}</strong>
+        <div class="mt-3">${report.checks.map((check) => `
+          <div class="flex-between" style="gap: 12px; margin: 6px 0;">
+            <span>${escapeHtml(check.name)}</span>
+            <span><strong>${escapeHtml(check.status.toUpperCase())}</strong> — ${escapeHtml(check.details)}</span>
+          </div>
+        `).join("")}</div>
+      `;
+    } catch (err) {
+      result.className = "alert-box alert-danger";
+      result.textContent = err.message;
+    }
   }
 
   if (taskQueue) {

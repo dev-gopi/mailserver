@@ -32,9 +32,11 @@ COPY master.cf /etc/postfix/master.cf
 COPY config/pgsql-virtual-users.cf /etc/postfix/pgsql-virtual-users.cf
 COPY config/pgsql-virtual-domains.cf /etc/postfix/pgsql-virtual-domains.cf
 COPY config/pgsql-virtual-aliases.cf /etc/postfix/pgsql-virtual-aliases.cf
+COPY config/pgsql-sender-login.cf /etc/postfix/pgsql-sender-login.cf
 RUN chown root:root /etc/postfix/main.cf /etc/postfix/master.cf \
-    && chown root:postfix /etc/postfix/pgsql-virtual-*.cf \
-    && chmod 0640 /etc/postfix/main.cf /etc/postfix/master.cf /etc/postfix/pgsql-virtual-*.cf
+    && chown root:postfix /etc/postfix/pgsql-*.cf \
+    && chmod 0644 /etc/postfix/main.cf /etc/postfix/master.cf \
+    && chmod 0640 /etc/postfix/pgsql-*.cf
 
 VOLUME ["/var/mail"]
 

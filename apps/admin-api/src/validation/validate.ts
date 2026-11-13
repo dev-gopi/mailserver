@@ -14,10 +14,10 @@ export function validate(schemas: ValidationTargets) {
         req.body = schemas.body.parse(req.body);
       }
       if (schemas.query) {
-        req.query = schemas.query.parse(req.query) as any;
+        schemas.query.parse(req.query);
       }
       if (schemas.params) {
-        req.params = schemas.params.parse(req.params) as any;
+        schemas.params.parse(req.params);
       }
       return next();
     } catch (err) {

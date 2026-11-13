@@ -670,6 +670,9 @@
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
                 <span>Flush Mail Queue</span>
               </button>
+              <button class="btn btn-secondary btn-sm" onclick="runDeliverabilityCheck()">
+                <span>Check Deliverability</span>
+              </button>
             </div>
           </div>
 
@@ -684,6 +687,20 @@
             </div>
             <div id="services-health-grid" class="services-health-grid">
               <!-- Rendered dynamically via JS -->
+            </div>
+            <div class="card mt-4">
+              <div class="card-header flex-between">
+                <div>
+                  <h3 class="card-title">Public Mail Deliverability</h3>
+                  <p class="card-desc">DNS, authentication, MX routing, and reverse-DNS checks for a hosted domain</p>
+                </div>
+                <select id="deliverability-domain" onchange="runDeliverabilityCheck()">
+                  <option value="">Select verified domain</option>
+                </select>
+              </div>
+              <div id="deliverability-result" class="empty-state">
+                <p>Select a verified domain and run the deliverability check.</p>
+              </div>
             </div>
           </div>
 

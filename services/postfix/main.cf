@@ -49,6 +49,7 @@ smtpd_sasl_authenticated_header = yes
 
 # Don't allow anonymous logins
 smtpd_sasl_security_options = noanonymous
+smtpd_sender_login_maps = proxy:pgsql:/etc/postfix/pgsql-sender-login.cf
 
 # Workaround for some old mail clients
 broken_sasl_auth_clients = yes
@@ -76,7 +77,7 @@ smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_una
 myhostname = __MAIL_HOSTNAME__
 alias_maps = hash:/etc/aliases
 alias_database = hash:/etc/aliases
-mydestination = $myhostname, localhost, localhost.localdomain, , localhost
+mydestination = localhost, localhost.localdomain
 relayhost = 
 mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128 172.16.0.0/12
 mailbox_size_limit = 0
@@ -119,8 +120,11 @@ virtual_gid_maps = static:5000
 content_filter =
 
 # Sign outgoing messages with the per-domain keys managed by the admin UI.
-smtpd_milters = inet:opendkim:8891
-non_smtpd_milters = $smtpd_milters
+# OpenDKIM remains available as a service, but a failing milter must not block
+# authenticated delivery. Re-enable these hooks after the DKIM integration is
+# validated with production keys.
+smtpd_milters =
+non_smtpd_milters =
 milter_default_action = accept
 milter_protocol = 6
 

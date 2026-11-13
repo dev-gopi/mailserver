@@ -73,6 +73,10 @@ export const testSpamSchema = z.object({
   content: z.string().min(1, "Email message content is required")
 });
 
+export const deliverabilityQuerySchema = z.object({
+  domain: z.string().regex(/^[a-z0-9](?:[a-z0-9.-]*\.)[a-z]{2,}$/i, "Invalid domain").optional()
+});
+
 export const clientConfigQuerySchema = z.object({
   email: z.string().email("Invalid email address").optional(),
   domain: z.string().regex(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i, "Invalid domain").optional(),

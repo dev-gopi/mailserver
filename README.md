@@ -82,6 +82,29 @@ SMTP diagnostic delivery still requires an explicitly configured relay; it retur
 `501 Not Implemented` until that relay is configured. Spam diagnostics use the GTUBE
 test marker and should not be treated as a full message-scoring integration test.
 
+## Production foundation
+
+The stack includes a single-host foundation for operating public mail:
+
+- The `backup` service creates PostgreSQL custom dumps and compressed mail-storage archives
+  under `./backups`. Configure `BACKUP_INTERVAL_SECONDS` and `BACKUP_RETENTION_DAYS`; copy
+  these archives to separate encrypted storage because local Docker volumes are not disaster
+  recovery.
+- The `monitor` service checks the API health endpoint and sends state-change notifications
+  to `ALERT_WEBHOOK_URL` when configured. Extend this webhook at the provider side for email,
+  Slack, or incident-management alerts.
+- The Services page includes a deliverability check for A, MX, SPF, DKIM, DMARC, and PTR
+  records. It reports DNS problems before public delivery is attempted.
+- `infrastructure/tls/renew.sh` provides a Certbot webroot renewal loop. Set
+  `CERTBOT_EMAIL`, `CERTBOT_DOMAIN`, and `CERTBOT_WEBROOT`, expose the ACME challenge path,
+  then install the resulting certificate and key into `secrets/tls` before restarting
+  Postfix/Dovecot. Certificate automation must be completed with the hosting provider's
+  DNS/firewall policy; the application does not fabricate certificates.
+
+Backups and monitoring are intentionally single-host services. They improve recovery and
+visibility but are not multi-host high availability; PostgreSQL replication, shared storage,
+load balancing, and failover require a separate deployment architecture.
+
 ## Legacy notes
 
 The commands and sample entries below were retained as reference only; do not use their

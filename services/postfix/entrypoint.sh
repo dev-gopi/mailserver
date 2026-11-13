@@ -12,11 +12,11 @@ done
 for value in MAIL_DB_HOST MAIL_DB_NAME MAIL_DB_USER MAIL_DB_PASSWORD; do
   eval "raw=\${$value}"
   escaped=$(printf '%s' "$raw" | sed 's/[&|\\]/\\&/g')
-  for config in /etc/postfix/pgsql-virtual-*.cf; do
+  for config in /etc/postfix/pgsql-*.cf; do
     sed -i "s|__${value}__|${escaped}|g" "$config"
   done
 done
-for config in /etc/postfix/pgsql-virtual-*.cf; do
+for config in /etc/postfix/pgsql-*.cf; do
   grep -q '__MAIL_DB_' "$config" && { echo "Postfix database configuration injection failed" >&2; exit 1; }
 done
 
