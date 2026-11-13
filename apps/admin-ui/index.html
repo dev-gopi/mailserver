@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MailCore Admin — Production Mail Server Control Panel</title>
   <meta name="description" content="Production-ready multi-tenant mail server management console for domains, user mailboxes, aliases, and security audit logs.">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=20261113-4">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -1521,7 +1521,7 @@
             <div class="form-group flex-2">
               <label for="mb-prefix">Email Address Prefix</label>
               <div class="email-input-split">
-                <input id="mb-prefix" type="text" placeholder="username" required pattern="^[a-zA-Z0-9._%+-]+$" oninput="updateMailboxPreview()" autocomplete="off">
+                <input id="mb-prefix" type="text" placeholder="username" required pattern="^(?:[a-zA-Z0-9._%+]|-)+$" oninput="updateMailboxPreview()" autocomplete="off">
                 <span class="at-symbol">@</span>
                 <select id="mb-domain-select" required onchange="updateMailboxPreview()">
                   <!-- Populated from verified domains -->
@@ -1595,14 +1595,14 @@
           <div class="form-group">
             <label for="user-prefix">User Email Address</label>
             <div class="email-input-split">
-              <input id="user-prefix" type="text" placeholder="username" required pattern="^[a-zA-Z0-9._%+-]+$" autocomplete="off">
+              <input id="user-prefix" type="text" placeholder="username" required pattern="^(?:[a-zA-Z0-9._%+]|-)+$" autocomplete="off">
               <span class="at-symbol">@</span>
               <select id="user-domain-select" required></select>
             </div>
           </div>
           <div class="form-group">
-            <label for="user-display-name">Display Name (Optional)</label>
-            <input id="user-display-name" type="text" placeholder="e.g. John Doe">
+            <label for="create-user-display-name">Display Name (Optional)</label>
+            <input id="create-user-display-name" type="text" placeholder="e.g. John Doe">
           </div>
           <div class="form-group">
             <label for="user-password">User Password</label>
@@ -1819,7 +1819,7 @@
         <div class="modal-body">
           <div class="form-group">
             <label for="new-domain-name">Domain Name (FQDN)</label>
-            <input id="new-domain-name" type="text" placeholder="e.g. yourcompany.com" required pattern="^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$">
+            <input id="new-domain-name" type="text" placeholder="e.g. yourcompany.com" required pattern="^[a-zA-Z0-9](?:[a-zA-Z0-9.\-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$">
             <small class="form-hint">Do not include http:// or www. Example: <code>acme.org</code></small>
           </div>
         </div>
@@ -1987,7 +1987,7 @@
           <div class="form-group">
             <label>Source Address (Incoming Alias)</label>
             <div class="email-input-split">
-              <input id="alias-prefix" type="text" placeholder="support" required pattern="^[a-zA-Z0-9._%+-]+$">
+              <input id="alias-prefix" type="text" placeholder="support" required pattern="^(?:[a-zA-Z0-9._%+]|-)+$">
               <span class="at-symbol">@</span>
               <select id="alias-domain-select" required>
                 <!-- Populated dynamically -->
@@ -2177,6 +2177,6 @@
   </div>
 
   <!-- Script logic -->
-  <script src="/app.js"></script>
+  <script src="/app.js?v=20261113-3"></script>
 </body>
 </html>

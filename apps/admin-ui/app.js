@@ -877,7 +877,7 @@ function updateMailboxPreview() {
 // Quota selection presets
 function setQuotaPreset(quotaBytes, btn) {
   $("mb-quota-bytes").value = quotaBytes;
-  document.querySelectorAll(".quota-presets .btn-preset").forEach((b) => b.classList.remove("active"));
+  document.querySelectorAll("#modal-create-mailbox .quota-presets .btn-preset").forEach((b) => b.classList.remove("active"));
   if (btn) btn.classList.add("active");
 }
 
@@ -940,7 +940,7 @@ async function handleCreateUser(event) {
   event.preventDefault();
   const prefix = $("user-prefix").value.trim().toLowerCase();
   const domain = $("user-domain-select").value;
-  const displayName = $("user-display-name").value.trim();
+  const displayName = $("create-user-display-name").value.trim();
   const password = $("user-password").value;
   const quotaBytes = Number($("user-quota-bytes").value) || null;
   const btn = $("btn-submit-user");
