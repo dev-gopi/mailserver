@@ -3,11 +3,9 @@ import fs from "fs";
 import { backupService } from "../services/backup.service";
 import { auditService } from "../services/audit";
 
-export class BackupController {
-  private canWrite(req: Request): boolean {
-    return req.admin?.role !== "viewer";
-  }
+const canWrite = (req: Request): boolean => req.admin?.role !== "viewer";
 
+export class BackupController {
   async list(req: Request, res: Response) {
     try {
       const data = await backupService.listBackups();
@@ -18,7 +16,7 @@ export class BackupController {
   }
 
   async create(req: Request, res: Response) {
-    if (!this.canWrite(req)) return res.status(403).json({ error: "Read-only administrator" });
+    if (!canWrite(req)) return res.status(403).json({ error: "Read-only administrator" });
     try {
       const result = await backupService.createBackup();
       await auditService.log(req, "backup.created", "backup", result.filename, {
@@ -44,7 +42,7 @@ export class BackupController {
   }
 
   async updateSettings(req: Request, res: Response) {
-    if (!this.canWrite(req)) return res.status(403).json({ error: "Read-only administrator" });
+    if (!canWrite(req)) return res.status(403).json({ error: "Read-only administrator" });
     try {
       const updated = await backupService.updateSettings(req.body);
       await auditService.log(req, "backup.settings.updated", "backup", "settings", {
@@ -59,7 +57,7 @@ export class BackupController {
   }
 
   async delete(req: Request, res: Response) {
-    if (!this.canWrite(req)) return res.status(403).json({ error: "Read-only administrator" });
+    if (!canWrite(req)) return res.status(403).json({ error: "Read-only administrator" });
     try {
       const { filename } = req.params;
       await backupService.deleteBackup(filename);
