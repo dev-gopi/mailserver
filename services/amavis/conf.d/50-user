@@ -1,0 +1,23 @@
+# Optional Amavis configuration.
+#
+# Amavis is deliberately not enabled by docker-compose.yml and Postfix does
+# not route mail to it.  Do not enable a Postfix content_filter or uncomment
+# the Compose service unless the complete filtering path has been reviewed.
+
+# These names are only used if the optional container is started.
+$myhostname = 'amavis';
+$mydomain = 'localdomain';
+
+# Declare the intended upstream services without changing the active mail
+# pipeline.  ClamAV exposes clamd on the private filternet network.
+@av_scanners = (
+  ['ClamAV-clamd',
+    \&ask_daemon, ["CONTSCAN {}\n", ['clamav:3310']],
+    qr/\bOK$/m, qr/\bFOUND$/m,
+    qr/^x/],
+);
+
+# The service is only reachable from Docker networks if it is explicitly
+# enabled.  Keep both standard Amavis SMTP ports available for a future,
+# intentional Postfix integration.
+$inet_socket_port = [10024, 10026];

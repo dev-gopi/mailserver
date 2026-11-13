@@ -1,128 +1,251 @@
-# Local mail-server stack
+# MailCore Docker mail server
 
-This is a Docker Compose virtual-mailbox mail server. It contains Postfix, Dovecot,
-PostgreSQL, SpamAssassin, ClamAV, OpenDKIM, and an Express/TypeScript admin API.
+MailCore is a single-host Docker Compose mail platform with virtual mailboxes,
+an administrator console, spam and malware filtering, DKIM signing, and
+PostgreSQL-backed configuration. It is designed to run one company's mail
+domains on a host that you operate.
 
-Read [the project audit](docs/PROJECT_AUDIT.md) before exposing any service publicly.
+> This repository is a deployment foundation, not a managed mail service.
+> Public delivery requires a real domain, correctly configured DNS and reverse
+> DNS, a trusted TLS certificate, firewall/provider approval for SMTP, and
+> ongoing operational monitoring.
 
-## Local setup
+## Components and message flow
 
-1. Copy `.env.example` to `.env` and `apps/admin-api/.env.example` to
-   `apps/admin-api/.env`; replace every
-   placeholder with environment-appropriate values. The root `.env` creates the only initial
-   admin; generate `MAIL_ADMIN_PASSWORD_HASH` from the command in that file.
-2. Create locally trusted development certificates, or mount real certificates for a domain
-   you control. Private keys are intentionally ignored by Git.
-3. For local development, generate a fresh local-only certificate with
-   `./infrastructure/tls/generate-dev-cert.sh`. For production, mount a CA-issued
-   certificate and private key for `MAIL_HOSTNAME` at `secrets/tls/cert.pem` and
-   `secrets/tls/privkey.key` instead. Review `infrastructure/database/init/00-schema.sql`; the database contains only the
-   administrator defined in `.env`.
-4. Validate configuration with `docker compose config`, then build/start with
-   `docker compose up --build`.
+| Component | Responsibility |
+| --- | --- |
+| Postfix | SMTP reception, authenticated submission, relay policy, and LMTP handoff |
+| Dovecot | IMAP, POP3, SMTP auth socket, LMTP delivery, quotas, and Sieve |
+| ClamSMTP + ClamAV | Malware scanning before mail re-enters Postfix |
+| SpamAssassin | Spam scoring and message headers |
+| OpenDKIM | Per-domain DKIM signing keys and signing milter |
+| PostgreSQL | Domains, virtual mailboxes, aliases, administrators, audit data, and settings |
+| Redis | Admin API task-queue storage |
+| Admin API and UI | Administration, diagnostics, DNS guidance, and backup management |
+| Monitor | API health probe with optional webhook notification |
 
-## Development commands
+~~~mermaid
+flowchart LR
+  Sender[SMTP client or remote sender] --> P[Postfix]
+  P -->|10026| AV[ClamSMTP + ClamAV]
+  AV -->|clean mail, 10025| P
+  P -->|spamc| SA[SpamAssassin]
+  SA --> P
+  P -->|LMTP| D[Dovecot]
+  D -->|X-Spam-Flag: YES| Junk[Junk mailbox]
+  D -->|other mail| Inbox[Maildir INBOX]
+  P <-->|DKIM milter| DKIM[OpenDKIM]
+  Client[Mail client] <-->|IMAP / POP3| D
+~~~
 
-```sh
+`services/amavis` contains a baseline Amavis image and configuration only. It
+is intentionally commented out in Compose, and Postfix does not send mail to
+it. Rspamd is also present only as commented reference configuration; it is
+not part of the active path.
+
+## Requirements
+
+- Docker Engine with the Docker Compose plugin
+- A host able to bind the required mail ports
+- For public mail: a domain, public static IP, working PTR/rDNS, provider
+  permission for inbound and outbound TCP 25, and a CA-issued certificate
+- For local development: OpenSSL
+
+## Local quick start
+
+1. Create the environment files:
+
+   ~~~sh
+   cp .env.example .env
+   cp apps/admin-api/.env.example apps/admin-api/.env
+   ~~~
+
+2. Edit both files. Replace all placeholder passwords and secrets. Put a
+   bcrypt hash in `MAIL_ADMIN_PASSWORD_HASH` and generate a stable
+   `AUTH_ENCRYPTION_KEY`:
+
+   ~~~sh
+   openssl rand -base64 32
+   cd apps/admin-api
+   npm ci
+   node -e "console.log(require('bcryptjs').hashSync('choose-a-long-password', 12))"
+   cd ../..
+   ~~~
+
+   Copy the resulting password hash into the root `.env`. The root file drives
+   Compose and database seeding; the API environment file is also required when
+   running the API outside Compose.
+
+3. Create a local-only certificate:
+
+   ~~~sh
+   ./infrastructure/tls/generate-dev-cert.sh
+   ~~~
+
+   It is self-signed for `mail.local`, `localhost`, and loopback addresses, and
+   must not be used for public clients.
+
+4. Validate, build, and start:
+
+   ~~~sh
+   docker compose config
+   docker compose up --build -d
+   ~~~
+
+5. Visit `http://localhost:8080/`. Sign in using `MAIL_ADMIN_USERNAME` and its
+   matching unhashed password, then change the initial password when prompted.
+   API docs are at `http://localhost:8080/docs/`; the health probe is
+   `http://localhost:8080/health`.
+
+The initial database seed runs only when the `dbdata` volume is empty. It
+creates the initial owner and a verified `MAIL_DOMAIN` record for local
+testing. Changing seed variables does not modify an existing database.
+
+## Published ports
+
+| Host variable | Default | Service | Purpose |
+| --- | ---: | --- | --- |
+| `SMTP_PORT` | 25 | Postfix | SMTP server-to-server mail |
+| `SUBMISSION_PORT` | 587 | Postfix | STARTTLS SMTP submission |
+| `SMTPS_PORT` | 465 | Postfix | Implicit-TLS SMTP submission |
+| `IMAPS_PORT` | 993 | Dovecot | IMAP over TLS |
+| `IMAP_STARTTLS_PORT` | 143 | Dovecot | IMAP with STARTTLS |
+| `POP3S_PORT` | 995 | Dovecot | POP3 over TLS |
+| `POP3_STARTTLS_PORT` | 110 | Dovecot | POP3 with STARTTLS |
+| `ADMIN_UI_PORT` | 8080 | Admin UI | HTTP console and proxied API |
+
+PostgreSQL, Redis, SpamAssassin, ClamAV, OpenDKIM, and the API have no host
+port mappings. The dashboard is plain HTTP by default: retain local/trusted
+network access or place it behind an authenticated HTTPS reverse proxy before
+remote use.
+
+## Administrator workflow
+
+1. Sign in as the seeded owner and change its password.
+2. Set the company profile.
+3. Add each domain, publish its ownership TXT record, then verify it.
+4. Publish the provided MX, SPF, DKIM, and DMARC records.
+5. Create mailboxes and aliases after domain verification.
+6. Configure mail clients with the mailbox email address and password.
+
+The API uses Bearer session tokens. It supports password authentication,
+optional TOTP with recovery codes, and passkeys. Keep
+`AUTH_ENCRYPTION_KEY` safe and unchanged: altering it can make existing
+encrypted TOTP data unusable.
+
+Useful authenticated API areas:
+
+- `/api/dashboard`, `/api/system/services`, and `/api/system/queue`
+- `/api/domains`, `/api/users` (and legacy `/api/mailboxes`), and `/api/aliases`
+- `/api/audit-log`
+- `/api/backups` for creating, downloading, retaining, and deleting archives
+
+Read-only administrators can view data but cannot change configuration, queue
+state, or backups.
+
+## DNS, TLS, and public deployment
+
+For each public domain, publish the values from its DNS setup view. At minimum:
+
+- An `A` or `AAAA` record for `MAIL_HOSTNAME` pointing at this host
+- An `MX` record for each mail domain pointing at `MAIL_HOSTNAME`
+- A PTR/rDNS record at the IP provider pointing back to `MAIL_HOSTNAME`
+- One valid SPF TXT record, the generated DKIM TXT record, and a DMARC TXT
+  record
+
+Install a trusted certificate for `MAIL_HOSTNAME` at:
+
+~~~text
+secrets/tls/cert.pem
+secrets/tls/privkey.key
+~~~
+
+They are mounted read-only into Postfix and Dovecot. The provided
+`infrastructure/tls/renew.sh` runs Certbot in webroot mode, but you must
+arrange ACME reachability, DNS/firewall policy, and certificate deployment.
+
+Authenticated senders cannot submit mail using addresses they do not own. This
+does not replace rate limits, abuse handling, off-host backup, log retention,
+patching, or deliverability monitoring.
+
+## Filtering and delivery
+
+- SMTP listeners send mail to ClamSMTP on the internal filtering network.
+- Malware found by ClamAV is dropped.
+- Clean mail returns to Postfix on port 10025, then passes through
+  SpamAssassin.
+- SpamAssassin's configured threshold is `5.0`. Dovecot Sieve sends messages
+  with `X-Spam-Flag: YES` to `Junk`.
+- Dovecot stores Maildir data in `maildata` and reads virtual mailbox/alias
+  configuration from PostgreSQL.
+- OpenDKIM signs mail with per-domain keys managed by the administration
+  service.
+
+## Backups and monitoring
+
+The API writes archives to the host-mounted `./backups` directory. Backups may
+contain a PostgreSQL custom dump and a compressed mailbox archive; the
+dashboard/API controls inclusion, retention, and scheduling. The API evaluates
+whether a backup is due every 15 minutes, so timing is not an exact cron
+boundary.
+
+Copy archives to separate encrypted storage and test restores. Volumes and
+archives on the same host are not disaster recovery.
+
+The `monitor` container polls the API health endpoint. Set
+`ALERT_WEBHOOK_URL` to receive state-change notifications. It observes
+API/database reachability, not end-to-end external mail delivery.
+
+## Operations
+
+~~~sh
 docker compose config
-docker compose up --build
-docker compose logs -f postfix dovecot db
+docker compose ps
+docker compose logs -f postfix dovecot clamav spamassassin opendkim app
+
+cd apps/admin-api
+npm ci
+npm test
+cd ../..
+
+# Stop while retaining data
 docker compose down
-```
+~~~
 
-Start the complete stack in the background with one command:
+| Volume | Contents |
+| --- | --- |
+| `dbdata` | PostgreSQL data |
+| `maildata` | Maildir mailbox storage |
+| `mailspool` | Shared Postfix/Dovecot spool sockets and queue-related state |
+| `spamdata` | SpamAssassin data |
+| `clamavdata` | ClamAV signatures |
+| `dkimkeys` | OpenDKIM keys |
+| `redisdata` | Redis append-only data |
 
-```sh
-docker compose up --build -d
-```
+`docker compose down -v` permanently removes all named volumes, including
+mailboxes, database state, DKIM keys, and filtering data. Use it only for a
+deliberate disposable reset.
 
-Open `http://localhost:8080` for the administrator dashboard during local-only
-development. HTTPS is intentionally disabled in this mode; do not expose this
-port to an untrusted network or use it for production administration.
-Docker named volumes
-`dbdata`, `maildata`, `mailspool`, and `spamdata` preserve database, mailbox, queue, and
-SpamAssassin data across restarts. Do not use `docker compose down -v` unless you explicitly
-want to permanently remove that data.
+See [the integration test report](docs/INTEGRATION_TEST_REPORT_2026-11-13.md)
+for the latest local end-to-end checks, and read
+[the project audit](docs/PROJECT_AUDIT.md) before public exposure.
 
-The database seed scripts only run when `dbdata` is empty. For a disposable local test after
-changing the seed values, run `docker compose down -v` (this deletes all local mail and database
-data) and then `docker compose up --build`.
+## Repository layout
 
-## Admin API flow
-
-`POST /auth/login` accepts the seeded admin username and password and returns a Bearer token.
-Use that token for routes under `/api`: domains, mailboxes, aliases, and `audit-log`.
-Passwords for mailboxes must be at least 12 characters. Mail clients use the mailbox email
-address and password over SMTP submission (587) plus IMAPS (993). The API is published only
-on `127.0.0.1:8080`; put it behind an authenticated HTTPS reverse proxy if remote access is
-required.
-
-## Single-company administration
-
-This installation serves one company. First log in with the seeded owner account, immediately
-call `POST /auth/change-password`, then complete `PUT /api/company`. The dashboard at
-`GET /api/dashboard` is unavailable until the password change is complete. Add and verify your
-domains at `/api/domains`, then manage mailbox users and aliases at `/api/mailboxes` and
-`/api/aliases`.
-
-The admin dashboard and Swagger UI are available at `http://localhost:8080/` and
-`http://localhost:8080/docs`; the OpenAPI document is at `/openapi.json`. New domains require
-DNS TXT verification before mailboxes can be created. After adding a domain, copy every record
-from the portal's DNS Setup dialog to the domain provider:
-
-- The mail hostname A record must point to the server's public IP. Set `MAIL_HOSTNAME` and
-  `MAIL_PUBLIC_IP` in `.env`; configure reverse DNS/PTR for the same hostname with the VPS
-  provider.
-- The MX record for the domain must point to `MAIL_HOSTNAME`, so external mail reaches Postfix.
-- Publish the generated SPF, DKIM, and DMARC records so external providers can authenticate
-  messages sent by this server. Keep one SPF record for the domain.
-- Allow inbound TCP 25 and outbound TCP 25 at the hosting provider/firewall. Users connect
-  with IMAPS 993 or SMTP submission 587/465.
-
-The DNS Setup dialog generates a unique 2048-bit DKIM key for each domain. The
-bootstrap `mail.local` domain is verified only for local testing and cannot receive mail from
-the public internet.
-
-The admin API uses an internal Postfix command bridge for queue inspection and flushing.
-SMTP diagnostic delivery still requires an explicitly configured relay; it returns
-`501 Not Implemented` until that relay is configured. Spam diagnostics use the GTUBE
-test marker and should not be treated as a full message-scoring integration test.
-
-## Production foundation
-
-The stack includes a single-host foundation for operating public mail:
-
-- The `backup` service creates PostgreSQL custom dumps and compressed mail-storage archives
-  under `./backups`. Configure `BACKUP_INTERVAL_SECONDS` and `BACKUP_RETENTION_DAYS`; copy
-  these archives to separate encrypted storage because local Docker volumes are not disaster
-  recovery.
-- The `monitor` service checks the API health endpoint and sends state-change notifications
-  to `ALERT_WEBHOOK_URL` when configured. Extend this webhook at the provider side for email,
-  Slack, or incident-management alerts.
-- The Services page includes a deliverability check for A, MX, SPF, DKIM, DMARC, and PTR
-  records. It reports DNS problems before public delivery is attempted.
-- `infrastructure/tls/renew.sh` provides a Certbot webroot renewal loop. Set
-  `CERTBOT_EMAIL`, `CERTBOT_DOMAIN`, and `CERTBOT_WEBROOT`, expose the ACME challenge path,
-  then install the resulting certificate and key into `secrets/tls` before restarting
-  Postfix/Dovecot. Certificate automation must be completed with the hosting provider's
-  DNS/firewall policy; the application does not fabricate certificates.
-
-Backups and monitoring are intentionally single-host services. They improve recovery and
-visibility but are not multi-host high availability; PostgreSQL replication, shared storage,
-load balancing, and failover require a separate deployment architecture.
-
-## Legacy notes
-
-The commands and sample entries below were retained as reference only; do not use their
-passwords or the `mail.local` domain in production.
-
-```sh
-mkpasswd --method=SHA-512 testpass
-
-mkdir -p certs
-openssl req -x509 -newkey rsa:4096 -keyout secrets/tls/privkey.key -out secrets/tls/cert.pem -days 365 -nodes -subj "/C=US/ST=State/L=City/O=MailServer/CN=mail.local"
-
-alice:{SHA512-CRYPT}$6$iUCat3r7frbaIsSW$zS5cr6lBX4xSlcEw8Zkk0A.RP5/ZaKA6.Nl6KLLFDFpZCQrzUkj3X.i4GCDT9o7MQqyGQ/uP7T9a5JT8GafxE0:5000:5000::/var/mail/alice:/
-bob:{SHA512-CRYPT}$6$examplehashedpassword:5000:5000::/var/mail/bob:/
-test:{PLAIN}testpassword:5000:5000::/var/mail/test:/
-```
+~~~text
+apps/
+  admin-api/       Express/TypeScript API, authentication, backups
+  admin-ui/        Nginx-served administrator dashboard
+services/
+  postfix/         SMTP and delivery configuration
+  dovecot/         IMAP, POP3, LMTP, Sieve, SQL authentication
+  clamav/          ClamAV and ClamSMTP
+  spamassassin/    SpamAssassin and learning job
+  opendkim/        DKIM signing
+  amavis/          Inactive, future-only configuration
+infrastructure/
+  database/init/   Schema and initial administrator seed
+  monitor/         API-health monitor
+  tls/             Development certificate and renewal helpers
+docs/              Audit and integration documentation
+~~~

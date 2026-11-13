@@ -34,9 +34,13 @@ services:
   #     timeout: 5s
   #     retries: 5
 
+  # Optional only: Amavis is configured under services/amavis but is not part
+  # of this project’s active mail path. Leave this service commented unless a
+  # reviewed Postfix integration is added at the same time.
   # amavis:
-  #   build: ./amavis
+  #   build: ./services/amavis
   #   container_name: mail_amavis
+  #   restart: unless-stopped
   #   depends_on:
   #     - spamassassin
   #     - clamav
