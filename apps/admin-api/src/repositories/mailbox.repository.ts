@@ -186,7 +186,7 @@ export class MailboxRepository {
 
   async delete(id: number): Promise<MailboxEntity | null> {
     const res = await db.query<MailboxEntity>(
-      "DELETE FROM mailboxes WHERE id = $1 RETURNING id, address",
+      "DELETE FROM mailboxes WHERE id = $1 RETURNING id, address, maildir",
       [id]
     );
     return res.rows[0] || null;

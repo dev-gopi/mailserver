@@ -65,6 +65,7 @@ export const aliasPatchSchema = z.object({
 
 export const testSmtpSchema = z.object({
   recipient: z.string().email("Valid recipient email is required"),
+  sender: z.string().email("Valid sender email is required").optional(),
   subject: z.string().min(1, "Subject is required").max(200).refine((value) => !/[\r\n]/.test(value), "Subject cannot contain line breaks"),
   body: z.string().min(1, "Body is required").max(10000)
 });

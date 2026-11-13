@@ -4,7 +4,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     opendkim \
+    opendkim-tools \
+    postgresql-client \
     netcat-openbsd \
+    openssl \
     && rm -rf /var/lib/apt/lists/* \
     && usermod -u 10001 opendkim \
     && mkdir -p /var/lib/opendkim/keys /var/run/opendkim \

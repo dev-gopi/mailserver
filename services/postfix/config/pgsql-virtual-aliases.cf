@@ -1,4 +1,4 @@
-# MySQL lookup configuration for virtual_alias_maps
+# PostgreSQL lookup configuration for virtual_alias_maps
 # Postfix uses this to check if an address should be forwarded
 # (alias) to another address.
 

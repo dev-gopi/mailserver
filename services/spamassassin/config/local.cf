@@ -118,7 +118,7 @@ use_pyzor               0
 # ClamAV plugin options (optional)
 clamav_timeout 20
 clamav_max_size 20000000
-clamav_socket tcp:127.0.0.1:3310
+clamav_socket tcp:clamav:3310
 clamav_cache_expiry 86400
 
 # loadplugin Mail::SpamAssassin::Plugin::ClamAV

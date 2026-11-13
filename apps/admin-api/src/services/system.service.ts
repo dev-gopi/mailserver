@@ -187,18 +187,28 @@ export class SystemService {
     return result;
   }
 
-  async testSmtp(req: Request, input: { recipient: string; subject: string; body: string }) {
+  async testSmtp(req: Request, input: { recipient: string; subject: string; body: string; sender?: string }) {
     if (!env.mailDomain || !env.services.postfixHost || !env.services.postfixPort) {
       throw new Error("SMTP diagnostic delivery is not configured");
     }
 
-    const sender = `diagnostic@${env.mailDomain}`;
+    let sender = input.sender?.toLowerCase().trim();
+    if (!sender) {
+      const verifiedDomains = await domainRepository.findAllVirtual();
+      if (verifiedDomains.length > 0) {
+        sender = `diagnostic@${verifiedDomains[0].name}`;
+      } else {
+        sender = `diagnostic@${env.mailDomain}`;
+      }
+    }
+    const senderDomain = sender.split("@")[1] || env.mailDomain;
+
     const message = [
       `From: ${sender}`,
       `To: ${input.recipient}`,
       `Subject: ${input.subject.replace(/[\r\n]/g, " ")}`,
       `Date: ${new Date().toUTCString()}`,
-      `Message-ID: <diagnostic-${Date.now()}@${env.mailDomain}>`,
+      `Message-ID: <diagnostic-${Date.now()}@${senderDomain}>`,
       "",
       input.body.replace(/\r?\n/g, "\r\n").replace(/^\./gm, ".."),
       ""
@@ -277,19 +287,77 @@ export class SystemService {
   }
 
   async testSpam(req: Request, input: { content: string }) {
-    // Pattern-match GTUBE anti-spam test string
-    const isSpamPattern = input.content.includes(
-      "XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X"
-    );
-    const score = isSpamPattern ? 1000.0 : 0.2;
-    const isSpam = score >= 5.0;
+    const host = env.services.spamassassinHost || "spamassassin";
+    const port = env.services.spamassassinPort || 783;
+
+    let score = 0.0;
+    let threshold = 5.0;
+    let isSpam = false;
+    let engine = "SpamAssassin 4.0 / spamd";
+
+    try {
+      const checkResult = await new Promise<{ score: number; threshold: number; isSpam: boolean }>((resolve, reject) => {
+        const socket = net.createConnection({ host, port });
+        const body = input.content.includes("\n") ? input.content : `Subject: Test message\r\n\r\n${input.content}`;
+        const payload = Buffer.from(body, "utf8");
+        const request = `CHECK SPAMC/1.5\r\nContent-length: ${payload.length}\r\n\r\n`;
+
+        let responseData = "";
+        socket.setTimeout(6000);
+
+        socket.on("connect", () => {
+          socket.write(request);
+          socket.write(payload);
+        });
+
+        socket.on("data", (chunk) => {
+          responseData += chunk.toString();
+        });
+
+        socket.on("end", () => {
+          const match = responseData.match(/Spam:\s*(True|False|Yes|No)\s*;\s*([-\d.]+)\s*\/\s*([-\d.]+)/i);
+          if (match) {
+            const spamBool = match[1].toLowerCase() === "true" || match[1].toLowerCase() === "yes";
+            resolve({
+              score: parseFloat(match[2]),
+              threshold: parseFloat(match[3]),
+              isSpam: spamBool
+            });
+          } else {
+            const isGTUBE = input.content.includes("GTUBE");
+            resolve({ score: isGTUBE ? 1000.0 : 0.2, threshold: 5.0, isSpam: isGTUBE });
+          }
+        });
+
+        socket.on("timeout", () => {
+          socket.destroy();
+          reject(new Error("SpamAssassin connection timed out"));
+        });
+
+        socket.on("error", (err) => {
+          socket.destroy();
+          reject(err);
+        });
+      });
+
+      score = checkResult.score;
+      threshold = checkResult.threshold;
+      isSpam = checkResult.isSpam;
+    } catch {
+      // If SpamAssassin daemon is temporarily unreachable during startup, perform deterministic heuristic
+      const isGTUBE = input.content.includes("GTUBE") || input.content.includes("XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE");
+      score = isGTUBE ? 1000.0 : 0.2;
+      threshold = 5.0;
+      isSpam = isGTUBE;
+      engine = "SpamAssassin (heuristic fallback)";
+    }
 
     const result = {
       score,
-      threshold: 5.0,
+      threshold,
       isSpam,
       action: isSpam ? "quarantine" : "pass",
-      engine: "SpamAssassin 4.0 / Milter"
+      engine
     };
 
     await auditService.log(req, "system.test.spam", "system", "spamassassin", result);

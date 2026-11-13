@@ -20,6 +20,12 @@ for config in /etc/postfix/pgsql-*.cf; do
   grep -q '__MAIL_DB_' "$config" && { echo "Postfix database configuration injection failed" >&2; exit 1; }
 done
 
+# Ensure DNS resolution files are present in Postfix spool directory
+mkdir -p /var/spool/postfix/etc
+cp -f /etc/resolv.conf /var/spool/postfix/etc/resolv.conf 2>/dev/null || true
+cp -f /etc/hosts /var/spool/postfix/etc/hosts 2>/dev/null || true
+cp -f /etc/services /var/spool/postfix/etc/services 2>/dev/null || true
+
 # Start the container-specific logger. It receives Postfix messages from
 # /dev/log and forwards every facility to Docker's stdout.
 rsyslogd -n -f /etc/rsyslog-container.conf &

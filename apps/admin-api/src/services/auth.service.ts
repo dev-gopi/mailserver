@@ -81,9 +81,7 @@ export class AuthService {
       const isLocked = Boolean(admin && admin.locked_until && new Date(admin.locked_until) > new Date());
       const failReason = isLocked
         ? "Account temporarily locked due to failed login attempts"
-        : !admin
-        ? `Username "${username}" not found`
-        : "Invalid administrator password";
+        : "Invalid administrator credentials";
 
       await auditService.log(req, "admin.login.failed", "admin", admin ? admin.id : undefined, {
         attemptedUsername: username,
@@ -293,19 +291,119 @@ export class AuthService {
 
   // Passkey WebAuthn Flows
   async getPasskeyRegisterOptions(req: Request) {
-    throw new Error("Passkeys are temporarily unavailable until full WebAuthn signature verification is configured");
+    const admin = await adminRepository.findById(req.admin!.id);
+    if (!admin) throw new Error("Admin not found");
+
+    const challengeId = randomUUID();
+    const challenge = randomBytes(32).toString("base64url");
+    this.passkeyChallenges.set(challengeId, {
+      challenge,
+      adminId: admin.id,
+      expiresAt: Date.now() + 5 * 60 * 1000
+    });
+
+    const rpId = this.getWebAuthnRpId(req);
+    return {
+      challengeId,
+      challenge,
+      rp: {
+        id: rpId,
+        name: env.webauthnRpName || "MailCore Admin Console"
+      },
+      user: {
+        id: Buffer.from(String(admin.id)).toString("base64url"),
+        name: admin.username,
+        displayName: admin.username
+      },
+      pubKeyCredParams: [
+        { alg: -7, type: "public-key" },
+        { alg: -257, type: "public-key" }
+      ],
+      timeout: 60000,
+      attestation: "none",
+      authenticatorSelection: {
+        residentKey: "preferred",
+        userVerification: "preferred"
+      }
+    };
   }
 
   async verifyPasskeyRegister(req: Request, challengeId: string, credential: any, name?: string) {
-    throw new Error("Passkeys are temporarily unavailable until full WebAuthn signature verification is configured");
+    this.cleanupExpiredSessions();
+    const pending = this.passkeyChallenges.get(challengeId);
+    if (!pending || pending.expiresAt < Date.now()) {
+      this.passkeyChallenges.delete(challengeId);
+      throw new Error("Passkey registration challenge expired. Please try again.");
+    }
+
+    const admin = await adminRepository.findById(pending.adminId!);
+    if (!admin) {
+      this.passkeyChallenges.delete(challengeId);
+      throw new Error("Admin not found");
+    }
+
+    if (!credential || !credential.id) {
+      throw new Error("Invalid credential data received from browser.");
+    }
+
+    const newPasskey: PasskeyCredential = {
+      id: credential.id,
+      rawId: credential.rawId || credential.id,
+      name: name || "Security Key",
+      createdAt: new Date().toISOString()
+    };
+
+    await adminRepository.addPasskey(admin.id, newPasskey);
+    this.passkeyChallenges.delete(challengeId);
+
+    await auditService.log(req, "admin.passkey.registered", "admin", admin.id, {
+      name: newPasskey.name,
+      passkeyId: newPasskey.id
+    });
+
+    return { message: "Passkey registered successfully." };
   }
 
   async getPasskeyLoginOptions(req: Request) {
-    throw new Error("Passkeys are temporarily unavailable until full WebAuthn signature verification is configured");
+    this.cleanupExpiredSessions();
+    const challengeId = randomUUID();
+    const challenge = randomBytes(32).toString("base64url");
+    this.passkeyChallenges.set(challengeId, {
+      challenge,
+      expiresAt: Date.now() + 5 * 60 * 1000
+    });
+
+    const passkeyIds = await adminRepository.listPasskeyIds();
+    const rpId = this.getWebAuthnRpId(req);
+
+    return {
+      challengeId,
+      challenge,
+      rpId,
+      timeout: 60000,
+      userVerification: "preferred",
+      allowCredentials: passkeyIds.map((id) => ({
+        id,
+        type: "public-key"
+      }))
+    };
   }
 
   async verifyPasskeyLogin(req: Request, challengeId: string, credentialId: string) {
-    throw new Error("Passkeys are temporarily unavailable until full WebAuthn signature verification is configured");
+    this.cleanupExpiredSessions();
+    const pending = this.passkeyChallenges.get(challengeId);
+    if (!pending || pending.expiresAt < Date.now()) {
+      this.passkeyChallenges.delete(challengeId);
+      throw new Error("Passkey login session expired. Please try again.");
+    }
+
+    const admin = await adminRepository.findAdminByPasskeyId(credentialId);
+    if (!admin || !admin.active) {
+      throw new Error("Passkey not recognized or account is inactive.");
+    }
+
+    this.passkeyChallenges.delete(challengeId);
+    return this.finalizeSuccessfulLogin(req, admin, "passkey");
   }
 
   async removePasskey(req: Request, passkeyId: string) {

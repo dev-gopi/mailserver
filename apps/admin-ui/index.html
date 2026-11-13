@@ -1124,6 +1124,10 @@
               </div>
               <form id="form-test-smtp" onsubmit="handleTestSmtp(event)">
                 <div class="form-group">
+                  <label for="test-smtp-sender">Sender Email (From)</label>
+                  <input id="test-smtp-sender" type="email" placeholder="user@yourdomain.com (leave blank for verified domain)">
+                </div>
+                <div class="form-group">
                   <label for="test-smtp-recipient">Recipient Email</label>
                   <input id="test-smtp-recipient" type="email" placeholder="recipient@example.com" required>
                 </div>

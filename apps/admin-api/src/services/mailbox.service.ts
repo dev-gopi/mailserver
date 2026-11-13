@@ -1,5 +1,7 @@
 import bcrypt from "bcryptjs";
 import { Request } from "express";
+import { promises as fs } from "fs";
+import path from "path";
 import { mailboxRepository } from "../repositories/mailbox.repository";
 import { domainRepository } from "../repositories/domain.repository";
 import { auditService } from "./audit";
@@ -140,12 +142,23 @@ export class MailboxService {
   }
 
   async deleteMailbox(req: Request, id: number) {
-    // Fetch via virtual_users first so we have the address
+    // Fetch via virtual_users first so we have the address and maildir
     const target = await mailboxRepository.findById(id);
     if (!target) throw new Error("Mailbox not found");
 
     const deleted = await mailboxRepository.delete(id);
     if (!deleted) throw new Error("Mailbox not found");
+
+    // Clean up mailbox directory from storage disk
+    try {
+      const root = path.resolve(env.mailStoragePath);
+      const mailboxPath = path.resolve(root, target.maildir);
+      if (mailboxPath.startsWith(`${root}${path.sep}`) && mailboxPath !== root) {
+        await fs.rm(mailboxPath, { recursive: true, force: true });
+      }
+    } catch (err) {
+      console.error(`Failed to delete maildir for ${target.address}:`, err);
+    }
 
     await auditService.log(req, "mailbox.delete", "mailbox", id, { address: target.address });
     return deleted;

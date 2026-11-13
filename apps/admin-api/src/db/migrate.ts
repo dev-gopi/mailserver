@@ -30,6 +30,13 @@ export async function runMigrations(): Promise<void> {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
       INSERT INTO backup_settings (id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING;
+
+      DROP VIEW IF EXISTS virtual_users CASCADE;
+      CREATE VIEW virtual_users AS
+      SELECT m.id, m.domain_id, m.address AS email, m.password_hash AS password, m.maildir, m.active, m.quota_bytes
+      FROM mailboxes m
+      JOIN domains d ON d.id = m.domain_id
+      WHERE m.active AND d.active AND d.verified_at IS NOT NULL;
     `);
 
     // Upgrade existing installations without leaving MFA material readable in the database.

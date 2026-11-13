@@ -1,4 +1,4 @@
-# MySQL lookup configuration for virtual_mailbox_maps
+# PostgreSQL lookup configuration for virtual_mailbox_maps
 # Postfix uses this to find the mailbox path for a full email address.
 
 # Database user credentials

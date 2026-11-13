@@ -12,6 +12,10 @@ user_query = \
   SELECT \
     CONCAT('/var/mail/vhosts/', TRIM(TRAILING '/' FROM maildir)) AS home, \
     5000 AS uid, \
-    5000 AS gid \
+    5000 AS gid, \
+    CASE \
+      WHEN quota_bytes IS NOT NULL AND quota_bytes > 0 THEN CONCAT('*:storage=', quota_bytes, 'B') \
+      ELSE '*:storage=0' \
+    END AS quota_rule \
   FROM virtual_users \
   WHERE email = '%u'

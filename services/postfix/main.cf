@@ -6,7 +6,7 @@
 mydomain = __MAIL_DOMAIN__
 myorigin = $mydomain
 
-smtpd_banner = $myhostname ESMTP $mail_name (Ubuntu)
+smtpd_banner = $myhostname ESMTP $mail_name
 biff = no
 
 # appending .domain is the MUA's job.
@@ -31,7 +31,10 @@ smtpd_tls_cert_file=/etc/ssl/certs/cert.pem
 smtpd_tls_key_file=/etc/ssl/certs/privkey.key
 smtpd_use_tls=yes
 smtpd_tls_auth_only=yes
-tls_ssl_options = 0x80
+smtpd_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtp_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtp_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
 smtpd_tls_security_level=may
 
 smtp_tls_CApath=/etc/ssl/certs
@@ -119,11 +122,9 @@ virtual_gid_maps = static:5000
 # SpamAssassin on port 10025 and then enters the local queue without looping.
 content_filter =
 
-# Sign outgoing messages with the per-domain keys managed by the admin UI.
-# smtpd_milters = inet:opendkim:8891
-# non_smtpd_milters = inet:opendkim:8891
-smtpd_milters =
-non_smtpd_milters =
+# Sign outgoing messages with the per-domain keys managed by OpenDKIM.
+smtpd_milters = inet:opendkim:8891
+non_smtpd_milters = inet:opendkim:8891
 milter_default_action = accept
 milter_protocol = 6
 

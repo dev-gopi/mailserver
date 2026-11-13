@@ -1,4 +1,4 @@
-# MySQL lookup configuration for virtual_mailbox_domains
+# PostgreSQL lookup configuration for virtual_mailbox_domains
 # Postfix will use this file to check if an incoming domain is hosted here.
 
 # Database user credentials

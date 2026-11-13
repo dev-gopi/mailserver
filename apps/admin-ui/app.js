@@ -375,7 +375,7 @@ function copyPasswordFrom(inputId, btnElement) {
   copyText(input.value, btnElement);
 }
 
-// Password Generator
+// Cryptographically Secure Password Generator
 function generatePassword(length = 16) {
   const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
   const lower = "abcdefghjkmnpqrstuvwxyz";
@@ -383,18 +383,33 @@ function generatePassword(length = 16) {
   const symbols = "!@#$%^&*()-_=+";
   const all = upper + lower + digits + symbols;
 
-  let pwd = "";
-  pwd += upper[Math.floor(Math.random() * upper.length)];
-  pwd += lower[Math.floor(Math.random() * lower.length)];
-  pwd += digits[Math.floor(Math.random() * digits.length)];
-  pwd += symbols[Math.floor(Math.random() * symbols.length)];
+  const getRandomInt = (max) => {
+    if (window.crypto && window.crypto.getRandomValues) {
+      const arr = new Uint32Array(1);
+      window.crypto.getRandomValues(arr);
+      return arr[0] % max;
+    }
+    return Math.floor(Math.random() * max);
+  };
+
+  const pwdArr = [
+    upper[getRandomInt(upper.length)],
+    lower[getRandomInt(lower.length)],
+    digits[getRandomInt(digits.length)],
+    symbols[getRandomInt(symbols.length)]
+  ];
 
   for (let i = 4; i < length; i++) {
-    pwd += all[Math.floor(Math.random() * all.length)];
+    pwdArr.push(all[getRandomInt(all.length)]);
   }
 
-  // Shuffle
-  return pwd.split("").sort(() => 0.5 - Math.random()).join("");
+  // Cryptographically secure Fisher-Yates shuffle
+  for (let i = pwdArr.length - 1; i > 0; i--) {
+    const j = getRandomInt(i + 1);
+    [pwdArr[i], pwdArr[j]] = [pwdArr[j], pwdArr[i]];
+  }
+
+  return pwdArr.join("");
 }
 
 function generatePasswordFor(inputId) {
@@ -1870,6 +1885,7 @@ async function triggerFlushQueue() {
 async function handleTestSmtp(event) {
   event.preventDefault();
   const recipient = $("test-smtp-recipient").value.trim();
+  const sender = $("test-smtp-sender")?.value.trim() || undefined;
   const subject = $("test-smtp-subject").value.trim();
   const body = $("test-smtp-body").value.trim();
 
@@ -1879,7 +1895,7 @@ async function handleTestSmtp(event) {
   try {
     const res = await request("/api/system/test-smtp", {
       method: "POST",
-      body: JSON.stringify({ recipient, subject, body })
+      body: JSON.stringify({ recipient, sender, subject, body })
     });
 
     showToast("Diagnostic Email Queued", res.message, "success");

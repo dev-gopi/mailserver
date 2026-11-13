@@ -3,4 +3,4 @@ user = __MAIL_DB_USER__
 password = __MAIL_DB_PASSWORD__
 hosts = __MAIL_DB_HOST__
 dbname = __MAIL_DB_NAME__
-query = SELECT email FROM virtual_users WHERE email='%s'
+query = SELECT email FROM virtual_users WHERE email='%s' UNION SELECT destination FROM virtual_aliases WHERE source='%s'

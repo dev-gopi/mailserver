@@ -14,7 +14,7 @@ CREATE TRIGGER domains_touch BEFORE UPDATE ON domains FOR EACH ROW EXECUTE FUNCT
 CREATE TRIGGER mailboxes_touch BEFORE UPDATE ON mailboxes FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 CREATE VIEW virtual_domains AS SELECT id, name FROM domains WHERE active AND verified_at IS NOT NULL;
 CREATE VIEW virtual_users AS
-SELECT m.id, m.domain_id, m.address AS email, m.password_hash AS password, m.maildir, m.active
+SELECT m.id, m.domain_id, m.address AS email, m.password_hash AS password, m.maildir, m.active, m.quota_bytes
 FROM mailboxes m
 JOIN domains d ON d.id = m.domain_id
 WHERE m.active AND d.active AND d.verified_at IS NOT NULL;

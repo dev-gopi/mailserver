@@ -22,7 +22,8 @@ RUN apt-get update \
 COPY rsyslog-container.conf /etc/rsyslog-container.conf
 
 RUN groupadd -g 5000 vmail && \
-    useradd -u 5000 -g vmail -d /var/mail -s /usr/sbin/nologin vmail
+    useradd -u 5000 -g vmail -d /var/mail -s /usr/sbin/nologin vmail && \
+    usermod -aG vmail postfix
 
 RUN mv /etc/postfix/main.cf /etc/postfix/main.cf.bk
 RUN mv /etc/postfix/master.cf /etc/postfix/master.cf.bk

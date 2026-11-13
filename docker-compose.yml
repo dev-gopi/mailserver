@@ -35,10 +35,18 @@ services:
   opendkim:
     build: ./services/opendkim
     restart: unless-stopped
+    environment:
+      - MAIL_DB_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      - MAIL_DB_HOST=${POSTGRES_HOST:?set POSTGRES_HOST in .env}
+      - MAIL_DB_NAME=${POSTGRES_DB:?set POSTGRES_DB in .env}
+      - MAIL_DB_USER=${POSTGRES_USER:?set POSTGRES_USER in .env}
     volumes:
       - dkimkeys:/var/lib/opendkim
     networks:
       - mailnet
+    depends_on:
+      db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 ${OPENDKIM_PORT:?set OPENDKIM_PORT in .env}"]
       interval: 15s
@@ -92,6 +100,8 @@ services:
     ports:
       - "${IMAPS_PORT:?set IMAPS_PORT in .env}:993"
       - "${POP3S_PORT:?set POP3S_PORT in .env}:995"
+      - "${IMAP_STARTTLS_PORT:-143}:143"
+      - "${POP3_STARTTLS_PORT:-110}:110"
     networks:
       - mailnet
     restart: unless-stopped
@@ -196,7 +206,7 @@ services:
       WEBAUTHN_RP_NAME: MailCore Admin Console
       AUTH_ENCRYPTION_KEY: ${AUTH_ENCRYPTION_KEY:-}
     volumes:
-      - maildata:/var/mail/vhosts:ro
+      - maildata:/var/mail/vhosts
       - dkimkeys:/var/lib/opendkim
       - ./backups:/backups
     networks:

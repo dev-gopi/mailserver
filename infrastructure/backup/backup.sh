@@ -17,9 +17,14 @@ while true; do
   archive="/backups/mail-${timestamp}.tar.gz"
   mkdir -p "$workdir"
 
-  pg_dump --format=custom --file="$workdir/database.dump"
-  tar -C /var/mail/vhosts -czf "$workdir/maildata.tar.gz" .
-  tar -C "$workdir" -czf "$archive" database.dump maildata.tar.gz
+  if pg_dump --format=custom --file="$workdir/database.dump"; then
+    tar -C /var/mail/vhosts -czf "$workdir/maildata.tar.gz" . 2>/dev/null || true
+    tar -C "$workdir" -czf "${archive}.tmp" database.dump maildata.tar.gz
+    mv "${archive}.tmp" "$archive"
+    sha256sum "$archive" > "${archive}.sha256"
+  else
+    echo "[ERROR] pg_dump failed; skipping backup" >&2
+  fi
   rm -rf "$workdir"
 
   find /backups -type f -name 'mail-*.tar.gz' -mtime +"$BACKUP_RETENTION_DAYS" -delete
