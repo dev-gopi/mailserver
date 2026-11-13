@@ -7,12 +7,14 @@ Read [the project audit](docs/PROJECT_AUDIT.md) before exposing any service publ
 
 ## Local setup
 
-1. Copy `.env.example` to `.env` and `server/.env.example` to `server/.env`; replace every
+1. Copy `.env.example` to `.env` and `apps/admin-api/.env.example` to
+   `apps/admin-api/.env`; replace every
    placeholder with environment-appropriate values. The root `.env` creates the only initial
    admin; generate `MAIL_ADMIN_PASSWORD_HASH` from the command in that file.
 2. Create locally trusted development certificates, or mount real certificates for a domain
    you control. Private keys are intentionally ignored by Git.
-3. Review `sql/00-schema.sql`; the database contains only the administrator defined in `.env`.
+3. Review `infrastructure/database/init/00-schema.sql`; the database contains only the
+   administrator defined in `.env`.
 4. Validate configuration with `docker compose config`, then build/start with
    `docker compose up --build`.
 
@@ -24,6 +26,17 @@ docker compose up --build
 docker compose logs -f postfix dovecot db
 docker compose down
 ```
+
+Start the complete stack in the background with one command:
+
+```sh
+docker compose up --build -d
+```
+
+Open `http://localhost:8080` for the administrator dashboard. Docker named volumes
+`dbdata`, `maildata`, `mailspool`, and `spamdata` preserve database, mailbox, queue, and
+SpamAssassin data across restarts. Do not use `docker compose down -v` unless you explicitly
+want to permanently remove that data.
 
 The database seed scripts only run when `dbdata` is empty. For a disposable local test after
 changing the seed values, run `docker compose down -v` (this deletes all local mail and database
@@ -38,6 +51,18 @@ address and password over SMTP submission (587) plus IMAPS (993). The API is pub
 on `127.0.0.1:8080`; put it behind an authenticated HTTPS reverse proxy if remote access is
 required.
 
+## Single-company administration
+
+This installation serves one company. First log in with the seeded owner account, immediately
+call `POST /auth/change-password`, then complete `PUT /api/company`. The dashboard at
+`GET /api/dashboard` is unavailable until the password change is complete. Add and verify your
+domains at `/api/domains`, then manage mailbox users and aliases at `/api/mailboxes` and
+`/api/aliases`.
+
+The admin dashboard and Swagger UI are available at `http://localhost:8080/` and
+`http://localhost:8080/docs`; the OpenAPI document is at `/openapi.json`. New domains require DNS TXT verification before mailboxes can be created. The
+bootstrap `mail.local` domain is verified only for local testing.
+
 ## Legacy notes
 
 The commands and sample entries below were retained as reference only; do not use their
@@ -47,7 +72,7 @@ passwords or the `mail.local` domain in production.
 mkpasswd --method=SHA-512 testpass
 
 mkdir -p certs
-openssl req -x509 -newkey rsa:4096 -keyout certs/privkey.key -out certs/cert.pem -days 365 -nodes -subj "/C=US/ST=State/L=City/O=MailServer/CN=mail.local"
+openssl req -x509 -newkey rsa:4096 -keyout secrets/tls/privkey.key -out secrets/tls/cert.pem -days 365 -nodes -subj "/C=US/ST=State/L=City/O=MailServer/CN=mail.local"
 
 alice:{SHA512-CRYPT}$6$iUCat3r7frbaIsSW$zS5cr6lBX4xSlcEw8Zkk0A.RP5/ZaKA6.Nl6KLLFDFpZCQrzUkj3X.i4GCDT9o7MQqyGQ/uP7T9a5JT8GafxE0:5000:5000::/var/mail/alice:/
 bob:{SHA512-CRYPT}$6$examplehashedpassword:5000:5000::/var/mail/bob:/

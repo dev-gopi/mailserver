@@ -1,4 +1,4 @@
-FROM ubuntu:20.04
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -11,8 +11,6 @@ RUN apt update && apt install -y \
 
 RUN mkdir -p /var/run/clamav /var/lib/clamav /var/log/clamav && \
     chown clamav:clamav /var/run/clamav /var/lib/clamav /var/log/clamav
-
-RUN freshclam
 
 COPY clamsmtpd.conf /etc/clamsmtpd.conf
 COPY clamd.conf /etc/clamav/clamd.conf

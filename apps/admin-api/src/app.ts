@@ -1,0 +1,22 @@
+import express from "express";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import swaggerUi from "swagger-ui-express";
+import { db } from "./db/pool";
+import { authRouter } from "./routes/auth";
+import { adminRouter } from "./routes/admin";
+import { openapi } from "./openapi";
+
+export const app = express();
+app.disable("x-powered-by");
+app.set("trust proxy", 1);
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(express.json({ limit: "32kb" }));
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: "draft-7", legacyHeaders: false }));
+app.use("/auth/login", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: "draft-7", legacyHeaders: false }));
+app.get("/health", async (_req, res) => { try { await db.query("SELECT 1"); res.json({ status: "ok" }); } catch { res.status(503).json({ status: "database unavailable" }); } });
+app.get("/openapi.json", (_req, res) => res.json(openapi));
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(openapi, { explorer: true }));
+app.use("/auth", authRouter);
+app.use("/api", adminRouter);
+app.use((_req, res) => res.status(404).json({ error: "Not found" }));

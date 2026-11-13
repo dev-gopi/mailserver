@@ -6,7 +6,7 @@ This repository is a Docker-based virtual-mailbox stack:
 - **Dovecot** provides IMAP, POP3, LMTP delivery, and SQL authentication.
 - **PostgreSQL** stores virtual domains, mailboxes, aliases, and admins.
 - **SpamAssassin** and **ClamAV** scan inbound mail before LMTP delivery.
-- **server/** is a modular Express/TypeScript admin API with database-backed sessions.
+- **apps/admin-api/** is a modular Express/TypeScript admin API with database-backed sessions.
 
 ## Files that should stay in the project
 
@@ -16,10 +16,10 @@ source-controlled build and runtime inputs.
 
 ## Files that must stay local or be provided by a secret manager
 
-- `server/.env` and the root `.env`: credentials and runtime settings.
-- `certs/*.key` and `certs/*.pem`: private TLS material. Generate or mount them locally.
+- `apps/admin-api/.env` and the root `.env`: credentials and runtime settings.
+- `secrets/tls/*.key` and `secrets/tls/*.pem`: private TLS material. Generate or mount them locally.
 - Docker named volumes (`maildata`, `mailspool`, and `dbdata`): live mail and database data.
-- `server/node_modules/`, `server/dist/`, logs, and coverage output: generated artifacts.
+- `apps/admin-api/node_modules/`, `apps/admin-api/dist/`, logs, and coverage output: generated artifacts.
 
 The new `.gitignore` prevents newly created copies of these files from being committed; it
 deliberately does not delete your existing local files.

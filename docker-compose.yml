@@ -1,6 +1,6 @@
 services:
   spamassassin:
-    build: ./spamassassin
+    build: ./services/spamassassin
     container_name: mail_spamassassin
     hostname: spamd.local
     volumes:
@@ -19,7 +19,7 @@ services:
 
   clamav:
     # image: clamav/clamav:stable
-    build: ./clamav
+    build: ./services/clamav
     container_name: mail_clamav
     restart: unless-stopped
     healthcheck:
@@ -30,16 +30,18 @@ services:
     environment:
       - CLAMD_CONF_MaxFileSize=25M
       - CLAMD_CONF_MaxScanSize=100M
+    volumes:
+      - clamavdata:/var/lib/clamav
     networks:
       - mailnet
 
   postfix:
-    build: ./postfix
+    build: ./services/postfix
     container_name: mail_postfix
     hostname: mail.local
     volumes:
       - maildata:/var/mail/vhosts
-      - ./certs:/etc/ssl/certs:ro
+      - ./secrets/tls:/etc/ssl/certs:ro
       - mailspool:/var/spool/postfix
     ports:
       - "25:25"
@@ -63,13 +65,13 @@ services:
         condition: service_healthy
 
   dovecot:
-    build: ./dovecot
+    build: ./services/dovecot
     container_name: mail_dovecot
     hostname: dovecot.local
     volumes:
       - maildata:/var/mail/vhosts
-      - ./certs:/etc/ssl/certs:ro
-      - ./certs:/etc/dovecot/private:ro
+      - ./secrets/tls:/etc/ssl/certs:ro
+      - ./secrets/tls:/etc/dovecot/private:ro
       - mailspool:/var/spool/postfix
     ports:
       - "143:143"
@@ -95,7 +97,7 @@ services:
       MAIL_ADMIN_USERNAME: ${MAIL_ADMIN_USERNAME:-admin}
       MAIL_ADMIN_PASSWORD_HASH: ${MAIL_ADMIN_PASSWORD_HASH:?set MAIL_ADMIN_PASSWORD_HASH in .env}
     volumes:
-      - ./sql:/docker-entrypoint-initdb.d:ro
+      - ./infrastructure/database/init:/docker-entrypoint-initdb.d:ro
       - dbdata:/var/lib/postgresql/data
     networks:
       - mailnet
@@ -107,24 +109,39 @@ services:
       retries: 12
 
   app:
-    build: ./server
+    build: ./apps/admin-api
     container_name: mail_app
     hostname: app.local
     env_file:
-      - ./server/.env
+      - ./apps/admin-api/.env
     environment:
       PGHOST: db
       PGPORT: 5432
       PGDATABASE: ${POSTGRES_DB:-mailserver}
       PGUSER: ${POSTGRES_USER:-mailuser}
       PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-    ports:
-      - "127.0.0.1:8080:8080"
     networks:
       - mailnet
     restart: unless-stopped
     depends_on:
       db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  admin-ui:
+    build: ./apps/admin-ui
+    container_name: mail_admin_ui
+    ports:
+      - "8080:80"
+    networks:
+      - mailnet
+    restart: unless-stopped
+    depends_on:
+      app:
         condition: service_healthy
 
 volumes:
@@ -132,6 +149,7 @@ volumes:
   mailspool:
   dbdata:
   spamdata:
+  clamavdata:
 
 networks:
   mailnet:

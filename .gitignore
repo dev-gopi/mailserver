@@ -2,18 +2,18 @@
 .env
 .env.*
 !.env.example
-server/.env
-!server/.env.example
+apps/admin-api/.env
+!apps/admin-api/.env.example
 
 # TLS and DKIM private material
-certs/*.key
-certs/*.pem
+secrets/tls/*.key
+secrets/tls/*.pem
 opendkim/keys/
 
 # Node build and dependency output
-server/node_modules/
-server/dist/
-server/coverage/
+apps/admin-api/node_modules/
+apps/admin-api/dist/
+apps/admin-api/coverage/
 *.tsbuildinfo
 
 # Local runtime data, logs, and editor files
