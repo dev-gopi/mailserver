@@ -1,5 +1,6 @@
 import { EventEmitter } from "events";
 import { createClient } from "redis";
+import { env } from "../config/env";
 
 export interface QueueJob<T = any> {
   id: string;
@@ -23,7 +24,7 @@ export class TaskQueue extends EventEmitter {
   private readonly completedJobs: QueueJob[] = [];
   private readonly handlers = new Map<string, JobHandler>();
   private readonly redis = createClient({
-    socket: { host: process.env.REDIS_HOST || "redis", port: Number(process.env.REDIS_PORT || 6379), reconnectStrategy: () => false }
+    socket: { host: env.services.redisHost, port: env.services.redisPort, reconnectStrategy: () => false }
   });
   private worker: any = null;
   private redisConnected = false;
@@ -109,8 +110,17 @@ export class TaskQueue extends EventEmitter {
       job.completedAt = Date.now();
       this.emit("completed", job);
     } catch (error: any) {
-      if (job.attempts < job.maxAttempts) job.status = "pending";
-      else {
+      if (job.attempts < job.maxAttempts) {
+        job.status = "pending";
+        if (this.redisConnected) {
+          try {
+            await this.redis.lPush(QUEUE, JSON.stringify(job));
+          } catch {
+            this.memoryQueue.push(job);
+            void this.processMemory();
+          }
+        }
+      } else {
         job.status = "failed";
         job.error = error?.message || "Execution error";
         this.emit("failed", job);
@@ -137,8 +147,8 @@ export class TaskQueue extends EventEmitter {
     }
     return {
       backend: this.redisConnected ? "redis" : "memory_resilient",
-      redisHost: process.env.REDIS_HOST || "redis",
-      redisPort: Number(process.env.REDIS_PORT || 6379),
+      redisHost: env.services.redisHost,
+      redisPort: env.services.redisPort,
       pendingCount: this.memoryQueue.filter((j) => j.status === "pending").length + redisPending,
       processingCount: this.memoryQueue.filter((j) => j.status === "processing").length,
       completedCount: this.completedJobs.filter((j) => j.status === "completed").length,

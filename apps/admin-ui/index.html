@@ -265,10 +265,10 @@
                       <span class="service-dot online"></span>
                       <div>
                         <strong>Postfix MTA</strong>
-                        <div class="text-muted">SMTP (Port 25, 587 Submission, 465 SMTPS)</div>
+                        <div id="infra-postfix-details" class="text-muted">SMTP configuration loading...</div>
                       </div>
                     </div>
-                    <span class="badge badge-success">Running</span>
+                    <span id="infra-postfix-status" class="badge badge-secondary">Checking</span>
                   </div>
 
                   <div class="service-item">
@@ -276,10 +276,10 @@
                       <span class="service-dot online"></span>
                       <div>
                         <strong>Dovecot MDA</strong>
-                        <div class="text-muted">IMAP (Port 143, 993 IMAPS) &bull; Maildir Storage</div>
+                        <div id="infra-dovecot-details" class="text-muted">IMAP configuration loading...</div>
                       </div>
                     </div>
-                    <span class="badge badge-success">Running</span>
+                    <span id="infra-dovecot-status" class="badge badge-secondary">Checking</span>
                   </div>
 
                   <div class="service-item">
@@ -287,21 +287,21 @@
                       <span class="service-dot online"></span>
                       <div>
                         <strong>SpamAssassin & ClamAV</strong>
-                        <div class="text-muted">Real-time Anti-Spam (783) & Antivirus Filter Engine</div>
+                        <div id="infra-filter-details" class="text-muted">Filter configuration loading...</div>
                       </div>
                     </div>
-                    <span class="badge badge-success">Filtering</span>
+                    <span id="infra-filter-status" class="badge badge-secondary">Checking</span>
                   </div>
 
                   <div class="service-item">
                     <div class="service-meta">
                       <span class="service-dot online"></span>
                       <div>
-                        <strong>PostgreSQL 16</strong>
+                        <strong id="infra-database-name">Database</strong>
                         <div class="text-muted">Virtual domains, encrypted mailboxes, audit trail</div>
                       </div>
                     </div>
-                    <span class="badge badge-success">Connected</span>
+                    <span id="infra-database-status" class="badge badge-secondary">Checking</span>
                   </div>
                 </div>
               </div>
@@ -319,28 +319,28 @@
                 <div class="spec-row">
                   <div class="spec-label">IMAP Server (Incoming)</div>
                   <div class="spec-val">
-                    <code>mail.YOURDOMAIN</code> or server IP
-                    <button class="btn-copy-sm" onclick="copyText('mail.YOURDOMAIN', this)">Copy</button>
+                    <code id="overview-imap-host">—</code>
+                    <button class="btn-copy-sm" onclick="copyElementText('overview-imap-host', this)">Copy</button>
                   </div>
                 </div>
                 <div class="spec-row">
                   <div class="spec-label">IMAP Security & Port</div>
-                  <div class="spec-val"><strong>Port 993</strong> &bull; SSL/TLS (Implicit)</div>
+                  <div class="spec-val"><strong id="overview-imap-port">—</strong> &bull; SSL/TLS (Implicit)</div>
                 </div>
                 <div class="spec-row">
                   <div class="spec-label">SMTP Server (Outgoing)</div>
                   <div class="spec-val">
-                    <code>mail.YOURDOMAIN</code> or server IP
-                    <button class="btn-copy-sm" onclick="copyText('mail.YOURDOMAIN', this)">Copy</button>
+                    <code id="overview-smtp-host">—</code>
+                    <button class="btn-copy-sm" onclick="copyElementText('overview-smtp-host', this)">Copy</button>
                   </div>
                 </div>
                 <div class="spec-row">
                   <div class="spec-label">SMTP Submission Port</div>
-                  <div class="spec-val"><strong>Port 587</strong> (STARTTLS) or <strong>Port 465</strong> (SSL)</div>
+                  <div class="spec-val"><strong id="overview-smtp-port">—</strong> (STARTTLS) or <strong id="overview-smtps-port">—</strong> (SSL)</div>
                 </div>
                 <div class="spec-row">
                   <div class="spec-label">Authentication Method</div>
-                  <div class="spec-val">Full Email Address (e.g. <code>user@domain.com</code>) + Password</div>
+                  <div class="spec-val">Full mailbox email address + password</div>
                 </div>
                 <div class="spec-row">
                   <div class="spec-label">Encryption Cipher</div>
@@ -375,12 +375,144 @@
             <div class="header-actions">
               <button class="btn btn-secondary" onclick="openClientGuide('', '')">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-                <span>Thunderbird Setup Guide</span>
+                <span>Open Setup Guide</span>
               </button>
               <button class="btn btn-primary" onclick="openModal('modal-create-mailbox')">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 <span>Add Normal User</span>
               </button>
+            </div>
+          </div>
+
+          <!-- Connection Details Help Panel -->
+          <div class="conn-help-panel">
+            <div class="conn-help-grid">
+              <!-- IMAP Card -->
+              <div class="conn-help-card">
+                <div class="conn-help-head">
+                  <div class="conn-help-icon imap">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+                  </div>
+                  <div>
+                    <strong>Incoming Mail (IMAP)</strong>
+                    <span class="conn-badge">Thunderbird · Outlook · Apple Mail · iOS</span>
+                  </div>
+                </div>
+                <div class="conn-spec-rows">
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Server</span>
+                    <div class="val-copy">
+                      <code id="help-imap-host">—</code>
+                      <button class="btn-copy-sm" onclick="copyElementText('help-imap-host', this)">Copy</button>
+                    </div>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Port</span>
+                    <span><strong id="help-imap-port">—</strong> &bull; SSL / TLS (Implicit)</span>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Alt Port</span>
+                    <span><strong id="help-imap-alt-port">—</strong> &bull; STARTTLS</span>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">POP3</span>
+                    <span><strong id="help-pop3-alt-port">—</strong> &bull; STARTTLS / <strong id="help-pop3-port">—</strong> &bull; SSL/TLS</span>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Username</span>
+                    <span>Full email address</span>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Auth</span>
+                    <span>Normal Password (Dovecot BLF-CRYPT)</span>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Storage</span>
+                    <span>Maildir format · Quota enforced per account</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- SMTP Card -->
+              <div class="conn-help-card">
+                <div class="conn-help-head">
+                  <div class="conn-help-icon smtp">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                  </div>
+                  <div>
+                    <strong>Outgoing Mail (SMTP)</strong>
+                    <span class="conn-badge">Submission Port · STARTTLS / SSL</span>
+                  </div>
+                </div>
+                <div class="conn-spec-rows">
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Server</span>
+                    <div class="val-copy">
+                      <code id="help-smtp-host">—</code>
+                      <button class="btn-copy-sm" onclick="copyElementText('help-smtp-host', this)">Copy</button>
+                    </div>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Port</span>
+                    <span><strong id="help-smtp-port">—</strong> &bull; STARTTLS <em>(recommended)</em></span>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Alt Port</span>
+                    <span><strong id="help-smtp-alt-port">—</strong> &bull; SSL / TLS (Implicit)</span>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Username</span>
+                    <span>Full email address</span>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Auth</span>
+                    <span>Same password as IMAP (Required)</span>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Security</span>
+                    <span>TLS 1.2 / 1.3 · DKIM signed · SPF + DMARC</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Quick Tips Card -->
+              <div class="conn-help-card">
+                <div class="conn-help-head">
+                  <div class="conn-help-icon tips">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                  </div>
+                  <div>
+                    <strong>Quick Setup Tips</strong>
+                    <span class="conn-badge">Common clients &amp; troubleshooting</span>
+                  </div>
+                </div>
+                <div class="conn-spec-rows">
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Thunderbird</span>
+                    <span>Auto-config via <code>mail._domainkey</code> DNS</span>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Outlook</span>
+                    <span>Add Account → Manual → IMAP</span>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Apple Mail</span>
+                    <span>Settings → Add Account → Other Mail</span>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">iOS / Android</span>
+                    <span>Settings → Mail → Add Account → Other</span>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Login fails?</span>
+                    <span>Use Test Auth button &rarr; check account is Active</span>
+                  </div>
+                  <div class="conn-spec-row">
+                    <span class="conn-label">Per-user guide</span>
+                    <button class="btn-copy-sm" onclick="openClientGuide()">Open Setup Guide</button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -516,7 +648,7 @@
             <div id="aliases-empty" class="empty-state hidden">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>
               <h3>No email aliases configured</h3>
-              <p>Create aliases like <code>support@domain.com</code> or <code>sales@domain.com</code> to forward incoming messages.</p>
+              <p>Create an alias from a verified domain and forward it to an internal mailbox or external address.</p>
               <button class="btn btn-primary btn-sm" onclick="openModal('modal-create-alias')">Create Alias</button>
             </div>
           </div>
@@ -628,7 +760,7 @@
               <form id="form-test-smtp" onsubmit="handleTestSmtp(event)">
                 <div class="form-group">
                   <label for="test-smtp-recipient">Recipient Email</label>
-                  <input id="test-smtp-recipient" type="email" placeholder="e.g. admin@yourdomain.com" required>
+                  <input id="test-smtp-recipient" type="email" placeholder="recipient@example.com" required>
                 </div>
                 <div class="form-group">
                   <label for="test-smtp-subject">Subject</label>
@@ -741,12 +873,12 @@
 
                 <div class="form-group">
                   <label for="support-email">Central Support Email</label>
-                  <input id="support-email" type="email" placeholder="support@yourdomain.com">
+                  <input id="support-email" type="email" placeholder="Support email address">
                 </div>
 
                 <div class="form-group">
                   <label for="timezone">Default Timezone</label>
-                  <input id="timezone" type="text" value="UTC" required placeholder="e.g. UTC, Asia/Kolkata, America/New_York">
+                  <input id="timezone" type="text" required placeholder="e.g. UTC, Asia/Kolkata, America/New_York">
                 </div>
 
                 <div class="form-group">
@@ -881,7 +1013,7 @@
       <div class="modal-header">
         <div>
           <h3>Edit Mailbox</h3>
-          <p id="edit-mb-address" class="modal-subtitle font-mono text-bold">user@domain.com</p>
+          <p id="edit-mb-address" class="modal-subtitle font-mono text-bold">—</p>
         </div>
         <button type="button" class="btn-close-modal" onclick="closeModal('modal-edit-mailbox')">&times;</button>
       </div>
@@ -943,7 +1075,7 @@
       <div class="modal-header">
         <div>
           <h3>Mailbox Client Configuration</h3>
-          <p id="guide-mailbox-address" class="modal-subtitle font-mono text-bold">user@domain.com</p>
+          <p id="guide-mailbox-address" class="modal-subtitle font-mono text-bold">—</p>
         </div>
         <button type="button" class="btn-close-modal" onclick="closeModal('modal-client-guide')">&times;</button>
       </div>
@@ -959,15 +1091,19 @@
             </div>
             <div class="guide-row">
               <span>Server Hostname:</span>
-              <div class="val-copy"><code id="guide-imap-host">mail.domain.com</code> <button class="btn-copy-sm" onclick="copyElementText('guide-imap-host', this)">Copy</button></div>
+              <div class="val-copy"><code id="guide-imap-host">—</code> <button class="btn-copy-sm" onclick="copyElementText('guide-imap-host', this)">Copy</button></div>
             </div>
             <div class="guide-row">
               <span>Port:</span>
-              <strong>993 (SSL/TLS)</strong>
+              <strong><span id="guide-imap-port">—</span> (SSL/TLS)</strong>
+            </div>
+            <div class="guide-row">
+              <span>POP3:</span>
+              <strong><span id="guide-pop3-alt-port">—</span> (STARTTLS) or <span id="guide-pop3-port">—</span> (SSL/TLS)</strong>
             </div>
             <div class="guide-row">
               <span>Username:</span>
-              <div class="val-copy"><code id="guide-imap-user">user@domain.com</code> <button class="btn-copy-sm" onclick="copyElementText('guide-imap-user', this)">Copy</button></div>
+              <div class="val-copy"><code id="guide-imap-user">—</code> <button class="btn-copy-sm" onclick="copyElementText('guide-imap-user', this)">Copy</button></div>
             </div>
             <div class="guide-row">
               <span>Authentication:</span>
@@ -982,19 +1118,47 @@
             </div>
             <div class="guide-row">
               <span>Server Hostname:</span>
-              <div class="val-copy"><code id="guide-smtp-host">mail.domain.com</code> <button class="btn-copy-sm" onclick="copyElementText('guide-smtp-host', this)">Copy</button></div>
+              <div class="val-copy"><code id="guide-smtp-host">—</code> <button class="btn-copy-sm" onclick="copyElementText('guide-smtp-host', this)">Copy</button></div>
             </div>
             <div class="guide-row">
               <span>Submission Port:</span>
-              <strong>587 (STARTTLS) or 465 (SSL)</strong>
+              <strong><span id="guide-smtp-port">—</span> (STARTTLS) or <span id="guide-smtp-alt-port">—</span> (SSL)</strong>
             </div>
             <div class="guide-row">
               <span>Username:</span>
-              <div class="val-copy"><code id="guide-smtp-user">user@domain.com</code> <button class="btn-copy-sm" onclick="copyElementText('guide-smtp-user', this)">Copy</button></div>
+              <div class="val-copy"><code id="guide-smtp-user">—</code> <button class="btn-copy-sm" onclick="copyElementText('guide-smtp-user', this)">Copy</button></div>
             </div>
             <div class="guide-row">
               <span>Authentication:</span>
               <span>Same as Incoming (Required)</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="guide-card guide-tips-card mt-4">
+          <div class="guide-card-head">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            <div>
+              <strong>Quick Setup Tips</strong>
+              <span class="guide-card-caption">Common clients and troubleshooting</span>
+            </div>
+          </div>
+          <div class="guide-tips-grid">
+            <div class="guide-tip-row">
+              <strong>Thunderbird</strong>
+              <span>Use automatic setup when your domain publishes mail client DNS records.</span>
+            </div>
+            <div class="guide-tip-row">
+              <strong>Outlook</strong>
+              <span>Add Account &rarr; Manual setup &rarr; IMAP, then enable SMTP authentication.</span>
+            </div>
+            <div class="guide-tip-row">
+              <strong>Apple Mail / iOS</strong>
+              <span>Choose Other Mail Account and use the same full email address for both servers.</span>
+            </div>
+            <div class="guide-tip-row">
+              <strong>Login fails?</strong>
+              <span>Use Test Auth from the mailbox list and confirm the account is Active.</span>
             </div>
           </div>
         </div>
@@ -1048,7 +1212,7 @@
       <div class="modal-header">
         <div>
           <h3>DNS Configuration & Verification</h3>
-          <p id="dns-modal-domain-name" class="modal-subtitle font-mono text-bold">example.com</p>
+          <p id="dns-modal-domain-name" class="modal-subtitle font-mono text-bold">—</p>
         </div>
         <button type="button" class="btn-close-modal" onclick="closeModal('modal-dns-wizard')">&times;</button>
       </div>
@@ -1068,7 +1232,7 @@
           <div class="dns-fields">
             <div class="dns-field">
               <span class="dns-field-label">Host / Record Name:</span>
-              <div class="val-copy"><code id="dns-txt-name">_mail-admin.example.com</code> <button class="btn-copy-sm" onclick="copyElementText('dns-txt-name', this)">Copy</button></div>
+              <div class="val-copy"><code id="dns-txt-name">—</code> <button class="btn-copy-sm" onclick="copyElementText('dns-txt-name', this)">Copy</button></div>
             </div>
             <div class="dns-field">
               <span class="dns-field-label">Record Value / Token:</span>
@@ -1086,7 +1250,25 @@
 
         <div class="dns-record-card mt-3">
           <div class="dns-record-header">
-            <span class="badge badge-secondary">2. INCOMING MAIL ROUTING</span>
+            <span class="badge badge-secondary">2. MAIL HOSTNAME</span>
+            <span class="dns-type">A Record</span>
+          </div>
+          <div class="dns-fields">
+            <div class="dns-field">
+              <span class="dns-field-label">Host:</span>
+              <div class="val-copy"><code id="dns-a-name">—</code> <button class="btn-copy-sm" onclick="copyElementText('dns-a-name', this)">Copy</button></div>
+            </div>
+            <div class="dns-field">
+              <span class="dns-field-label">Points to:</span>
+              <div class="val-copy"><code id="dns-a-val">Set MAIL_PUBLIC_IP</code> <button class="btn-copy-sm" onclick="copyElementText('dns-a-val', this)">Copy</button></div>
+            </div>
+          </div>
+          <p id="dns-a-guidance" class="text-muted mt-2">The mail hostname must resolve to this server's public IP. Configure reverse DNS/PTR for the same hostname with your VPS or network provider.</p>
+        </div>
+
+        <div class="dns-record-card mt-3">
+          <div class="dns-record-header">
+            <span class="badge badge-secondary">3. INCOMING MAIL ROUTING</span>
             <span class="dns-type">MX Record</span>
           </div>
           <div class="dns-fields">
@@ -1096,18 +1278,18 @@
             </div>
             <div class="dns-field">
               <span class="dns-field-label">Priority:</span>
-              <code>10</code>
+              <code id="dns-mx-priority">10</code>
             </div>
             <div class="dns-field">
               <span class="dns-field-label">Points to (Mail Server):</span>
-              <div class="val-copy"><code id="dns-mx-val">mail.example.com</code> <button class="btn-copy-sm" onclick="copyElementText('dns-mx-val', this)">Copy</button></div>
+              <div class="val-copy"><code id="dns-mx-val">—</code> <button class="btn-copy-sm" onclick="copyElementText('dns-mx-val', this)">Copy</button></div>
             </div>
           </div>
         </div>
 
         <div class="dns-record-card mt-3">
           <div class="dns-record-header">
-            <span class="badge badge-secondary">3. EMAIL AUTHENTICATION (SPF)</span>
+            <span class="badge badge-secondary">4. EMAIL AUTHENTICATION (SPF)</span>
             <span class="dns-type">TXT Record</span>
           </div>
           <div class="dns-fields">
@@ -1117,20 +1299,20 @@
             </div>
             <div class="dns-field">
               <span class="dns-field-label">Value:</span>
-              <div class="val-copy"><code>v=spf1 mx ~all</code> <button class="btn-copy-sm" onclick="copyText('v=spf1 mx ~all', this)">Copy</button></div>
+              <div class="val-copy"><code id="dns-spf-val">v=spf1 mx ~all</code> <button class="btn-copy-sm" onclick="copyElementText('dns-spf-val', this)">Copy</button></div>
             </div>
           </div>
         </div>
 
         <div class="dns-record-card mt-3">
           <div class="dns-record-header">
-            <span class="badge badge-secondary">4. DKIM SIGNING (REQUIRED)</span>
+            <span class="badge badge-secondary">5. DKIM SIGNING (REQUIRED)</span>
             <span class="dns-type">TXT Record</span>
           </div>
           <div class="dns-fields">
             <div class="dns-field">
               <span class="dns-field-label">Host / Record Name:</span>
-              <div class="val-copy"><code id="dns-dkim-host">mail._domainkey.example.com</code> <button class="btn-copy-sm" onclick="copyElementText('dns-dkim-host', this)">Copy</button></div>
+              <div class="val-copy"><code id="dns-dkim-host">—</code> <button class="btn-copy-sm" onclick="copyElementText('dns-dkim-host', this)">Copy</button></div>
             </div>
             <div class="dns-field">
               <span class="dns-field-label">Value:</span>
@@ -1141,13 +1323,13 @@
 
         <div class="dns-record-card mt-3">
           <div class="dns-record-header">
-            <span class="badge badge-secondary">5. DMARC POLICY</span>
+            <span class="badge badge-secondary">6. DMARC POLICY</span>
             <span class="dns-type">TXT Record</span>
           </div>
           <div class="dns-fields">
             <div class="dns-field">
               <span class="dns-field-label">Host:</span>
-              <div class="val-copy"><code id="dns-dmarc-host">_dmarc.example.com</code> <button class="btn-copy-sm" onclick="copyElementText('dns-dmarc-host', this)">Copy</button></div>
+              <div class="val-copy"><code id="dns-dmarc-host">—</code> <button class="btn-copy-sm" onclick="copyElementText('dns-dmarc-host', this)">Copy</button></div>
             </div>
             <div class="dns-field">
               <span class="dns-field-label">Value:</span>
@@ -1189,7 +1371,7 @@
 
           <div class="form-group">
             <label for="alias-destination">Forwarding Destination (Deliver To)</label>
-            <input id="alias-destination" type="email" placeholder="e.g. team@yourdomain.com or external@gmail.com" required>
+            <input id="alias-destination" type="email" placeholder="recipient@example.com or external address" required>
             <small class="form-hint">Can be an internal mailbox or an external mail provider.</small>
           </div>
         </div>
@@ -1208,7 +1390,7 @@
       <div class="modal-header">
         <div>
           <h3>Test User Login (IMAP & SMTP)</h3>
-          <p id="test-auth-user-address" class="modal-subtitle font-mono text-bold">user@domain.com</p>
+          <p id="test-auth-user-address" class="modal-subtitle font-mono text-bold">—</p>
         </div>
         <button type="button" class="btn-close-modal" onclick="closeModal('modal-test-user-auth')">&times;</button>
       </div>
@@ -1217,7 +1399,7 @@
         <input type="hidden" id="test-auth-user-id">
         <div class="modal-body">
           <p class="text-muted" style="font-size: 0.85rem;">
-            Test this user's password directly against Dovecot Blowfish crypt hash to confirm they can connect in Thunderbird (Port 993 IMAP) and send mail via Postfix (Port 587/465 SMTP).
+            Test this user's password against the configured IMAP and SMTP submission services.
           </p>
 
           <div class="form-group">

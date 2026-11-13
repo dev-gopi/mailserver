@@ -60,12 +60,27 @@ domains at `/api/domains`, then manage mailbox users and aliases at `/api/mailbo
 `/api/aliases`.
 
 The admin dashboard and Swagger UI are available at `http://localhost:8080/` and
-`http://localhost:8080/docs`; the OpenAPI document is at `/openapi.json`. New domains require DNS TXT verification before mailboxes can be created. The DNS Setup dialog also generates a unique 2048-bit DKIM key for each domain: publish its `mail._domainkey` TXT record and OpenDKIM begins signing mail within a few seconds. The
-bootstrap `mail.local` domain is verified only for local testing.
+`http://localhost:8080/docs`; the OpenAPI document is at `/openapi.json`. New domains require
+DNS TXT verification before mailboxes can be created. After adding a domain, copy every record
+from the portal's DNS Setup dialog to the domain provider:
 
-The admin API currently reports SMTP diagnostic delivery and Postfix queue inspection/flush
-as unavailable rather than simulating success. These operations require a worker or a
-Postfix command bridge to be deployed alongside the API.
+- The mail hostname A record must point to the server's public IP. Set `MAIL_HOSTNAME` and
+  `MAIL_PUBLIC_IP` in `.env`; configure reverse DNS/PTR for the same hostname with the VPS
+  provider.
+- The MX record for the domain must point to `MAIL_HOSTNAME`, so external mail reaches Postfix.
+- Publish the generated SPF, DKIM, and DMARC records so external providers can authenticate
+  messages sent by this server. Keep one SPF record for the domain.
+- Allow inbound TCP 25 and outbound TCP 25 at the hosting provider/firewall. Users connect
+  with IMAPS 993 or SMTP submission 587/465.
+
+The DNS Setup dialog generates a unique 2048-bit DKIM key for each domain. The
+bootstrap `mail.local` domain is verified only for local testing and cannot receive mail from
+the public internet.
+
+The admin API uses an internal Postfix command bridge for queue inspection and flushing.
+SMTP diagnostic delivery still requires an explicitly configured relay; it returns
+`501 Not Implemented` until that relay is configured. Spam diagnostics use the GTUBE
+test marker and should not be treated as a full message-scoring integration test.
 
 ## Legacy notes
 

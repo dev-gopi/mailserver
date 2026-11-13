@@ -3,8 +3,19 @@ import { Request } from "express";
 import { mailboxRepository } from "../repositories/mailbox.repository";
 import { domainRepository } from "../repositories/domain.repository";
 import { auditService } from "./audit";
+import { env } from "../config/env";
 
 export class MailboxService {
+  private escapeXml(value: string) {
+    return value.replace(/[<>&'"]/g, (character) => ({
+      "<": "&lt;",
+      ">": "&gt;",
+      "&": "&amp;",
+      "'": "&apos;",
+      '"': "&quot;"
+    }[character] as string));
+  }
+
   /**
    * Returns all mail users joined from virtual_users (Dovecot's view).
    * Active flag reflects what Dovecot actually sees.
@@ -188,8 +199,8 @@ export class MailboxService {
    * given email address or domain.
    */
   getClientConfig(emailOrDomain?: string) {
-    let domain = "yourdomain.com";
-    let email = "user@yourdomain.com";
+    let domain = env.mailDomain;
+    let email = `user@${domain}`;
 
     if (emailOrDomain) {
       if (emailOrDomain.includes("@")) {
@@ -201,27 +212,31 @@ export class MailboxService {
       }
     }
 
-    const mailHost = `mail.${domain}`;
+    const mailHost = domain === env.mailDomain && env.mailHostname
+      ? env.mailHostname
+      : `mail.${domain}`;
 
+    const xmlDomain = this.escapeXml(domain);
+    const xmlEmail = this.escapeXml(email);
     const thunderbirdXml = `<?xml version="1.0" encoding="UTF-8"?>
 <clientConfig version="1.1">
-  <emailProvider id="${domain}">
-    <domain>${domain}</domain>
-    <displayName>Mail Server (${domain})</displayName>
-    <displayShortName>${domain}</displayShortName>
+  <emailProvider id="${xmlDomain}">
+    <domain>${xmlDomain}</domain>
+    <displayName>Mail Server (${xmlDomain})</displayName>
+    <displayShortName>${xmlDomain}</displayShortName>
     <incomingServer type="imap">
-      <hostname>${mailHost}</hostname>
-      <port>993</port>
+      <hostname>${this.escapeXml(mailHost)}</hostname>
+      <port>${env.client.imapPort}</port>
       <socketType>SSL</socketType>
       <authentication>password-cleartext</authentication>
-      <username>${email}</username>
+      <username>${xmlEmail}</username>
     </incomingServer>
     <outgoingServer type="smtp">
-      <hostname>${mailHost}</hostname>
-      <port>587</port>
+      <hostname>${this.escapeXml(mailHost)}</hostname>
+      <port>${env.client.smtpPort}</port>
       <socketType>STARTTLS</socketType>
       <authentication>password-cleartext</authentication>
-      <username>${email}</username>
+      <username>${xmlEmail}</username>
     </outgoingServer>
   </emailProvider>
 </clientConfig>`;
@@ -232,17 +247,29 @@ export class MailboxService {
       incoming: {
         protocol: "IMAP",
         hostname: mailHost,
-        port: 993,
+        port: env.client.imapPort,
         socketType: "SSL/TLS",
+        authentication: "Normal password",
+        username: email,
+        alternativePort: env.client.imapAlternativePort,
+        alternativeSocketType: "STARTTLS"
+      },
+      pop3: {
+        protocol: "POP3",
+        hostname: mailHost,
+        port: env.client.pop3Port,
+        alternativePort: env.client.pop3AlternativePort,
+        socketType: "SSL/TLS",
+        alternativeSocketType: "STARTTLS",
         authentication: "Normal password",
         username: email
       },
       outgoing: {
         protocol: "SMTP",
         hostname: mailHost,
-        port: 587,
+        port: env.client.smtpPort,
         socketType: "STARTTLS",
-        alternativePort: 465,
+        alternativePort: env.client.smtpAlternativePort,
         alternativeSocketType: "SSL/TLS",
         authentication: "Normal password",
         username: email

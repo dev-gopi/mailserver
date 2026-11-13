@@ -3,7 +3,7 @@
 # Debian specific:  Specifying a file name will cause the first
 # line of that file to be used as the name.  The Debian default
 # is /etc/mailname.
-mydomain = mail.local
+mydomain = __MAIL_DOMAIN__
 myorigin = $mydomain
 
 smtpd_banner = $myhostname ESMTP $mail_name (Ubuntu)
@@ -19,7 +19,7 @@ readme_directory = no
 
 # See http://www.postfix.org/COMPATIBILITY_README.html -- default to 2 on
 # fresh installs.
-compatibility_level = 2
+compatibility_level = 3.6
 
 
 
@@ -73,12 +73,12 @@ smtpd_recipient_restrictions =
     reject_unauth_destination
 
 smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination
-myhostname = localhost
+myhostname = __MAIL_HOSTNAME__
 alias_maps = hash:/etc/aliases
 alias_database = hash:/etc/aliases
 mydestination = $myhostname, localhost, localhost.localdomain, , localhost
 relayhost = 
-mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128 172.16.0.0/12
 mailbox_size_limit = 0
 recipient_delimiter = +
 inet_interfaces = all
@@ -114,7 +114,9 @@ virtual_gid_maps = static:5000
 
 # ClamSMTP reinjects mail on port 10025; master.cf sends it through
 # SpamAssassin before LMTP delivery to Dovecot.
-content_filter = clamav:clamav:10026
+# Filtering is applied per SMTP listener. Re-injected mail is processed by
+# SpamAssassin on port 10025 and then enters the local queue without looping.
+content_filter =
 
 # Sign outgoing messages with the per-domain keys managed by the admin UI.
 smtpd_milters = inet:opendkim:8891

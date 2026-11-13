@@ -1,6 +1,7 @@
 import net from "net";
 import { db } from "../db/pool";
 import { ServiceHealthStatus, MailQueueStatus } from "../models/entities";
+import { env } from "../config/env";
 
 export class SystemRepository {
   private probeTcp(
@@ -77,12 +78,6 @@ export class SystemRepository {
   }
 
   async checkAllServices(): Promise<ServiceHealthStatus[]> {
-    const postfixHost = process.env.POSTFIX_HOST || "postfix";
-    const dovecotHost = process.env.DOVECOT_HOST || "dovecot";
-    const spamdHost = process.env.SPAMASSASSIN_HOST || "spamassassin";
-    const clamHost = process.env.CLAMAV_HOST || "clamav";
-    const redisHost = process.env.REDIS_HOST || "redis";
-
     const dbStart = Date.now();
     let dbStatus: ServiceHealthStatus;
     try {
@@ -90,7 +85,7 @@ export class SystemRepository {
       dbStatus = {
         service: "postgresql",
         displayName: "PostgreSQL 16",
-        port: 5432,
+        port: env.services.databasePort,
         status: "healthy",
         latencyMs: Date.now() - dbStart,
         banner: "PostgreSQL Relational DB Connected",
@@ -100,7 +95,7 @@ export class SystemRepository {
       dbStatus = {
         service: "postgresql",
         displayName: "PostgreSQL 16",
-        port: 5432,
+        port: env.services.databasePort,
         status: "down",
         latencyMs: Date.now() - dbStart,
         error: err.message,
@@ -109,13 +104,13 @@ export class SystemRepository {
     }
 
     const probes = await Promise.all([
-      this.probeTcp("postfix", "Postfix MTA (SMTP/Submission)", postfixHost, 25),
-      this.probeTcp("dovecot", "Dovecot MDA (IMAP)", dovecotHost, 143),
+      this.probeTcp("postfix", "Postfix MTA (SMTP/Submission)", env.services.postfixHost, env.services.postfixPort),
+      this.probeTcp("dovecot", "Dovecot MDA (IMAP)", env.services.dovecotHost, env.services.dovecotPort),
       // spamd expects command first, followed by the SPAMC protocol version
       // and a blank line terminating the headers.
-      this.probeTcp("spamassassin", "SpamAssassin Filter", spamdHost, 783, "PING SPAMC/1.5\r\n\r\n"),
-      this.probeTcp("clamav", "ClamAV Engine", clamHost, 3310, "PING\r\n"),
-      this.probeTcp("redis", "Redis Queue & Cache", redisHost, 6379, "*1\r\n$4\r\nPING\r\n")
+      this.probeTcp("spamassassin", "SpamAssassin Filter", env.services.spamassassinHost, env.services.spamassassinPort, "PING SPAMC/1.5\r\n\r\n"),
+      this.probeTcp("clamav", "ClamAV Engine", env.services.clamavHost, env.services.clamavPort, "PING\r\n"),
+      this.probeTcp("redis", "Redis Queue & Cache", env.services.redisHost, env.services.redisPort, "*1\r\n$4\r\nPING\r\n")
     ]);
 
     return [dbStatus, ...probes];
@@ -137,8 +132,8 @@ export class SystemRepository {
   }
 
   private postfixBridge(command: "STATUS" | "FLUSH"): Promise<string> {
-    const host = process.env.POSTFIX_HOST || "postfix";
-    const port = Number(process.env.POSTFIX_BRIDGE_PORT || 2526);
+    const host = env.services.postfixHost;
+    const port = env.services.postfixBridgePort;
     return new Promise((resolve, reject) => {
       const socket = new net.Socket();
       let output = "";

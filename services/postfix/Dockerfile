@@ -19,6 +19,8 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+COPY rsyslog-container.conf /etc/rsyslog-container.conf
+
 RUN groupadd -g 5000 vmail && \
     useradd -u 5000 -g vmail -d /var/mail -s /usr/sbin/nologin vmail
 
@@ -30,6 +32,9 @@ COPY master.cf /etc/postfix/master.cf
 COPY config/pgsql-virtual-users.cf /etc/postfix/pgsql-virtual-users.cf
 COPY config/pgsql-virtual-domains.cf /etc/postfix/pgsql-virtual-domains.cf
 COPY config/pgsql-virtual-aliases.cf /etc/postfix/pgsql-virtual-aliases.cf
+RUN chown root:root /etc/postfix/main.cf /etc/postfix/master.cf \
+    && chown root:postfix /etc/postfix/pgsql-virtual-*.cf \
+    && chmod 0640 /etc/postfix/main.cf /etc/postfix/master.cf /etc/postfix/pgsql-virtual-*.cf
 
 VOLUME ["/var/mail"]
 

@@ -9,7 +9,7 @@
 
 # # Start spamd in foreground
 # exec spamd -c -m5 --nouser-config --syslog-socket=none \
-#   --listen=0.0.0.0 --allowed-ips=0.0.0.0/0 --port=783 \
+#   --listen=0.0.0.0 --allowed-ips=172.16.0.0/12 --port=783 \
 #   --pidfile=/var/run/spamd.pid --username spamd \
 #   --helper-home-dir /home/spamd/ -s /home/spamd/spamd.log
 
@@ -42,6 +42,6 @@ fi
 # 5. Start spamd (SpamAssassin daemon)
 echo "[INIT] Starting SpamAssassin (spamd)..."
 exec spamd -c -m5 --nouser-config --syslog-socket=none \
-  --listen=0.0.0.0 --allowed-ips=0.0.0.0/0 --port=783 \
+  --listen=0.0.0.0 --allowed-ips=172.16.0.0/12 --port=783 \
   --pidfile=/var/run/spamd.pid --username spamd \
   --helper-home-dir /home/spamd/ -s /home/spamd/spamd.log

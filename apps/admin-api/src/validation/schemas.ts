@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const loginSchema = z.object({
   username: z.string().min(1, "Username is required").max(64),
-  password: z.string().min(1, "Password is required")
+  password: z.string().min(1, "Password is required").max(256)
 });
 
 export const changePasswordSchema = z.object({
@@ -15,7 +15,14 @@ export const companyUpdateSchema = z.object({
   legalName: z.string().max(180).optional().nullable(),
   supportEmail: z.string().email("Invalid email format").optional().nullable(),
   address: z.string().max(1000).optional().nullable(),
-  timezone: z.string().min(1, "Timezone is required").max(80)
+  timezone: z.string().min(1, "Timezone is required").max(80).refine((value) => {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+      return true;
+    } catch {
+      return false;
+    }
+  }, "Invalid IANA timezone")
 });
 
 export const domainCreateSchema = z.object({
@@ -64,4 +71,10 @@ export const testSmtpSchema = z.object({
 
 export const testSpamSchema = z.object({
   content: z.string().min(1, "Email message content is required")
+});
+
+export const clientConfigQuerySchema = z.object({
+  email: z.string().email("Invalid email address").optional(),
+  domain: z.string().regex(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i, "Invalid domain").optional(),
+  format: z.enum(["json", "xml"]).optional()
 });

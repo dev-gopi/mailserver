@@ -10,15 +10,11 @@ export class AuditRepository {
     ipAddress: string | null = null,
     details: Record<string, any> = {}
   ): Promise<void> {
-    try {
-      await db.query(
-        `INSERT INTO audit_log (admin_id, action, entity_type, entity_id, ip_address, details)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [adminId, action, entityType, entityId, ipAddress, JSON.stringify(details)]
-      );
-    } catch (err) {
-      console.error("Audit log insert error:", err);
-    }
+    await db.query(
+      `INSERT INTO audit_log (admin_id, action, entity_type, entity_id, ip_address, details)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [adminId, action, entityType, entityId, ipAddress, JSON.stringify(details)]
+    );
   }
 
   async findRecent(limit = 100): Promise<AuditLogEntity[]> {

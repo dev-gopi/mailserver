@@ -20,3 +20,8 @@ app.use("/docs", swaggerUi.serve, swaggerUi.setup(openapi, { explorer: true }));
 app.use("/auth", authRouter);
 app.use("/api", adminRouter);
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("Unhandled API error:", err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: "Internal server error" });
+});

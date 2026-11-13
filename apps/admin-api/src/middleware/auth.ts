@@ -16,7 +16,8 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
   const admin = result.rows[0];
   if (!admin) { res.status(401).json({ error: "Invalid or expired session" }); return; }
   req.admin = { id: admin.id, username: admin.username, role: admin.role, mustChangePassword: admin.must_change_password };
-  void db.query("UPDATE admin_sessions SET last_seen_at = now() WHERE token_hash = $1", [tokenHash(token)]);
+  void db.query("UPDATE admin_sessions SET last_seen_at = now() WHERE token_hash = $1", [tokenHash(token)])
+    .catch((error: unknown) => console.error("Session activity update failed:", error));
   next();
 }
 

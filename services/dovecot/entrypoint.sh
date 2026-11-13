@@ -1,10 +1,16 @@
 #!/bin/sh
 set -e
 
+: "${MAIL_DB_HOST:?MAIL_DB_HOST must be set}"
+: "${MAIL_DB_NAME:?MAIL_DB_NAME must be set}"
+: "${MAIL_DB_USER:?MAIL_DB_USER must be set}"
 : "${MAIL_DB_PASSWORD:?MAIL_DB_PASSWORD must be set}"
-escaped_password=$(printf '%s' "$MAIL_DB_PASSWORD" | sed 's/[&|\\]/\\&/g')
-sed -i "s|__MAIL_DB_PASSWORD__|${escaped_password}|g" /etc/dovecot/dovecot-sql.conf.ext
-if grep -q '__MAIL_DB_PASSWORD__' /etc/dovecot/dovecot-sql.conf.ext; then
+for value in MAIL_DB_HOST MAIL_DB_NAME MAIL_DB_USER MAIL_DB_PASSWORD; do
+  eval "raw=\${$value}"
+  escaped=$(printf '%s' "$raw" | sed 's/[&|\\]/\\&/g')
+  sed -i "s|__${value}__|${escaped}|g" /etc/dovecot/dovecot-sql.conf.ext
+done
+if grep -q '__MAIL_DB_' /etc/dovecot/dovecot-sql.conf.ext; then
   echo "Dovecot database password injection failed" >&2
   exit 1
 fi

@@ -9,6 +9,11 @@ import { domainRepository } from "../repositories/domain.repository";
 import { auditService } from "./audit";
 
 export class DomainService {
+  private withoutVerificationToken(domain: DomainEntity) {
+    const { verification_token: _verificationToken, ...safeDomain } = domain;
+    return safeDomain;
+  }
+
   private keyPath(domainName: string) {
     const root = path.resolve(env.dkimKeyDir);
     const directory = path.resolve(root, domainName);
@@ -57,13 +62,63 @@ export class DomainService {
     };
   }
 
+  private dnsRecords(domain: DomainEntity, dkimTxtRecord: { name: string; value: string }) {
+    return {
+      verification: {
+        type: "TXT",
+        name: `_mail-admin.${domain.name}`,
+        value: domain.verification_token
+      },
+      mailHost: {
+        type: "A",
+        name: env.mailHostname,
+        value: env.mailPublicIp || null,
+        guidance: env.mailPublicIp
+          ? undefined
+          : "Set MAIL_PUBLIC_IP to show the server address. The hostname must resolve to this server's public IP."
+      },
+      mx: {
+        type: "MX",
+        name: "@",
+        priority: env.dns.mxPriority,
+        value: env.mailHostname
+      },
+      spf: {
+        type: "TXT",
+        name: "@",
+        value: env.dns.spfRecord
+      },
+      dkim: {
+        type: "TXT",
+        name: dkimTxtRecord.name,
+        value: dkimTxtRecord.value
+      },
+      dmarc: {
+        type: "TXT",
+        name: `_dmarc.${domain.name}`,
+        value: `v=DMARC1; p=${env.dns.dmarcPolicy}; rua=mailto:postmaster@${domain.name}`
+      }
+    };
+  }
+
+  private async withDnsRecords(domain: DomainEntity) {
+    const withDkim = await this.withDkimRecord(domain);
+    return {
+      ...withDkim,
+      dnsRecords: this.dnsRecords(domain, withDkim.dkimTxtRecord)
+    };
+  }
+
   /**
    * Admin-facing: returns ALL domains from the base table with DKIM info.
    * Includes unverified and disabled domains so admins can manage them.
    */
   async getAllDomains() {
     const domains = await domainRepository.findAll();
-    return Promise.all(domains.map((d) => this.withDkimRecord(d)));
+    return Promise.all(domains.map(async (d) => {
+      const withRecords = await this.withDnsRecords(d);
+      return this.withoutVerificationToken(withRecords);
+    }));
   }
 
   /**
@@ -78,7 +133,7 @@ export class DomainService {
   async getDomainById(id: number) {
     const domain = await domainRepository.findById(id);
     if (!domain) throw new Error("Domain not found");
-    return this.withDkimRecord(domain);
+    return this.withoutVerificationToken(await this.withDnsRecords(domain));
   }
 
   async createDomain(req: Request, name: string) {
@@ -90,16 +145,14 @@ export class DomainService {
 
     const verificationToken = crypto.randomBytes(24).toString("base64url");
     const domain = await domainRepository.create(cleanName, verificationToken);
-    const domainWithDkim = await this.withDkimRecord(domain);
+    const domainWithRecords = await this.withDnsRecords(domain);
+    const publicDomain = this.withoutVerificationToken(domainWithRecords);
 
     await auditService.log(req, "domain.create", "domain", domain.id, { name: domain.name });
 
     return {
-      ...domainWithDkim,
-      dnsTxtRecord: {
-        name: `_mail-admin.${domain.name}`,
-        value: verificationToken
-      }
+      ...publicDomain,
+      dnsTxtRecord: domainWithRecords.dnsRecords.verification
     };
   }
 
@@ -115,13 +168,14 @@ export class DomainService {
 
       if (!values.includes(domain.verification_token)) {
         throw new Error(
-          `DNS TXT record '${recordName}' is published but does not match expected token: ${domain.verification_token}`
+          `DNS TXT record '${recordName}' is published but does not match the expected verification token`
         );
       }
 
       const verified = await domainRepository.markVerified(domain.id);
+      if (!verified) throw new Error("Domain verification update failed");
       await auditService.log(req, "domain.verify", "domain", domain.id, { name: domain.name });
-      return verified;
+      return this.withoutVerificationToken(verified);
     } catch (err: unknown) {
       const e = err as NodeJS.ErrnoException & { message: string };
       if (e.code === "ENOTFOUND" || e.code === "ENODATA") {
@@ -138,7 +192,7 @@ export class DomainService {
     if (!domain) throw new Error("Domain not found");
 
     await auditService.log(req, "domain.update", "domain", domain.id, { active: domain.active });
-    return domain;
+    return this.withoutVerificationToken(domain);
   }
 
   async deleteDomain(req: Request, id: number) {

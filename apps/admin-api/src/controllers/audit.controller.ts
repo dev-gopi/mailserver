@@ -3,7 +3,8 @@ import { auditService } from "../services/audit";
 
 export class AuditController {
   async list(req: Request, res: Response) {
-    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const requested = Number(req.query.limit);
+    const limit = Number.isInteger(requested) && requested > 0 ? Math.min(requested, 500) : 100;
     const logs = await auditService.getRecentLogs(limit);
     return res.json(logs);
   }

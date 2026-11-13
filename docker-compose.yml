@@ -1,13 +1,11 @@
 services:
   spamassassin:
     build: ./services/spamassassin
-    container_name: mail_spamassassin
-    hostname: spamd.local
     volumes:
       - spamdata:/home/spamd
       - maildata:/var/mail/vhosts
     environment:
-      - TZ=UTC
+      - TZ=${TZ:?set TZ in .env}
     networks:
       - mailnet
     restart: unless-stopped
@@ -20,7 +18,6 @@ services:
   clamav:
     # image: clamav/clamav:stable
     build: ./services/clamav
-    container_name: mail_clamav
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pgrep clamd >/dev/null && pgrep clamsmtpd >/dev/null"]
@@ -37,37 +34,39 @@ services:
 
   opendkim:
     build: ./services/opendkim
-    container_name: mail_opendkim
     restart: unless-stopped
     volumes:
       - dkimkeys:/var/lib/opendkim
     networks:
       - mailnet
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 8891"]
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 ${OPENDKIM_PORT:?set OPENDKIM_PORT in .env}"]
       interval: 15s
       timeout: 3s
       retries: 5
 
   postfix:
     build: ./services/postfix
-    container_name: mail_postfix
-    hostname: mail.local
     volumes:
       - maildata:/var/mail/vhosts
       - ./secrets/tls:/etc/ssl/certs:ro
       - mailspool:/var/spool/postfix
     ports:
-      - "25:25"
-      - "587:587"
-      - "465:465"
+      - "${SMTP_PORT:?set SMTP_PORT in .env}:25"
+      - "${SUBMISSION_PORT:?set SUBMISSION_PORT in .env}:587"
+      - "${SMTPS_PORT:?set SMTPS_PORT in .env}:465"
     networks:
       - mailnet
     restart: unless-stopped
     environment:
-      - TZ=Asia/Kolkata
+      - TZ=${TZ:?set TZ in .env}
       - DEBIAN_FRONTEND=noninteractive
       - MAIL_DB_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      - MAIL_DB_HOST=${POSTGRES_HOST:?set POSTGRES_HOST in .env}
+      - MAIL_DB_NAME=${POSTGRES_DB:?set POSTGRES_DB in .env}
+      - MAIL_DB_USER=${POSTGRES_USER:?set POSTGRES_USER in .env}
+      - MAIL_DOMAIN=${MAIL_DOMAIN:?set MAIL_DOMAIN in .env}
+      - MAIL_HOSTNAME=${MAIL_HOSTNAME:?set MAIL_HOSTNAME in .env}
     depends_on:
       spamassassin:
         condition: service_healthy
@@ -85,32 +84,31 @@ services:
 
   dovecot:
     build: ./services/dovecot
-    container_name: mail_dovecot
-    hostname: dovecot.local
     volumes:
       - maildata:/var/mail/vhosts
       - ./secrets/tls:/etc/ssl/certs:ro
       - ./secrets/tls:/etc/dovecot/private:ro
       - mailspool:/var/spool/postfix
     ports:
-      - "143:143"
-      - "993:993"
+      - "${IMAPS_PORT:?set IMAPS_PORT in .env}:993"
+      - "${POP3S_PORT:?set POP3S_PORT in .env}:995"
     networks:
       - mailnet
     restart: unless-stopped
     environment:
       - DEBIAN_FRONTEND=noninteractive
       - MAIL_DB_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      - MAIL_DB_HOST=${POSTGRES_HOST:?set POSTGRES_HOST in .env}
+      - MAIL_DB_NAME=${POSTGRES_DB:?set POSTGRES_DB in .env}
+      - MAIL_DB_USER=${POSTGRES_USER:?set POSTGRES_USER in .env}
     depends_on:
       - db
 
   db:
     image: postgres:16
-    container_name: mail_db
-    hostname: db.local
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-mailserver}
-      POSTGRES_USER: ${POSTGRES_USER:-mailuser}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       MAIL_DOMAIN: ${MAIL_DOMAIN:?set MAIL_DOMAIN in .env}
       MAIL_ADMIN_USERNAME: ${MAIL_ADMIN_USERNAME:-admin}
@@ -129,8 +127,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: mail_redis
-    hostname: redis.local
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
@@ -145,25 +141,40 @@ services:
 
   app:
     build: ./apps/admin-api
-    container_name: mail_app
-    hostname: app.local
     env_file:
       - ./apps/admin-api/.env
     environment:
-      PGHOST: db
-      PGPORT: 5432
-      PGDATABASE: ${POSTGRES_DB:-mailserver}
-      PGUSER: ${POSTGRES_USER:-mailuser}
+      PGHOST: ${POSTGRES_HOST:?set POSTGRES_HOST in .env}
+      PGPORT: ${POSTGRES_PORT:?set POSTGRES_PORT in .env}
+      PGDATABASE: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      PGUSER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
       PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      POSTFIX_HOST: postfix
-      POSTFIX_BRIDGE_PORT: 2526
-      DOVECOT_HOST: dovecot
-      SPAMASSASSIN_HOST: spamassassin
-      CLAMAV_HOST: clamav
+      PORT: ${API_PORT:?set API_PORT in .env}
+      REDIS_HOST: ${REDIS_HOST:?set REDIS_HOST in .env}
+      REDIS_PORT: ${REDIS_PORT:?set REDIS_PORT in .env}
+      POSTFIX_HOST: ${POSTFIX_HOST:?set POSTFIX_HOST in .env}
+      POSTFIX_PORT: ${POSTFIX_PORT:?set POSTFIX_PORT in .env}
+      POSTFIX_BRIDGE_PORT: ${POSTFIX_BRIDGE_PORT:?set POSTFIX_BRIDGE_PORT in .env}
+      DOVECOT_HOST: ${DOVECOT_HOST:?set DOVECOT_HOST in .env}
+      DOVECOT_PORT: ${DOVECOT_PORT:?set DOVECOT_PORT in .env}
+      SPAMASSASSIN_HOST: ${SPAMASSASSIN_HOST:?set SPAMASSASSIN_HOST in .env}
+      SPAMASSASSIN_PORT: ${SPAMASSASSIN_PORT:?set SPAMASSASSIN_PORT in .env}
+      CLAMAV_HOST: ${CLAMAV_HOST:?set CLAMAV_HOST in .env}
+      CLAMAV_PORT: ${CLAMAV_PORT:?set CLAMAV_PORT in .env}
       DKIM_KEY_DIR: /var/lib/opendkim/keys
       DKIM_KEY_UID: 10001
+      MAIL_DOMAIN: ${MAIL_DOMAIN:?set MAIL_DOMAIN in .env}
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME:?set MAIL_HOSTNAME in .env}
+      MAIL_PUBLIC_IP: ${MAIL_PUBLIC_IP:-}
+      MX_PRIORITY: ${MX_PRIORITY:-10}
+      SPF_RECORD: ${SPF_RECORD:-v=spf1 mx ~all}
+      DMARC_POLICY: ${DMARC_POLICY:-quarantine}
+      IMAPS_PORT: ${IMAPS_PORT:?set IMAPS_PORT in .env}
+      IMAP_STARTTLS_PORT: ${IMAP_STARTTLS_PORT:?set IMAP_STARTTLS_PORT in .env}
+      POP3S_PORT: ${POP3S_PORT:?set POP3S_PORT in .env}
+      POP3_STARTTLS_PORT: ${POP3_STARTTLS_PORT:?set POP3_STARTTLS_PORT in .env}
+      SUBMISSION_PORT: ${SUBMISSION_PORT:?set SUBMISSION_PORT in .env}
+      SMTPS_PORT: ${SMTPS_PORT:?set SMTPS_PORT in .env}
     volumes:
       - dkimkeys:/var/lib/opendkim
     networks:
@@ -175,16 +186,18 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + process.env.PORT + '/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 3s
       retries: 6
 
   admin-ui:
     build: ./apps/admin-ui
-    container_name: mail_admin_ui
     ports:
-      - "8080:80"
+      - "${ADMIN_UI_PORT:?set ADMIN_UI_PORT in .env}:80"
+    environment:
+      ADMIN_UI_API_HOST: ${ADMIN_UI_API_HOST:?set ADMIN_UI_API_HOST in .env}
+      ADMIN_UI_API_PORT: ${API_PORT:?set API_PORT in .env}
     networks:
       - mailnet
     restart: unless-stopped

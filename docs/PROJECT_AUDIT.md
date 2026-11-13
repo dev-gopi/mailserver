@@ -28,8 +28,9 @@ deliberately does not delete your existing local files.
 
 1. The local `.env` is intentionally a development configuration. Replace every placeholder,
    use a secret manager, and restrict filesystem permissions before deployment.
-2. DKIM signing is not included because the former configuration had no valid key or real
-   domain. Add a tested DKIM signer after selecting the production domain.
+2. DKIM signing is generated per verified domain and shared with OpenDKIM through the
+   `dkimkeys` volume. Publish the generated `mail._domainkey` TXT record and verify signing
+   before production use.
 3. Do not expose PostgreSQL, SpamAssassin, ClamAV, plain IMAP, or plain POP3 publicly. The API
    binds to loopback; expose it only through an authenticated HTTPS reverse proxy.
 4. Replace `mail.local` with a domain you control, publish MX/SPF/DKIM/DMARC records, and
@@ -37,9 +38,19 @@ deliberately does not delete your existing local files.
 
 ## Suggested implementation order
 
-1. Decide the real mail domain and create TLS/DKIM keys outside Git.
+1. Decide the real mail domain and create TLS keys outside Git; publish the generated DKIM key.
 2. Replace development credentials with secret-managed values.
 3. Test SMTP submission, LMTP delivery, spam filtering, antivirus scanning, and DKIM signing
    in a private environment.
-4. Add off-host encrypted backups for `dbdata` and `maildata`, rate limiting/fail2ban, and
-   operational log retention.
+4. Add off-host encrypted backups for `dbdata` and `maildata`, fail2ban, certificate renewal,
+   and operational log retention.
+
+## Implemented hardening
+
+- Postfix and Dovecot database connection settings are injected from Compose environment values.
+- Mailbox and alias delivery views require an active, DNS-verified domain.
+- SMTP listeners apply ClamAV once, reinject through SpamAssassin, and avoid filter recursion.
+- Plain IMAP and POP3 host ports are not published by Compose.
+- Postfix SQL lookup files are readable by the Postfix service group without being world-readable.
+- Admin API validation includes bounded credentials, IANA timezone validation, XML escaping,
+  safe audit pagination, and JSON error responses.

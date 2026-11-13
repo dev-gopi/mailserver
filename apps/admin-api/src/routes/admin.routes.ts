@@ -11,7 +11,8 @@ import {
   aliasCreateSchema,
   aliasPatchSchema,
   testSmtpSchema,
-  testSpamSchema
+  testSpamSchema,
+  clientConfigQuerySchema
 } from "../validation/schemas";
 import { companyController } from "../controllers/company.controller";
 import { domainController } from "../controllers/domain.controller";
@@ -45,7 +46,7 @@ adminRouter.delete("/domains/:id", domainController.delete);
 
 // ── Users & Mailboxes (virtual_users backed) ───────────────────────────────────
 adminRouter.get("/users", mailboxController.list);
-adminRouter.get("/users/client-config", mailboxController.getClientConfig);
+adminRouter.get("/users/client-config", validate({ query: clientConfigQuerySchema }), mailboxController.getClientConfig);
 adminRouter.get("/users/:id", mailboxController.get);
 adminRouter.post("/users", validate({ body: mailboxCreateSchema }), mailboxController.create);
 adminRouter.patch("/users/:id", validate({ body: mailboxPatchSchema }), mailboxController.update);
@@ -58,7 +59,7 @@ adminRouter.post(
 
 // /api/mailboxes — legacy alias for /api/users (keeps backward compat)
 adminRouter.get("/mailboxes", mailboxController.list);
-adminRouter.get("/mailboxes/client-config", mailboxController.getClientConfig);
+adminRouter.get("/mailboxes/client-config", validate({ query: clientConfigQuerySchema }), mailboxController.getClientConfig);
 adminRouter.get("/mailboxes/:id", mailboxController.get);
 adminRouter.post("/mailboxes", validate({ body: mailboxCreateSchema }), mailboxController.create);
 adminRouter.patch("/mailboxes/:id", validate({ body: mailboxPatchSchema }), mailboxController.update);

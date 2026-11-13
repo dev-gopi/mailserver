@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm install
+RUN npm ci
 
 # Copy the rest of the source code
 COPY tsconfig.json ./
@@ -27,7 +27,7 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/dist ./dist
 
 # Install only production dependencies
-RUN npm install --omit=dev
+RUN npm ci --omit=dev
 
 # Expose port (make sure it matches your Express app)
 EXPOSE 8080

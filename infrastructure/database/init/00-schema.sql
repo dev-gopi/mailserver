@@ -13,5 +13,13 @@ CREATE TRIGGER admins_touch BEFORE UPDATE ON admins FOR EACH ROW EXECUTE FUNCTIO
 CREATE TRIGGER domains_touch BEFORE UPDATE ON domains FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 CREATE TRIGGER mailboxes_touch BEFORE UPDATE ON mailboxes FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 CREATE VIEW virtual_domains AS SELECT id, name FROM domains WHERE active AND verified_at IS NOT NULL;
-CREATE VIEW virtual_users AS SELECT id, domain_id, address AS email, password_hash AS password, maildir, active FROM mailboxes;
-CREATE VIEW virtual_aliases AS SELECT id, domain_id, source, destination FROM aliases WHERE active;
+CREATE VIEW virtual_users AS
+SELECT m.id, m.domain_id, m.address AS email, m.password_hash AS password, m.maildir, m.active
+FROM mailboxes m
+JOIN domains d ON d.id = m.domain_id
+WHERE m.active AND d.active AND d.verified_at IS NOT NULL;
+CREATE VIEW virtual_aliases AS
+SELECT a.id, a.domain_id, a.source, a.destination
+FROM aliases a
+JOIN domains d ON d.id = a.domain_id
+WHERE a.active AND d.active AND d.verified_at IS NOT NULL;

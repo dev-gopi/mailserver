@@ -2,14 +2,14 @@
 # Postfix will use this file to check if an incoming domain is hosted here.
 
 # Database user credentials
-user = mailuser
+user = __MAIL_DB_USER__
 password = __MAIL_DB_PASSWORD__
 
 # Hostname or service name (from docker-compose)
-hosts = mail_db
+hosts = __MAIL_DB_HOST__
 
 # Database name
-dbname = mailserver
+dbname = __MAIL_DB_NAME__
 
 # SQL query:
 # %s is replaced by the domain part of the email (e.g. mail.local)

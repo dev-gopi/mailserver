@@ -1,12 +1,12 @@
 driver = pgsql
-connect = host=mail_db dbname=mailserver user=mailuser password=__MAIL_DB_PASSWORD__
+connect = host=__MAIL_DB_HOST__ dbname=__MAIL_DB_NAME__ user=__MAIL_DB_USER__ password=__MAIL_DB_PASSWORD__
 
 default_pass_scheme = BLF-CRYPT
 
 password_query = \
   SELECT email as user, password \
   FROM virtual_users \
-  WHERE email = '%u' AND active = true
+  WHERE email = '%u'
 
 user_query = \
   SELECT \
@@ -14,4 +14,4 @@ user_query = \
     5000 AS uid, \
     5000 AS gid \
   FROM virtual_users \
-  WHERE email = '%u' AND active = true
+  WHERE email = '%u'

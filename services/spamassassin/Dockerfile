@@ -34,7 +34,7 @@ RUN touch /home/spamd/spamd.log && chown spamd:spamd /home/spamd/spamd.log
 
 EXPOSE 783 11332
 
-# CMD ["spamd", "-c", "-m5", "--nouser-config", "--syslog-socket=none", "--listen=0.0.0.0", "--allowed-ips=0.0.0.0/0", "--port=783",  "--pidfile=/var/run/spamd.pid", "--username", "spamd", "--helper-home-dir", "/home/spamd/", "-s", "/home/spamd/spamd.log"]
+# CMD ["spamd", "-c", "-m5", "--nouser-config", "--syslog-socket=none", "--listen=0.0.0.0", "--allowed-ips=172.16.0.0/12", "--port=783", "--pidfile=/var/run/spamd.pid", "--username", "spamd", "--helper-home-dir", "/home/spamd/", "-s", "/home/spamd/spamd.log"]
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

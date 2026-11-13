@@ -11,6 +11,7 @@ const state = {
   domains: [],
   mailboxes: [],
   aliases: [],
+  clientConfig: null,
   auditLogs: [],
   dashboardData: null,
   company: null,
@@ -278,12 +279,13 @@ function escapeHtml(str) {
 // Master Refresh
 async function refreshAllData() {
   try {
-    const [dashboard, company, domains, mailboxes, aliases] = await Promise.all([
+    const [dashboard, company, domains, mailboxes, aliases, clientConfig] = await Promise.all([
       request("/api/dashboard"),
       request("/api/company"),
       request("/api/domains"),
       request("/api/users"),      // Uses virtual_users view (Dovecot-compatible)
-      request("/api/aliases")     // Admin view — includes inactive aliases
+      request("/api/aliases"),    // Admin view — includes inactive aliases
+      request("/api/users/client-config")
     ]);
 
     state.dashboardData = dashboard;
@@ -291,15 +293,21 @@ async function refreshAllData() {
     state.domains = domains;
     state.mailboxes = mailboxes;
     state.aliases = aliases;
+    state.clientConfig = clientConfig;
 
     renderOverview();
     renderMailboxes();
     renderDomains();
     renderAliases();
     renderCompanyForm();
+    renderConnectionHelp(clientConfig);
     populateDomainSelectors();
 
-    if (dashboard.services) renderServicesHealth(dashboard.services);
+    if (dashboard.services) {
+      renderServicesHealth(dashboard.services);
+      renderInfrastructureSummary(dashboard.services);
+    }
+    renderOverviewConnectionReference(clientConfig);
     if (dashboard.queue) renderQueueStats(dashboard.queue, dashboard.taskQueue);
 
     showToast("Synchronized", "Mail server records updated.", "info", 1500);
@@ -336,6 +344,39 @@ function renderOverview() {
   if (!d.recentActivity || d.recentActivity.length === 0) {
     container.innerHTML = `<div class="empty-state"><p>No administrative activities recorded yet.</p></div>`;
     return;
+  }
+
+  function renderOverviewConnectionReference(config) {
+    if (!config) return;
+    $("overview-imap-host").textContent = config.incoming.hostname;
+    $("overview-imap-port").textContent = `Port ${config.incoming.port}`;
+    $("overview-smtp-host").textContent = config.outgoing.hostname;
+    $("overview-smtp-port").textContent = `Port ${config.outgoing.port}`;
+    $("overview-smtps-port").textContent = `Port ${config.outgoing.alternativePort}`;
+  }
+
+  function renderInfrastructureSummary(services = []) {
+    const byService = Object.fromEntries(services.map((service) => [service.service, service]));
+    const setStatus = (id, service) => {
+      const element = $(id);
+      if (!element || !service) return;
+      const healthy = service.status === "healthy";
+      element.className = `badge ${healthy ? "badge-success" : "badge-danger"}`;
+      element.textContent = healthy ? "Healthy" : service.status;
+    };
+    const postfix = byService.postfix;
+    const dovecot = byService.dovecot;
+    const spamassassin = byService.spamassassin;
+    const database = byService.postgresql;
+
+    if (postfix) $("infra-postfix-details").textContent = `SMTP service port ${postfix.port}`;
+    if (dovecot) $("infra-dovecot-details").textContent = `IMAP service port ${dovecot.port} • Maildir Storage`;
+    if (spamassassin) $("infra-filter-details").textContent = `SpamAssassin service port ${spamassassin.port} • ClamAV filter engine`;
+    if (database) $("infra-database-name").textContent = database.displayName;
+    setStatus("infra-postfix-status", postfix);
+    setStatus("infra-dovecot-status", dovecot);
+    setStatus("infra-filter-status", spamassassin);
+    setStatus("infra-database-status", database);
   }
 
   container.innerHTML = d.recentActivity.map((item) => {
@@ -420,8 +461,8 @@ function renderMailboxes() {
         </td>
         <td>
           <div style="display: flex; gap: 4px; flex-wrap: wrap;">
-            <span class="badge badge-success" style="font-size: 0.72rem; padding: 2px 6px;">IMAP 993</span>
-            <span class="badge badge-success" style="font-size: 0.72rem; padding: 2px 6px;">SMTP 587</span>
+            <span class="badge badge-success" style="font-size: 0.72rem; padding: 2px 6px;">IMAP ${state.clientConfig?.incoming.port ?? "—"}</span>
+            <span class="badge badge-success" style="font-size: 0.72rem; padding: 2px 6px;">SMTP ${state.clientConfig?.outgoing.port ?? "—"}</span>
           </div>
         </td>
         <td>
@@ -433,7 +474,7 @@ function renderMailboxes() {
         <td>${formatDate(m.created_at)}</td>
         <td class="text-right">
           <div class="table-actions">
-            <button class="btn-action-icon" title="Thunderbird & Mail Client Setup Guide" onclick="openClientGuide('${m.address}', '${m.domain_name}')">
+            <button class="btn-action-icon" title="Mail Client Setup Guide" onclick="openClientGuide('${m.address}', '${m.domain_name}')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
             </button>
             <button class="btn-action-icon" title="Test User IMAP / SMTP Password" onclick="openTestUserAuth(${m.id}, '${m.address}')">
@@ -505,7 +546,7 @@ async function populateDomainSelectors() {
 
 function updateMailboxPreview() {
   const prefix = $("mb-prefix")?.value || "username";
-  const domain = $("mb-domain-select")?.value || "domain.com";
+  const domain = $("mb-domain-select")?.value || "";
   const preview = $("mb-preview-email");
   if (preview) preview.textContent = `${prefix}@${domain}`;
 }
@@ -649,22 +690,34 @@ async function deleteMailbox(id, address) {
 }
 
 // Client Guide Modal (Thunderbird / Outlook / Apple Mail)
-function openClientGuide(address = "", domain = "") {
+async function openClientGuide(address = "", domain = "") {
   let userAddr = address;
   let domName = domain;
+  const requestedMailbox = Boolean(address || domain);
 
   if (!userAddr) {
     const firstMb = state.mailboxes[0];
-    userAddr = firstMb ? firstMb.address : "user@yourdomain.com";
-    domName = firstMb ? (firstMb.domain_name || firstMb.address.split("@")[1]) : (state.domains[0]?.name || window.location.hostname);
+    userAddr = firstMb ? firstMb.address : "";
+    domName = firstMb ? (firstMb.domain_name || firstMb.address.split("@")[1]) : (state.domains[0]?.name || "");
   }
 
-  const host = domName ? `mail.${domName}` : window.location.hostname;
-  $("guide-mailbox-address").textContent = userAddr;
-  $("guide-imap-host").textContent = host;
+  const query = requestedMailbox && userAddr ? `?email=${encodeURIComponent(userAddr)}` : "";
+  const config = requestedMailbox ? await request(`/api/users/client-config${query}`) : state.clientConfig;
+  if (!config) {
+    showToast("Configuration unavailable", "Mail client settings could not be loaded.", "error");
+    return;
+  }
+
+  $("guide-mailbox-address").textContent = userAddr || config.email;
+  $("guide-imap-host").textContent = config.incoming.hostname;
   $("guide-imap-user").textContent = userAddr;
-  $("guide-smtp-host").textContent = host;
+  $("guide-smtp-host").textContent = config.outgoing.hostname;
   $("guide-smtp-user").textContent = userAddr;
+  $("guide-imap-port").textContent = config.incoming.port;
+  $("guide-pop3-alt-port").textContent = config.pop3.alternativePort;
+  $("guide-pop3-port").textContent = config.pop3.port;
+  $("guide-smtp-port").textContent = config.outgoing.port;
+  $("guide-smtp-alt-port").textContent = config.outgoing.alternativePort;
   openModal("modal-client-guide");
 }
 
@@ -700,7 +753,9 @@ async function handleTestUserAuthSubmit(event) {
     resultBox.classList.remove("hidden");
     if (res.success) {
       resultBox.className = "alert-box alert-success";
-      resultBox.innerHTML = `<strong>Authentication Succeeded:</strong> ${escapeHtml(res.message)}<div class="mt-3"><small>Ready for Mozilla Thunderbird (IMAP: 993 SSL) and Postfix (SMTP: 587 STARTTLS).</small></div>`;
+      const imapPort = state.clientConfig?.incoming.port ?? "configured IMAP";
+      const smtpPort = state.clientConfig?.outgoing.port ?? "configured SMTP";
+      resultBox.innerHTML = `<strong>Authentication Succeeded:</strong> ${escapeHtml(res.message)}<div class="mt-3"><small>Ready for mail clients (IMAP: ${imapPort} SSL) and SMTP submission (${smtpPort} STARTTLS).</small></div>`;
       showToast("Login Succeeded", "Password verified against Dovecot Blowfish crypt.", "success");
     } else {
       resultBox.className = "alert-box alert-warning";
@@ -806,12 +861,19 @@ function openDnsWizard(domainId) {
     : `<strong>DNS Verification Pending:</strong> Add the TXT record below to your DNS provider, then click "Verify DNS Record Now".`;
 
   $("dns-txt-name").textContent = `_mail-admin.${domain.name}`;
-  $("dns-txt-val").textContent = domain.verification_token || "Token pending...";
-  $("dns-mx-val").textContent = `mail.${domain.name}`;
-  $("dns-dmarc-host").textContent = `_dmarc.${domain.name}`;
-  $("dns-dmarc-val").textContent = `v=DMARC1; p=quarantine; rua=mailto:postmaster@${domain.name}`;
-  $("dns-dkim-host").textContent = domain.dkimTxtRecord?.name || `mail._domainkey.${domain.name}`;
-  $("dns-dkim-val").textContent = domain.dkimTxtRecord?.value || "DKIM key pending...";
+  const records = domain.dnsRecords;
+  $("dns-txt-val").textContent = records?.verification.value || "Token pending...";
+  $("dns-a-name").textContent = records?.mailHost.name || "mail hostname";
+  $("dns-a-val").textContent = records?.mailHost.value || "Set MAIL_PUBLIC_IP";
+  $("dns-a-guidance").textContent = records?.mailHost.guidance ||
+    "The mail hostname must resolve to this server's public IP. Configure reverse DNS/PTR for the same hostname with your VPS or network provider.";
+  $("dns-mx-val").textContent = records?.mx.value || "mail hostname";
+  $("dns-mx-priority").textContent = records?.mx.priority ?? "—";
+  $("dns-spf-val").textContent = records?.spf.value || "SPF value unavailable";
+  $("dns-dkim-host").textContent = records?.dkim.name || "DKIM hostname unavailable";
+  $("dns-dkim-val").textContent = records?.dkim.value || "DKIM key pending...";
+  $("dns-dmarc-host").textContent = records?.dmarc.name || `_dmarc.${domain.name}`;
+  $("dns-dmarc-val").textContent = records?.dmarc.value || "DMARC value unavailable";
 
   const btnVerify = $("btn-trigger-verify");
   if (isVerified) {
@@ -1019,7 +1081,22 @@ async function loadAuditLogs() {
   }
 }
 
-// 6. Settings & Company Profile
+// 6. Connection Help Panel — dynamically set mail server hostname from first verified domain
+function renderConnectionHelp(config) {
+  if (!config) return;
+  const imapEl = $("help-imap-host");
+  const smtpEl = $("help-smtp-host");
+  if (imapEl) imapEl.textContent = config.incoming.hostname;
+  if (smtpEl) smtpEl.textContent = config.outgoing.hostname;
+  $("help-imap-port").textContent = config.incoming.port;
+  $("help-imap-alt-port").textContent = config.incoming.alternativePort;
+  $("help-pop3-alt-port").textContent = config.pop3.alternativePort;
+  $("help-pop3-port").textContent = config.pop3.port;
+  $("help-smtp-port").textContent = config.outgoing.port;
+  $("help-smtp-alt-port").textContent = config.outgoing.alternativePort;
+}
+
+// 7. Settings & Company Profile
 function renderCompanyForm() {
   if (!state.company) return;
   $("company-name").value = state.company.name || "";

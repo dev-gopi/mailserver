@@ -36,12 +36,24 @@ if [ -z "$postfix_ip" ]; then
   exit 1
 fi
 sed "s|postfix:10025|${postfix_ip}:10025|" /etc/clamsmtpd.conf > /tmp/clamsmtpd.conf
+rm -f /var/run/clamsmtpd.pid
 clamsmtpd -f /tmp/clamsmtpd.conf -p /var/run/clamsmtpd.pid
 
 # ClamSMTP daemonizes; keep PID 1 alive while supervising both daemons so a
 # proxy crash is visible to Compose and results in a clean restart.
+for _ in $(seq 1 10); do
+  if [ -s /var/run/clamsmtpd.pid ] && kill -0 "$(cat /var/run/clamsmtpd.pid)" 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
+if [ ! -s /var/run/clamsmtpd.pid ] || ! kill -0 "$(cat /var/run/clamsmtpd.pid)" 2>/dev/null; then
+  echo "[ERROR] clamsmtpd did not become ready" >&2
+  exit 1
+fi
+
 while kill -0 "$clamd_pid" 2>/dev/null; do
-  if [ ! -s /var/run/clamsmtpd.pid ] || ! kill -0 "$(cat /var/run/clamsmtpd.pid)" 2>/dev/null; then
+  if ! pgrep -x clamsmtpd >/dev/null 2>&1; then
     echo "[ERROR] clamsmtpd stopped unexpectedly" >&2
     exit 1
   fi

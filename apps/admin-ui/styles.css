@@ -1476,6 +1476,41 @@ input:focus, select:focus, textarea:focus {
   padding-bottom: 8px;
 }
 
+.guide-card-caption {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+.guide-tips-card {
+  background: #fffbeb;
+  border-color: var(--warning-border);
+}
+
+.guide-tips-card .guide-card-head {
+  color: var(--warning);
+}
+
+.guide-tips-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
+}
+
+.guide-tip-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.guide-tip-row strong {
+  color: var(--text-main);
+}
+
 .guide-row {
   display: flex;
   flex-direction: column;
@@ -1497,6 +1532,12 @@ input:focus, select:focus, textarea:focus {
   border-radius: var(--radius-md);
   font-size: 0.825rem;
   color: #0369a1;
+}
+
+@media (max-width: 640px) {
+  .guide-tips-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .settings-grid {
@@ -1654,4 +1695,112 @@ input:focus, select:focus, textarea:focus {
   .app-topbar {
     padding: 0 16px;
   }
+}
+
+/* ── Connection Help Panel (Users tab) ────────────────────────────────────── */
+.conn-help-panel {
+  margin-bottom: 20px;
+}
+
+.conn-help-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+@media (max-width: 1100px) {
+  .conn-help-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .conn-help-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.conn-help-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+}
+
+.conn-help-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.conn-help-head strong {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.conn-help-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.conn-help-icon.imap {
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--primary);
+}
+
+.conn-help-icon.smtp {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--success);
+}
+
+.conn-help-icon.tips {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warning);
+}
+
+.conn-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.conn-spec-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.conn-spec-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.conn-label {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  min-width: 72px;
+  flex-shrink: 0;
+}
+
+.conn-spec-row code {
+  font-size: 0.78rem;
+  background: var(--bg-secondary);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--primary);
 }

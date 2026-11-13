@@ -2,14 +2,27 @@
 set -e
 
 : "${MAIL_DB_PASSWORD:?MAIL_DB_PASSWORD must be set}"
-escaped_password=$(printf '%s' "$MAIL_DB_PASSWORD" | sed 's/[&|\\]/\\&/g')
+: "${MAIL_DOMAIN:?MAIL_DOMAIN must be set}"
+: "${MAIL_HOSTNAME:?MAIL_HOSTNAME must be set}"
+for value in MAIL_DOMAIN MAIL_HOSTNAME; do
+  eval "raw=\${$value}"
+  escaped=$(printf '%s' "$raw" | sed 's/[&|\\]/\\&/g')
+  sed -i "s|__${value}__|${escaped}|g" /etc/postfix/main.cf
+done
+for value in MAIL_DB_HOST MAIL_DB_NAME MAIL_DB_USER MAIL_DB_PASSWORD; do
+  eval "raw=\${$value}"
+  escaped=$(printf '%s' "$raw" | sed 's/[&|\\]/\\&/g')
+  for config in /etc/postfix/pgsql-virtual-*.cf; do
+    sed -i "s|__${value}__|${escaped}|g" "$config"
+  done
+done
 for config in /etc/postfix/pgsql-virtual-*.cf; do
-  sed -i "s|__MAIL_DB_PASSWORD__|${escaped_password}|g" "$config"
-  grep -q '__MAIL_DB_PASSWORD__' "$config" && { echo "Postfix database password injection failed" >&2; exit 1; }
+  grep -q '__MAIL_DB_' "$config" && { echo "Postfix database configuration injection failed" >&2; exit 1; }
 done
 
-# Start rsyslog in background
-rsyslogd
+# Start the container-specific logger. It receives Postfix messages from
+# /dev/log and forwards every facility to Docker's stdout.
+rsyslogd -n -f /etc/rsyslog-container.conf &
 
 # Expose only the two read/flush operations required by the admin API. The
 # bridge is internal to the mail network and never published on the host.
