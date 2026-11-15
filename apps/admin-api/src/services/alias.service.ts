@@ -54,8 +54,11 @@ export class AliasService {
         ...alias,
         domain_name: domain.name
       };
-    } catch {
-      throw new Error(`An alias for ${cleanSource} -> ${cleanDest} already exists`);
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        throw new Error(`An alias for ${cleanSource} -> ${cleanDest} already exists`);
+      }
+      throw err;
     }
   }
 

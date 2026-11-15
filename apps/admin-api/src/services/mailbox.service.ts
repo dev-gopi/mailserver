@@ -114,7 +114,10 @@ export class MailboxService {
       repoUpdates.active = updates.active;
     }
 
-    if (updates.password && updates.password.length >= 12) {
+    if (updates.password !== undefined) {
+      if (!updates.password || updates.password.length < 12) {
+        throw new Error("Password must be at least 12 characters");
+      }
       const bcryptHash = await bcrypt.hash(updates.password, 12);
       repoUpdates.passwordHash = `{BLF-CRYPT}${bcryptHash}`;
     }

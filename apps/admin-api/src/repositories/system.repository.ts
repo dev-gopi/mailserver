@@ -9,22 +9,29 @@ export class SystemRepository {
     displayName: string,
     host: string,
     port: number,
-    greetingCommand?: string
+    greetingCommand?: string,
+    expectBanner = false
   ): Promise<ServiceHealthStatus> {
     return new Promise((resolve) => {
       const start = Date.now();
       const socket = new net.Socket();
       socket.setTimeout(2500);
 
-      let banner = "";
+      let resolved = false;
+      const safeResolve = (status: ServiceHealthStatus) => {
+        if (!resolved) {
+          resolved = true;
+          resolve(status);
+        }
+      };
 
       socket.connect(port, host, () => {
         if (greetingCommand) {
           socket.write(greetingCommand);
-        } else {
+        } else if (!expectBanner) {
           const latencyMs = Date.now() - start;
           socket.destroy();
-          resolve({
+          safeResolve({
             service,
             displayName,
             port,
@@ -35,11 +42,20 @@ export class SystemRepository {
         }
       });
 
-      socket.on("data", (data) => {
-        banner = data.toString().trim().substring(0, 120);
+      socket.once("data", (data) => {
+        const banner = data.toString().trim().substring(0, 120);
         const latencyMs = Date.now() - start;
-        socket.destroy();
-        resolve({
+
+        // Gracefully disconnect according to service protocol
+        if (service === "postfix") {
+          socket.end("QUIT\r\n");
+        } else if (service === "dovecot") {
+          socket.end("a LOGOUT\r\n");
+        } else {
+          socket.destroy();
+        }
+
+        safeResolve({
           service,
           displayName,
           port,
@@ -52,7 +68,7 @@ export class SystemRepository {
 
       socket.on("timeout", () => {
         socket.destroy();
-        resolve({
+        safeResolve({
           service,
           displayName,
           port,
@@ -64,7 +80,7 @@ export class SystemRepository {
       });
 
       socket.on("error", (err) => {
-        resolve({
+        safeResolve({
           service,
           displayName,
           port,
@@ -104,8 +120,8 @@ export class SystemRepository {
     }
 
     const probes = await Promise.all([
-      this.probeTcp("postfix", "Postfix MTA (SMTP/Submission)", env.services.postfixHost, env.services.postfixPort),
-      this.probeTcp("dovecot", "Dovecot MDA (IMAP)", env.services.dovecotHost, env.services.dovecotPort),
+      this.probeTcp("postfix", "Postfix MTA (SMTP/Submission)", env.services.postfixHost, env.services.postfixPort, undefined, true),
+      this.probeTcp("dovecot", "Dovecot MDA (IMAP)", env.services.dovecotHost, env.services.dovecotPort, undefined, true),
       // spamd expects command first, followed by the SPAMC protocol version
       // and a blank line terminating the headers.
       this.probeTcp("spamassassin", "SpamAssassin Filter", env.services.spamassassinHost, env.services.spamassassinPort, "PING SPAMC/1.5\r\n\r\n"),

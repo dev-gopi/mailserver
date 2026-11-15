@@ -88,6 +88,7 @@ export class TaskQueue extends EventEmitter {
     if (this.processing) return;
     const job = this.memoryQueue.find((candidate) => candidate.status === "pending");
     if (!job) return;
+    this.processing = true;
     await this.execute(job);
     if (job.status === "pending") setTimeout(() => void this.processMemory(), 25);
     else void this.processMemory();
@@ -99,9 +100,9 @@ export class TaskQueue extends EventEmitter {
       job.status = "failed";
       job.error = `No handler registered for task: ${job.name}`;
       this.finishMemory(job);
+      this.processing = false;
       return;
     }
-    this.processing = true;
     job.status = "processing";
     job.attempts++;
     try {
@@ -116,8 +117,13 @@ export class TaskQueue extends EventEmitter {
           try {
             await this.redis.lPush(QUEUE, JSON.stringify(job));
           } catch {
+            if (!this.memoryQueue.includes(job)) {
+              this.memoryQueue.push(job);
+            }
+          }
+        } else {
+          if (!this.memoryQueue.includes(job)) {
             this.memoryQueue.push(job);
-            void this.processMemory();
           }
         }
       } else {

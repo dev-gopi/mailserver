@@ -5,8 +5,12 @@ const canWrite = (req: Request) => req.admin?.role !== "viewer";
 
 export class MailboxController {
   async list(req: Request, res: Response) {
-    const mailboxes = await mailboxService.getAllMailboxes();
-    return res.json(mailboxes);
+    try {
+      const mailboxes = await mailboxService.getAllMailboxes();
+      return res.json(mailboxes);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Failed to list mailboxes" });
+    }
   }
 
   async get(req: Request, res: Response) {

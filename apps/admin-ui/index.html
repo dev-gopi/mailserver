@@ -333,6 +333,11 @@
             <span class="status-pulse"></span>
             <span>Mail Services Active</span>
           </div>
+          <button id="btn-theme-toggle" type="button" class="btn btn-secondary btn-sm" onclick="toggleTheme()" title="Toggle Dark/Light Mode">
+            <svg id="theme-icon-sun" class="hidden" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            <svg id="theme-icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            <span id="theme-text">Dark</span>
+          </button>
           <button id="btn-refresh-all" class="btn btn-secondary btn-sm" title="Refresh all data">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             <span>Sync</span>
@@ -860,6 +865,7 @@
             <div class="search-box">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               <input type="text" id="mailbox-search" placeholder="Search by user name or email address..." oninput="filterMailboxes()">
+              <span class="kbd-hint">Ctrl+K</span>
             </div>
             <div class="filter-pills" id="mailbox-status-pills">
               <button type="button" class="btn-filter-pill active" onclick="setMailboxFilterStatus('')" id="pill-mb-all">All (<span id="count-mb-all">0</span>)</button>
@@ -888,12 +894,12 @@
               <table class="data-table">
                 <thead>
                   <tr>
-                    <th>User & Email Address</th>
-                    <th>Domain</th>
-                    <th>Storage Used / Quota</th>
+                    <th class="sortable" onclick="sortTable('mailboxes', 'address')" title="Sort by User & Email Address">User & Email Address <span id="sort-mb-address" class="sort-icon"></span></th>
+                    <th class="sortable" onclick="sortTable('mailboxes', 'domain')" title="Sort by Domain">Domain <span id="sort-mb-domain" class="sort-icon"></span></th>
+                    <th class="sortable" onclick="sortTable('mailboxes', 'storage')" title="Sort by Storage Used">Storage Used / Quota <span id="sort-mb-storage" class="sort-icon"></span></th>
                     <th>Protocols</th>
-                    <th>Status</th>
-                    <th>Created</th>
+                    <th class="sortable" onclick="sortTable('mailboxes', 'status')" title="Sort by Status">Status <span id="sort-mb-status" class="sort-icon"></span></th>
+                    <th class="sortable" onclick="sortTable('mailboxes', 'created')" title="Sort by Creation Date">Created <span id="sort-mb-created" class="sort-icon"></span></th>
                     <th class="text-right">Actions</th>
                   </tr>
                 </thead>
@@ -926,15 +932,30 @@
             </div>
           </div>
 
+          <!-- Filter Toolbar for Domains -->
+          <div class="filter-bar">
+            <div class="search-box">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="domain-search" placeholder="Search domain name..." oninput="filterDomains()">
+              <span class="kbd-hint">Ctrl+K</span>
+            </div>
+            <div class="filter-pills" id="domain-status-pills">
+              <button type="button" class="btn-filter-pill active" onclick="setDomainFilterStatus('')" id="pill-dom-all">All (<span id="count-dom-all">0</span>)</button>
+              <button type="button" class="btn-filter-pill" onclick="setDomainFilterStatus('verified')" id="pill-dom-verified">Verified (<span id="count-dom-verified">0</span>)</button>
+              <button type="button" class="btn-filter-pill warning" onclick="setDomainFilterStatus('pending')" id="pill-dom-pending">Pending DNS (<span id="count-dom-pending">0</span>)</button>
+              <button type="button" class="btn-filter-pill" onclick="setDomainFilterStatus('active')" id="pill-dom-active">Active (<span id="count-dom-active">0</span>)</button>
+            </div>
+          </div>
+
           <div class="card table-card">
             <div class="table-responsive">
               <table class="data-table">
                 <thead>
                   <tr>
-                    <th>Domain Name</th>
-                    <th>DNS Ownership Verification</th>
-                    <th>Domain Status</th>
-                    <th>Registered At</th>
+                    <th class="sortable" onclick="sortTable('domains', 'name')" title="Sort by Domain Name">Domain Name <span id="sort-dom-name" class="sort-icon"></span></th>
+                    <th class="sortable" onclick="sortTable('domains', 'verification')" title="Sort by Verification Status">DNS Ownership Verification <span id="sort-dom-verification" class="sort-icon"></span></th>
+                    <th class="sortable" onclick="sortTable('domains', 'status')" title="Sort by Status">Domain Status <span id="sort-dom-status" class="sort-icon"></span></th>
+                    <th class="sortable" onclick="sortTable('domains', 'created')" title="Sort by Registration Date">Registered At <span id="sort-dom-created" class="sort-icon"></span></th>
                     <th class="text-right">Actions</th>
                   </tr>
                 </thead>
@@ -972,6 +993,17 @@
             <div class="search-box">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               <input type="text" id="alias-search" placeholder="Search source or destination email..." oninput="filterAliases()">
+              <span class="kbd-hint">Ctrl+K</span>
+            </div>
+            <div class="filter-pills" id="alias-status-pills">
+              <button type="button" class="btn-filter-pill active" onclick="setAliasFilterStatus('')" id="pill-alias-all">All (<span id="count-alias-all">0</span>)</button>
+              <button type="button" class="btn-filter-pill" onclick="setAliasFilterStatus('active')" id="pill-alias-active">Active (<span id="count-alias-active">0</span>)</button>
+              <button type="button" class="btn-filter-pill warning" onclick="setAliasFilterStatus('disabled')" id="pill-alias-disabled">Disabled (<span id="count-alias-disabled">0</span>)</button>
+            </div>
+            <div class="filter-selects">
+              <select id="alias-domain-filter" onchange="filterAliases()">
+                <option value="">All Domains</option>
+              </select>
             </div>
           </div>
 
@@ -980,11 +1012,11 @@
               <table class="data-table">
                 <thead>
                   <tr>
-                    <th>Source (Incoming Alias)</th>
-                    <th>Forwarding Destination</th>
-                    <th>Domain</th>
-                    <th>Status</th>
-                    <th>Created</th>
+                    <th class="sortable" onclick="sortTable('aliases', 'source')" title="Sort by Source Alias">Source (Incoming Alias) <span id="sort-alias-source" class="sort-icon"></span></th>
+                    <th class="sortable" onclick="sortTable('aliases', 'destination')" title="Sort by Destination">Forwarding Destination <span id="sort-alias-destination" class="sort-icon"></span></th>
+                    <th class="sortable" onclick="sortTable('aliases', 'domain')" title="Sort by Domain">Domain <span id="sort-alias-domain" class="sort-icon"></span></th>
+                    <th class="sortable" onclick="sortTable('aliases', 'status')" title="Sort by Status">Status <span id="sort-alias-status" class="sort-icon"></span></th>
+                    <th class="sortable" onclick="sortTable('aliases', 'created')" title="Sort by Creation Date">Created <span id="sort-alias-created" class="sort-icon"></span></th>
                     <th class="text-right">Actions</th>
                   </tr>
                 </thead>
@@ -1184,10 +1216,16 @@
               <h2>Audit Log & Security History</h2>
               <p class="section-desc">Tamper-evident log of all administrator actions, mailbox creations, logins, and DNS checks.</p>
             </div>
-            <button class="btn btn-secondary btn-sm" onclick="loadAuditLogs()">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-              <span>Refresh Log</span>
-            </button>
+            <div class="flex-row gap-2">
+              <button class="btn btn-secondary btn-sm" onclick="exportAuditLogsCsv()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <span>Export CSV</span>
+              </button>
+              <button class="btn btn-secondary btn-sm" onclick="loadAuditLogs()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                <span>Refresh Log</span>
+              </button>
+            </div>
           </div>
 
           <div class="card table-card">

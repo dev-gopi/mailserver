@@ -1,8 +1,10 @@
 require ["fileinto"];
 
-# SpamAssassin adds this header when the message score reaches required_score.
-# Deliver it directly to the IMAP Junk mailbox instead of INBOX.
-if header :contains "X-Spam-Flag" "YES" {
+# Deliver spam directly to the IMAP Junk mailbox instead of INBOX.
+if anyof (
+  header :contains "X-Spam-Flag" "YES",
+  header :contains "X-Spam-Status" "Yes"
+) {
   fileinto "Junk";
   stop;
 }

@@ -1,10 +1,12 @@
 import fs from "fs";
+import { promises as fsPromises } from "fs";
 import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { db } from "../db/pool";
 import { env } from "../config/env";
 import { BackupArchiveItem, BackupSettingsEntity } from "../models/entities";
+import { taskQueue } from "../queue/task-queue";
 
 const execFileAsync = promisify(execFile);
 
@@ -184,7 +186,7 @@ export class BackupService {
     const finalArchive = path.join(dir, archiveName);
 
     try {
-      fs.mkdirSync(workdir, { recursive: true });
+      await fsPromises.mkdir(workdir, { recursive: true });
 
       // 1. Dump database if enabled
       if (settings.include_database) {
@@ -221,23 +223,23 @@ export class BackupService {
           try {
             await execFileAsync("tar", ["-C", vhostsDir, "-czf", maildataPath, "."], { timeout: 60000 });
           } catch {
-            fs.writeFileSync(maildataPath, Buffer.from("EMPTY_MAILBOX_STORE"));
+            await fsPromises.writeFile(maildataPath, Buffer.from("EMPTY_MAILBOX_STORE"));
           }
         } else {
-          fs.writeFileSync(maildataPath, Buffer.from("EMPTY_MAILBOX_STORE"));
+          await fsPromises.writeFile(maildataPath, Buffer.from("EMPTY_MAILBOX_STORE"));
         }
       }
 
       // 3. Compress workdir files into final archive
-      const filesToPack = fs.readdirSync(workdir);
+      const filesToPack = await fsPromises.readdir(workdir);
       if (filesToPack.length > 0) {
         await execFileAsync("tar", ["-C", workdir, "-czf", finalArchive, ...filesToPack], { timeout: 60000 });
       }
 
       // Clean up temporary workspace
-      fs.rmSync(workdir, { recursive: true, force: true });
+      await fsPromises.rm(workdir, { recursive: true, force: true });
 
-      const stat = fs.statSync(finalArchive);
+      const stat = await fsPromises.stat(finalArchive);
 
       // 4. Update database status
       await db.query(
@@ -266,7 +268,7 @@ export class BackupService {
       };
     } catch (err: any) {
       if (fs.existsSync(workdir)) {
-        fs.rmSync(workdir, { recursive: true, force: true });
+        await fsPromises.rm(workdir, { recursive: true, force: true }).catch(() => {});
       }
 
       await db.query(
@@ -343,6 +345,11 @@ export class BackupService {
   }
 
   startScheduler(intervalMinutes = 15): void {
+    taskQueue.registerHandler("backup.create", async () => {
+      console.log("[TaskQueue] Executing scheduled backup task...");
+      return await this.createBackup();
+    });
+
     if (this.schedulerTimer) clearInterval(this.schedulerTimer);
 
     this.schedulerTimer = setInterval(async () => {
@@ -354,9 +361,8 @@ export class BackupService {
         const intervalMs = settings.interval_seconds * 1000;
 
         if (Date.now() - lastBackupTime >= intervalMs) {
-          console.log(`[BackupScheduler] Auto-backup is due. Creating backup snapshot...`);
-          await this.createBackup();
-          console.log(`[BackupScheduler] Auto-backup completed successfully.`);
+          console.log(`[BackupScheduler] Auto-backup is due. Enqueueing backup job...`);
+          await taskQueue.enqueue("backup.create", { triggeredBy: "scheduler" }, { maxAttempts: 2 });
         }
       } catch (err) {
         console.error(`[BackupScheduler] Periodic auto-backup failed:`, err);

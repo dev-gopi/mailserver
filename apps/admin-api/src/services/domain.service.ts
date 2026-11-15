@@ -44,9 +44,9 @@ export class DomainService {
     await fs.writeFile(paths.privateKey, privateKey, { mode: 0o640 });
     await fs.writeFile(paths.publicKey, dnsValue, { mode: 0o640 });
     await Promise.all([
-      fs.chown(paths.directory, env.dkimKeyUid, env.dkimKeyUid),
-      fs.chown(paths.privateKey, env.dkimKeyUid, env.dkimKeyUid),
-      fs.chown(paths.publicKey, env.dkimKeyUid, env.dkimKeyUid)
+      fs.chown(paths.directory, env.dkimKeyUid, env.dkimKeyGid),
+      fs.chown(paths.privateKey, env.dkimKeyUid, env.dkimKeyGid),
+      fs.chown(paths.publicKey, env.dkimKeyUid, env.dkimKeyGid)
     ]);
     return dnsValue;
   }

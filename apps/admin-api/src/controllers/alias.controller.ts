@@ -6,14 +6,22 @@ const canWrite = (req: Request) => req.admin?.role !== "viewer";
 export class AliasController {
   /** All aliases (admin view — includes inactive). */
   async list(req: Request, res: Response) {
-    const aliases = await aliasService.getAllAliases();
-    return res.json(aliases);
+    try {
+      const aliases = await aliasService.getAllAliases();
+      return res.json(aliases);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Failed to list aliases" });
+    }
   }
 
   /** Active aliases only — mirrors virtual_aliases (Postfix routing view). */
   async listActive(req: Request, res: Response) {
-    const aliases = await aliasService.getActiveAliases();
-    return res.json(aliases);
+    try {
+      const aliases = await aliasService.getActiveAliases();
+      return res.json(aliases);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Failed to list active aliases" });
+    }
   }
 
   async create(req: Request, res: Response) {

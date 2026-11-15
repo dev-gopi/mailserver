@@ -67,6 +67,43 @@ export class SystemService {
         const names = await reverse(env.mailPublicIp);
         return names.join(", ");
       }, (value) => `PTR resolves to ${value}`);
+
+      const ipParts = env.mailPublicIp.trim().split(".");
+      if (ipParts.length === 4) {
+        const reversedIp = ipParts.reverse().join(".");
+        const rblProviders = [
+          { name: "Spamhaus ZEN", host: "zen.spamhaus.org" },
+          { name: "Barracuda RBL", host: "b.barracudacentral.org" },
+          { name: "SpamCop BL", host: "bl.spamcop.net" }
+        ];
+
+        for (const rbl of rblProviders) {
+          try {
+            const lookupHost = `${reversedIp}.${rbl.host}`;
+            const addresses = await resolve4(lookupHost);
+            checks.push({
+              name: `RBL: ${rbl.name}`,
+              status: "fail",
+              details: `IP ${env.mailPublicIp} listed on ${rbl.name} (${addresses.join(", ")})`
+            });
+          } catch (err: unknown) {
+            const code = err && typeof err === "object" && "code" in err ? (err as { code?: string }).code : undefined;
+            if (code === "ENOTFOUND" || code === "ENODATA") {
+              checks.push({
+                name: `RBL: ${rbl.name}`,
+                status: "pass",
+                details: `IP ${env.mailPublicIp} is clean (not listed)`
+              });
+            } else {
+              checks.push({
+                name: `RBL: ${rbl.name}`,
+                status: "warn",
+                details: `Lookup failed or timed out (${err instanceof Error ? err.message : "DNS error"})`
+              });
+            }
+          }
+        }
+      }
     } else {
       checks.push({
         name: "Reverse DNS / PTR",
@@ -269,12 +306,19 @@ export class SystemService {
           const line = buffer.slice(0, lineEnd);
           buffer = buffer.slice(lineEnd + 2);
           lastResponse = line;
-          const code = Number(line.slice(0, 3));
-          if (!Number.isInteger(code) || code >= 400) {
+          if (!line.trim()) continue;
+          const codeMatch = line.match(/^(\d{3})([ -]?)/);
+          if (!codeMatch) {
+            fail(new Error(`Postfix invalid SMTP response: ${line}`));
+            return;
+          }
+          const code = Number(codeMatch[1]);
+          const isContinuation = codeMatch[2] === "-";
+          if (code >= 400) {
             fail(new Error(`Postfix rejected diagnostic email: ${line}`));
             return;
           }
-          if (code >= 200 && code < 400 && (line[3] !== "-" || code === 220)) {
+          if (code >= 200 && code < 400 && (!isContinuation || code === 220)) {
             sendNext();
           }
         }

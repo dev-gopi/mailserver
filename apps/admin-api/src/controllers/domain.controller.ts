@@ -5,8 +5,12 @@ const canWrite = (req: Request) => req.admin?.role !== "viewer";
 
 export class DomainController {
   async list(req: Request, res: Response) {
-    const domains = await domainService.getAllDomains();
-    return res.json(domains);
+    try {
+      const domains = await domainService.getAllDomains();
+      return res.json(domains);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Failed to list domains" });
+    }
   }
 
   /**
@@ -14,8 +18,12 @@ export class DomainController {
    * Used by the UI to populate the domain selector for new mailboxes / aliases.
    */
   async listActive(req: Request, res: Response) {
-    const domains = await domainService.getActiveDomains();
-    return res.json(domains);
+    try {
+      const domains = await domainService.getActiveDomains();
+      return res.json(domains);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Failed to list active domains" });
+    }
   }
 
   async create(req: Request, res: Response) {

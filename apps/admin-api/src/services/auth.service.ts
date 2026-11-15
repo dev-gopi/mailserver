@@ -84,27 +84,47 @@ export class AuthService {
     this.cleanupExpiredSessions();
     const admin = await adminRepository.findByUsername(username);
 
-    if (
-      !admin ||
-      (admin.locked_until && new Date(admin.locked_until) > new Date()) ||
-      !(await bcrypt.compare(password, admin.password_hash))
-    ) {
-      if (admin) {
-        await adminRepository.recordFailedLogin(admin.id);
-      }
-      const isLocked = Boolean(admin && admin.locked_until && new Date(admin.locked_until) > new Date());
-      const failReason = isLocked
-        ? "Account temporarily locked due to failed login attempts"
-        : "Invalid administrator credentials";
-
-      await auditService.log(req, "admin.login.failed", "admin", admin ? admin.id : undefined, {
+    if (!admin) {
+      await auditService.log(req, "admin.login.failed", "admin", undefined, {
         attemptedUsername: username,
-        reason: failReason,
+        reason: "Invalid administrator credentials",
         error: "Authentication failed",
         clientIp: req.ip || null
       });
+      throw new Error("Invalid administrator credentials");
+    }
 
-      throw new Error(isLocked ? "Account is temporarily locked. Try again later." : "Invalid administrator credentials");
+    const isLocked = Boolean(admin.locked_until && new Date(admin.locked_until) > new Date());
+    if (isLocked) {
+      await auditService.log(req, "admin.login.failed", "admin", admin.id, {
+        attemptedUsername: username,
+        reason: "Account temporarily locked due to failed login attempts",
+        error: "Authentication failed",
+        clientIp: req.ip || null
+      });
+      throw new Error("Account is temporarily locked. Try again later.");
+    }
+
+    if (!admin.active) {
+      await auditService.log(req, "admin.login.failed", "admin", admin.id, {
+        attemptedUsername: username,
+        reason: "Account is inactive",
+        error: "Authentication failed",
+        clientIp: req.ip || null
+      });
+      throw new Error("Invalid administrator credentials");
+    }
+
+    const passwordMatches = await bcrypt.compare(password, admin.password_hash);
+    if (!passwordMatches) {
+      await adminRepository.recordFailedLogin(admin.id);
+      await auditService.log(req, "admin.login.failed", "admin", admin.id, {
+        attemptedUsername: username,
+        reason: "Invalid administrator credentials",
+        error: "Authentication failed",
+        clientIp: req.ip || null
+      });
+      throw new Error("Invalid administrator credentials");
     }
 
     // Check if Two-Factor Authentication (TOTP) is enabled for this admin

@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import fs from "fs";
+import path from "path";
 import { backupService } from "../services/backup.service";
 import { auditService } from "../services/audit";
 
@@ -72,9 +73,10 @@ export class BackupController {
     try {
       const { filename } = req.params;
       const filePath = backupService.getBackupFilePath(filename);
+      const safeFilename = path.basename(filePath);
 
       res.setHeader("Content-Type", "application/gzip");
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}"`);
 
       const stream = fs.createReadStream(filePath);
       stream.on("error", (err) => {

@@ -82,6 +82,7 @@ adminRouter.delete("/aliases/:id", aliasController.delete);
 
 // ── Audit Log ──────────────────────────────────────────────────────────────────
 adminRouter.get("/audit-log", auditController.list);
+adminRouter.get("/audit-log/export", auditController.exportCsv);
 
 // ── System Services & Diagnostics ─────────────────────────────────────────────
 adminRouter.get("/system/services", systemController.checkServices);

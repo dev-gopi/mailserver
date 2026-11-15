@@ -23,6 +23,7 @@ export const env = {
   webauthnRpName: process.env.WEBAUTHN_RP_NAME ?? "MailCore Admin Console",
   authEncryptionKey: process.env.AUTH_ENCRYPTION_KEY ?? "",
   dkimKeyUid: Number(process.env.DKIM_KEY_UID ?? 10001),
+  dkimKeyGid: Number(process.env.DKIM_KEY_GID ?? process.env.DKIM_KEY_UID ?? 10001),
   mailDomain: process.env.MAIL_DOMAIN ?? "",
   mailHostname: process.env.MAIL_HOSTNAME ?? "",
   mailPublicIp: process.env.MAIL_PUBLIC_IP ?? "",

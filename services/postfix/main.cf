@@ -84,7 +84,7 @@ mydestination = localhost, localhost.localdomain
 relayhost = 
 # Only the private filtering network may reinject scanned mail on port 10025.
 # Public SMTP, submission, and SMTPS never trust the Docker service network.
-mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128 172.16.0.0/12 [::1]/128 172.30.0.0/28
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128 172.30.0.0/28
 mailbox_size_limit = 0
 recipient_delimiter = +
 inet_interfaces = all
@@ -129,5 +129,20 @@ smtpd_milters = inet:opendkim:8891
 non_smtpd_milters = inet:opendkim:8891
 milter_default_action = accept
 milter_protocol = 6
+
+# Rate limiting and anvil connection concurrency control (anti-bruteforce / anti-flood)
+smtpd_client_connection_count_limit = 20
+smtpd_client_connection_rate_limit = 60
+smtpd_client_message_rate_limit = 120
+smtpd_client_recipient_rate_limit = 240
+smtpd_client_new_tls_session_rate_limit = 60
+
+# Maximum message size (50MB) and header limits
+message_size_limit = 52428800
+header_size_limit = 102400
+
+# Strict SMTP smuggling and syntax protections
+smtpd_forbid_bare_newline = normalize
+smtpd_data_restrictions = reject_unauth_pipelining
 
 virtual_transport = lmtp:unix:private/dovecot-lmtp

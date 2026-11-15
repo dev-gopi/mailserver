@@ -5,7 +5,7 @@ import { AdminEntity, PasskeyCredential } from "../models/entities";
 export class AdminRepository {
   async findByUsername(username: string): Promise<AdminEntity | null> {
     const res = await db.query<AdminEntity>(
-      "SELECT * FROM admins WHERE username = $1 AND active = TRUE",
+      "SELECT * FROM admins WHERE username = $1",
       [username]
     );
     return res.rows[0] || null;

@@ -14,10 +14,26 @@ export function validate(schemas: ValidationTargets) {
         req.body = schemas.body.parse(req.body);
       }
       if (schemas.query) {
-        schemas.query.parse(req.query);
+        const parsedQuery = schemas.query.parse(req.query);
+        Object.defineProperty(req, "query", {
+          value: parsedQuery,
+          writable: true,
+          enumerable: true,
+          configurable: true
+        });
       }
       if (schemas.params) {
-        schemas.params.parse(req.params);
+        const parsedParams = schemas.params.parse(req.params);
+        try {
+          req.params = parsedParams as any;
+        } catch {
+          Object.defineProperty(req, "params", {
+            value: parsedParams,
+            writable: true,
+            enumerable: true,
+            configurable: true
+          });
+        }
       }
       return next();
     } catch (err) {
@@ -32,7 +48,7 @@ export function validate(schemas: ValidationTargets) {
           details: issues
         });
       }
-      return res.status(400).json({ error: "Malformed request payload" });
+      return next(err);
     }
   };
 }

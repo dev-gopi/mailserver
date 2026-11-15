@@ -167,6 +167,7 @@ scan      unix  -       -       n       -       10      smtp
   -o content_filter=spamassassin
   -o smtpd_tls_security_level=none
   -o smtpd_sasl_auth_enable=no
+  -o mynetworks=127.0.0.0/8,[::ffff:127.0.0.0]/104,[::1]/128,172.16.0.0/12,172.30.0.0/28
   -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks
   -o smtpd_helo_restrictions=
   -o smtpd_client_restrictions=permit_mynetworks,reject

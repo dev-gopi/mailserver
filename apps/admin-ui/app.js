@@ -18,6 +18,13 @@ const state = {
   activeDnsDomain: null,
   failureAlerts: [],
   mailboxStatusFilter: "",
+  domainStatusFilter: "",
+  aliasStatusFilter: "",
+  sort: {
+    mailboxes: { column: "created", order: "desc" },
+    domains: { column: "name", order: "asc" },
+    aliases: { column: "source", order: "asc" }
+  },
   backups: [],
   backupMetrics: {},
   backupSettings: {},
@@ -38,7 +45,7 @@ const getHeaders = (extra = {}) => ({
 
 // Failure Alert System
 function recordFailureAlert(alert) {
-  if (!alert || !alert.title) return;
+  if (!alert || !alert.title || alert.category === "API") return;
   const now = new Date();
   const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const id = "alert-" + now.getTime() + "-" + Math.random().toString(36).slice(2, 6);
@@ -106,9 +113,6 @@ function renderFailureAlerts() {
     if (list) list.innerHTML = "";
   } else {
     if (pill) pill.classList.remove("hidden");
-    if (container && !container.classList.contains("user-hidden")) {
-      container.classList.remove("hidden");
-    }
     if (list) {
       list.innerHTML = state.failureAlerts.map((a) => `
         <div class="failed-alert-card" id="${a.id}">
@@ -212,26 +216,10 @@ async function request(path, options = {}) {
         errMsg = `Request failed with status ${res.status}`;
       }
 
-      if (!isAuthRoute && !path.includes("/auth/me")) {
-        recordFailureAlert({
-          category: "API",
-          title: `API Request Failed (${options.method || "GET"})`,
-          target: path,
-          reason: errMsg
-        });
-      }
       throw new Error(errMsg);
     }
     return data;
   } catch (err) {
-    if (err.name === "TypeError" && err.message.includes("fetch")) {
-      recordFailureAlert({
-        category: "Network",
-        title: "Backend Connection Unreachable",
-        target: path,
-        reason: "Failed to fetch: network error or backend container is offline."
-      });
-    }
     throw err;
   }
 }
@@ -643,6 +631,40 @@ function renderOverview() {
   }).join("");
 }
 
+// Generic Table Sorter
+function sortTable(table, column) {
+  if (!state.sort) {
+    state.sort = {
+      mailboxes: { column: "created", order: "desc" },
+      domains: { column: "name", order: "asc" },
+      aliases: { column: "source", order: "asc" }
+    };
+  }
+  if (!state.sort[table]) {
+    state.sort[table] = { column: column, order: "asc" };
+  } else if (state.sort[table].column === column) {
+    state.sort[table].order = state.sort[table].order === "asc" ? "desc" : "asc";
+  } else {
+    state.sort[table].column = column;
+    state.sort[table].order = "asc";
+  }
+
+  if (table === "mailboxes") renderMailboxes();
+  else if (table === "domains") renderDomains();
+  else if (table === "aliases") renderAliases();
+}
+
+function updateSortIndicators(table, sort) {
+  const prefix = table === "mailboxes" ? "sort-mb-" : table === "domains" ? "sort-dom-" : "sort-alias-";
+  document.querySelectorAll(`[id^="${prefix}"]`).forEach((el) => {
+    el.textContent = "";
+  });
+  const activeEl = $(prefix + sort.column);
+  if (activeEl) {
+    activeEl.textContent = sort.order === "asc" ? "▲" : "▼";
+  }
+}
+
 // 2. Mailbox Management (User Mail Box)
 function setMailboxFilterStatus(status) {
   state.mailboxStatusFilter = status;
@@ -719,6 +741,32 @@ function renderMailboxes() {
   }
 
   empty.classList.add("hidden");
+
+  // Apply sorting
+  const sort = state.sort?.mailboxes || { column: "created", order: "desc" };
+  filtered.sort((a, b) => {
+    let valA, valB;
+    if (sort.column === "address") {
+      valA = (a.address || "").toLowerCase();
+      valB = (b.address || "").toLowerCase();
+    } else if (sort.column === "domain") {
+      valA = (a.domain_name || a.address.split("@")[1] || "").toLowerCase();
+      valB = (b.domain_name || b.address.split("@")[1] || "").toLowerCase();
+    } else if (sort.column === "storage") {
+      valA = Number(a.storage_used_bytes || 0);
+      valB = Number(b.storage_used_bytes || 0);
+    } else if (sort.column === "status") {
+      valA = a.active ? 1 : 0;
+      valB = b.active ? 1 : 0;
+    } else { // created
+      valA = new Date(a.created_at || 0).getTime();
+      valB = new Date(b.created_at || 0).getTime();
+    }
+    if (valA < valB) return sort.order === "asc" ? -1 : 1;
+    if (valA > valB) return sort.order === "asc" ? 1 : -1;
+    return 0;
+  });
+  updateSortIndicators("mailboxes", sort);
   tbody.innerHTML = filtered.map((m) => {
     const isSuspended = !m.active;
     const usedBytes = Number(m.storage_used_bytes || 0);
@@ -851,6 +899,15 @@ async function populateDomainSelectors() {
     const currentVal = mbFilter.value;
     const allDomainNames = state.domains.map((d) => d.name);
     mbFilter.innerHTML = '<option value="">All Domains</option>' + allDomainNames.map(
+      (name) => '<option value="' + name + '"' + (name === currentVal ? ' selected' : '') + '>' + name + '</option>'
+    ).join('');
+  }
+
+  const aliasFilter = $('alias-domain-filter');
+  if (aliasFilter) {
+    const currentVal = aliasFilter.value;
+    const allDomainNames = state.domains.map((d) => d.name);
+    aliasFilter.innerHTML = '<option value="">All Domains</option>' + allDomainNames.map(
       (name) => '<option value="' + name + '"' + (name === currentVal ? ' selected' : '') + '>' + name + '</option>'
     ).join('');
   }
@@ -1174,18 +1231,75 @@ async function handleTestUserAuthSubmit(event) {
 }
 
 // 3. Domain Management & DNS Setup
+function setDomainFilterStatus(status) {
+  state.domainStatusFilter = status;
+  $("pill-dom-all")?.classList.toggle("active", status === "");
+  $("pill-dom-verified")?.classList.toggle("active", status === "verified");
+  $("pill-dom-pending")?.classList.toggle("active", status === "pending");
+  $("pill-dom-active")?.classList.toggle("active", status === "active");
+  filterDomains();
+}
+
+function filterDomains() {
+  renderDomains();
+}
+
 function renderDomains() {
   const tbody = $("domains-tbody");
   const empty = $("domains-empty");
 
-  if (state.domains.length === 0) {
+  const query = ($("domain-search")?.value || "").toLowerCase().trim();
+  const statusFilter = state.domainStatusFilter || "";
+
+  // Update status filter pill counts
+  const verifiedCount = state.domains.filter((d) => Boolean(d.verified_at)).length;
+  const pendingCount = state.domains.filter((d) => !d.verified_at).length;
+  const activeCount = state.domains.filter((d) => d.active).length;
+  if ($("count-dom-all")) $("count-dom-all").textContent = state.domains.length;
+  if ($("count-dom-verified")) $("count-dom-verified").textContent = verifiedCount;
+  if ($("count-dom-pending")) $("count-dom-pending").textContent = pendingCount;
+  if ($("count-dom-active")) $("count-dom-active").textContent = activeCount;
+
+  const filtered = state.domains.filter((d) => {
+    if (query && !d.name.toLowerCase().includes(query)) return false;
+    if (statusFilter === "verified" && !d.verified_at) return false;
+    if (statusFilter === "pending" && d.verified_at) return false;
+    if (statusFilter === "active" && !d.active) return false;
+    return true;
+  });
+
+  if (filtered.length === 0) {
     tbody.innerHTML = "";
     empty.classList.remove("hidden");
     return;
   }
 
   empty.classList.add("hidden");
-  tbody.innerHTML = state.domains.map((d) => {
+
+  // Apply sorting
+  const sort = state.sort?.domains || { column: "name", order: "asc" };
+  filtered.sort((a, b) => {
+    let valA, valB;
+    if (sort.column === "name") {
+      valA = (a.name || "").toLowerCase();
+      valB = (b.name || "").toLowerCase();
+    } else if (sort.column === "verification") {
+      valA = Boolean(a.verified_at) ? 1 : 0;
+      valB = Boolean(b.verified_at) ? 1 : 0;
+    } else if (sort.column === "status") {
+      valA = a.active ? 1 : 0;
+      valB = b.active ? 1 : 0;
+    } else { // created
+      valA = new Date(a.created_at || 0).getTime();
+      valB = new Date(b.created_at || 0).getTime();
+    }
+    if (valA < valB) return sort.order === "asc" ? -1 : 1;
+    if (valA > valB) return sort.order === "asc" ? 1 : -1;
+    return 0;
+  });
+  updateSortIndicators("domains", sort);
+
+  tbody.innerHTML = filtered.map((d) => {
     const isVerified = Boolean(d.verified_at);
     return `
       <tr>
@@ -1341,11 +1455,32 @@ async function deleteDomain(id, name) {
 }
 
 // 4. Aliases Management
+function setAliasFilterStatus(status) {
+  state.aliasStatusFilter = status;
+  $("pill-alias-all")?.classList.toggle("active", status === "");
+  $("pill-alias-active")?.classList.toggle("active", status === "active");
+  $("pill-alias-disabled")?.classList.toggle("active", status === "disabled");
+  filterAliases();
+}
+
+function filterAliases() {
+  renderAliases();
+}
+
 function renderAliases() {
   const tbody = $("aliases-tbody");
   const empty = $("aliases-empty");
 
   const query = ($("alias-search")?.value || "").toLowerCase().trim();
+  const statusFilter = state.aliasStatusFilter || "";
+  const domainFilter = $("alias-domain-filter")?.value || "";
+
+  // Update status filter pill counts
+  const activeCount = state.aliases.filter((a) => a.active).length;
+  const disabledCount = state.aliases.filter((a) => !a.active).length;
+  if ($("count-alias-all")) $("count-alias-all").textContent = state.aliases.length;
+  if ($("count-alias-active")) $("count-alias-active").textContent = activeCount;
+  if ($("count-alias-disabled")) $("count-alias-disabled").textContent = disabledCount;
 
   const filtered = state.aliases.filter((a) => {
     if (query) {
@@ -1353,6 +1488,9 @@ function renderAliases() {
       const matchDst = a.destination.toLowerCase().includes(query);
       if (!matchSrc && !matchDst) return false;
     }
+    if (domainFilter && (a.domain_name || a.source.split("@")[1]) !== domainFilter) return false;
+    if (statusFilter === "active" && !a.active) return false;
+    if (statusFilter === "disabled" && a.active) return false;
     return true;
   });
 
@@ -1363,6 +1501,33 @@ function renderAliases() {
   }
 
   empty.classList.add("hidden");
+
+  // Apply sorting
+  const sort = state.sort?.aliases || { column: "source", order: "asc" };
+  filtered.sort((a, b) => {
+    let valA, valB;
+    if (sort.column === "source") {
+      valA = (a.source || "").toLowerCase();
+      valB = (b.source || "").toLowerCase();
+    } else if (sort.column === "destination") {
+      valA = (a.destination || "").toLowerCase();
+      valB = (b.destination || "").toLowerCase();
+    } else if (sort.column === "domain") {
+      valA = (a.domain_name || a.source.split("@")[1] || "").toLowerCase();
+      valB = (b.domain_name || b.source.split("@")[1] || "").toLowerCase();
+    } else if (sort.column === "status") {
+      valA = a.active ? 1 : 0;
+      valB = b.active ? 1 : 0;
+    } else { // created
+      valA = new Date(a.created_at || 0).getTime();
+      valB = new Date(b.created_at || 0).getTime();
+    }
+    if (valA < valB) return sort.order === "asc" ? -1 : 1;
+    if (valA > valB) return sort.order === "asc" ? 1 : -1;
+    return 0;
+  });
+  updateSortIndicators("aliases", sort);
+
   tbody.innerHTML = filtered.map((a) => `
     <tr>
       <td>
@@ -1393,10 +1558,6 @@ function renderAliases() {
       </td>
     </tr>
   `).join("");
-}
-
-function filterAliases() {
-  renderAliases();
 }
 
 async function handleCreateAliasSubmit(event) {
@@ -1484,6 +1645,30 @@ async function loadAuditLogs() {
     }).join("");
   } catch (err) {
     showToast("Audit Log Error", err.message, "error");
+  }
+}
+
+async function exportAuditLogsCsv() {
+  try {
+    const res = await fetch("/api/audit-log/export", {
+      headers: getHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Export failed");
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+    showToast("Export Downloaded", "Audit log CSV exported successfully.", "success");
+  } catch (err) {
+    showToast("Export Error", err.message, "error");
   }
 }
 
@@ -2875,8 +3060,68 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
   });
 });
 
+// Theme Switcher (Dark / Light Mode)
+function applyTheme(theme) {
+  if (theme === "dark") {
+    document.documentElement.setAttribute("data-theme", "dark");
+    if ($("theme-icon-sun")) $("theme-icon-sun").classList.remove("hidden");
+    if ($("theme-icon-moon")) $("theme-icon-moon").classList.add("hidden");
+    if ($("theme-text")) $("theme-text").textContent = "Light";
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+    if ($("theme-icon-sun")) $("theme-icon-sun").classList.add("hidden");
+    if ($("theme-icon-moon")) $("theme-icon-moon").classList.remove("hidden");
+    if ($("theme-text")) $("theme-text").textContent = "Dark";
+  }
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+  const next = current === "dark" ? "light" : "dark";
+  localStorage.setItem("mailAdminTheme", next);
+  applyTheme(next);
+}
+
+// Quick Search & Keyboard Shortcuts
+function focusSearch() {
+  const activeTab = document.querySelector(".tab-pane.active")?.id;
+  let input = null;
+  if (activeTab === "tab-users") input = $("mailbox-search");
+  else if (activeTab === "tab-domains") input = $("domain-search");
+  else if (activeTab === "tab-aliases") input = $("alias-search");
+  else {
+    switchTab("users");
+    input = $("mailbox-search");
+  }
+  if (input) {
+    input.focus();
+    input.select();
+  }
+}
+
+document.addEventListener("keydown", (e) => {
+  // Escape closes all open modals and banner
+  if (e.key === "Escape") {
+    document.querySelectorAll(".modal-backdrop:not(.hidden)").forEach((m) => m.classList.add("hidden"));
+    const failedAlerts = $("failed-alerts-banner-container");
+    if (failedAlerts && !failedAlerts.classList.contains("hidden")) {
+      failedAlerts.classList.add("hidden");
+    }
+  }
+
+  // Ctrl+K / Cmd+K focuses search box
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    focusSearch();
+  }
+});
+
 // App Boot
 (async function init() {
+  const savedTheme = localStorage.getItem("mailAdminTheme") ||
+    (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  applyTheme(savedTheme);
+
   if (state.token) {
     showView("app");
     await refreshAllData();

@@ -32,6 +32,29 @@ export class AuditService {
   async getRecentLogs(limit = 100) {
     return auditRepository.findRecent(limit);
   }
+
+  async exportLogsAsCsv(limit = 1000): Promise<string> {
+    const logs = await auditRepository.findRecent(limit);
+    const headers = ["ID", "Timestamp", "Admin ID", "Action", "Entity Type", "Entity ID", "IP Address", "Details"];
+    const escapeCsv = (val: any) => {
+      if (val === null || val === undefined) return '""';
+      const str = typeof val === "object" ? JSON.stringify(val) : String(val);
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+
+    const rows = logs.map((log) => [
+      log.id,
+      new Date(log.occurred_at).toISOString(),
+      log.admin_id ?? "",
+      escapeCsv(log.action),
+      escapeCsv(log.entity_type),
+      escapeCsv(log.entity_id ?? ""),
+      escapeCsv(log.ip_address ?? ""),
+      escapeCsv(log.details)
+    ].join(","));
+
+    return [headers.join(","), ...rows].join("\r\n");
+  }
 }
 
 export const auditService = new AuditService();
