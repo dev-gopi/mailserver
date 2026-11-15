@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+if [ -n "${TZ:-}" ] && [ -e "/usr/share/zoneinfo/${TZ}" ]; then
+  ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime
+  printf '%s\n' "$TZ" > /etc/timezone
+fi
+
 key_dir=/var/lib/opendkim/keys
 key_table=/var/lib/opendkim/KeyTable
 signing_table=/var/lib/opendkim/SigningTable
@@ -38,16 +43,12 @@ write_tables() {
 ::1
 localhost
 postfix
-172.16.0.0/12
-10.0.0.0/8
-192.168.0.0/16
 EOF
 
   while IFS= read -r key; do
     domain=$(basename "$(dirname "$key")")
     printf 'mail._domainkey.%s %s:mail:%s\n' "$domain" "$domain" "$key" >> "$key_tmp"
     printf '*@%s mail._domainkey.%s\n' "$domain" "$domain" >> "$signing_tmp"
-    printf '%s\n*.%s\n' "$domain" "$domain" >> "$trusted_tmp"
   done < <(find "$key_dir" -mindepth 2 -maxdepth 2 -type f -name mail.private -print | sort)
 
   chown opendkim:opendkim "$key_tmp" "$signing_tmp" "$trusted_tmp"

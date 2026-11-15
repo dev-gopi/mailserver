@@ -1,3 +1,9 @@
+x-service-logging: &service-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   spamassassin:
     build: ./services/spamassassin
@@ -10,6 +16,9 @@ services:
       - mailnet
       - filternet
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *service-logging
     healthcheck:
       test: ["CMD-SHELL", "pgrep -x spamd >/dev/null"]
       interval: 15s
@@ -52,12 +61,16 @@ services:
     # image: clamav/clamav:stable
     build: ./services/clamav
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *service-logging
     healthcheck:
       test: ["CMD-SHELL", "pidof clamd >/dev/null && pidof clamsmtpd >/dev/null"]
       interval: 15s
       timeout: 10s
       retries: 8
     environment:
+      - TZ=${TZ:?set TZ in .env}
       - CLAMD_CONF_MaxFileSize=25M
       - CLAMD_CONF_MaxScanSize=100M
     volumes:
@@ -69,7 +82,11 @@ services:
   opendkim:
     build: ./services/opendkim
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *service-logging
     environment:
+      - TZ=${TZ:?set TZ in .env}
       - MAIL_DB_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       - MAIL_DB_HOST=${POSTGRES_HOST:?set POSTGRES_HOST in .env}
       - MAIL_DB_NAME=${POSTGRES_DB:?set POSTGRES_DB in .env}
@@ -101,6 +118,7 @@ services:
       - mailnet
       - filternet
     restart: unless-stopped
+    logging: *service-logging
     environment:
       - TZ=${TZ:?set TZ in .env}
       - DEBIAN_FRONTEND=noninteractive
@@ -140,7 +158,11 @@ services:
     networks:
       - mailnet
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *service-logging
     environment:
+      - TZ=${TZ:?set TZ in .env}
       - DEBIAN_FRONTEND=noninteractive
       - MAIL_DB_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       - MAIL_DB_HOST=${POSTGRES_HOST:?set POSTGRES_HOST in .env}
@@ -164,6 +186,7 @@ services:
     networks:
       - mailnet
     restart: unless-stopped
+    logging: *service-logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -173,6 +196,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *service-logging
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redisdata:/data
@@ -196,6 +220,7 @@ services:
     networks:
       - mailnet
     restart: unless-stopped
+    logging: *service-logging
     depends_on:
       app:
         condition: service_healthy
@@ -247,6 +272,7 @@ services:
     networks:
       - mailnet
     restart: unless-stopped
+    logging: *service-logging
     depends_on:
       db:
         condition: service_healthy
@@ -268,6 +294,7 @@ services:
     networks:
       - mailnet
     restart: unless-stopped
+    logging: *service-logging
     depends_on:
       app:
         condition: service_healthy

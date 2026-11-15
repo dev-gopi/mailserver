@@ -42,6 +42,7 @@ smtp_tls_security_level=may
 smtpd_tls_loglevel=1
 smtpd_tls_session_cache_database = btree:${data_directory}/smtpd_scache
 smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+smtp_tls_loglevel = 1
 
 # Enable SASL authentication via Dovecot
 # Enable Dovecot for SMTP AUTH

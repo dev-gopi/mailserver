@@ -1,5 +1,4 @@
 127.0.0.1
 ::1
-mail.local
+localhost
 postfix
-172.16.0.0/12

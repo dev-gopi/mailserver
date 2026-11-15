@@ -1,6 +1,11 @@
 #!/bin/sh
 set -e
 
+if [ -n "${TZ:-}" ] && [ -e "/usr/share/zoneinfo/${TZ}" ]; then
+  ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime
+  printf '%s\n' "$TZ" > /etc/timezone
+fi
+
 : "${MAIL_DB_HOST:?MAIL_DB_HOST must be set}"
 : "${MAIL_DB_NAME:?MAIL_DB_NAME must be set}"
 : "${MAIL_DB_USER:?MAIL_DB_USER must be set}"

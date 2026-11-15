@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+if [ -n "${TZ:-}" ] && [ -e "/usr/share/zoneinfo/${TZ}" ]; then
+  ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime
+  printf '%s\n' "$TZ" > /etc/timezone
+fi
+
 # Signature downloads must never run at image-build time: the ClamAV CDN can
 # throttle builds. The persistent /var/lib/clamav volume keeps databases across restarts.
 freshclam || echo "[WARN] ClamAV signatures were not updated; retaining existing database."

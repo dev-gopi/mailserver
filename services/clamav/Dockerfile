@@ -2,11 +2,12 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt update && apt install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     clamav \
     clamav-daemon \
     clamsmtp \
     clamav-milter \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /var/run/clamav /var/lib/clamav /var/log/clamav && \

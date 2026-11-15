@@ -1,6 +1,12 @@
 #!/bin/bash
 set -e
 
+# Keep Postfix and its container logger on the configured operational timezone.
+if [ -n "${TZ:-}" ] && [ -e "/usr/share/zoneinfo/${TZ}" ]; then
+  ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime
+  printf '%s\n' "$TZ" > /etc/timezone
+fi
+
 : "${MAIL_DB_PASSWORD:?MAIL_DB_PASSWORD must be set}"
 : "${MAIL_DOMAIN:?MAIL_DOMAIN must be set}"
 : "${MAIL_HOSTNAME:?MAIL_HOSTNAME must be set}"

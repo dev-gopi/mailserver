@@ -10,6 +10,7 @@ RUN apt-get update \
     libsasl2-modules \
     libsasl2-modules-db \
     ca-certificates \
+    tzdata \
     spamc \
     openssl \
     net-tools \
@@ -23,7 +24,8 @@ COPY rsyslog-container.conf /etc/rsyslog-container.conf
 
 RUN groupadd -g 5000 vmail && \
     useradd -u 5000 -g vmail -d /var/mail -s /usr/sbin/nologin vmail && \
-    usermod -aG vmail postfix
+    usermod -aG vmail postfix && \
+    useradd --system --no-create-home --shell /usr/sbin/nologin spamfilter
 
 RUN mv /etc/postfix/main.cf /etc/postfix/main.cf.bk
 RUN mv /etc/postfix/master.cf /etc/postfix/master.cf.bk

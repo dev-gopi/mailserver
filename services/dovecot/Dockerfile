@@ -12,6 +12,7 @@ RUN apt update && \
     dovecot-sieve \
     dovecot-managesieved \
     ca-certificates \
+    tzdata \
     nano \
     file \
     openssl && \

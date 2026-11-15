@@ -144,7 +144,7 @@ mailman   unix  -       n       n       -       -       pipe
 #  flags=Rq user=vmail argv=/usr/bin/spamc -d spamassassin -p 783 -f -e /usr/sbin/sendmail -oi -f ${sender} ${recipient}
 
 spamassassin unix  -     n       n       -       -       pipe
-  flags=Rq user=vmail argv=/usr/bin/spamc -d spamassassin -p 783 -f -e /usr/sbin/sendmail -oi -f ${sender} ${recipient}
+  flags=Rq user=spamfilter argv=/usr/bin/spamc -d spamassassin -p 783 -f -e /usr/sbin/sendmail -oi -f ${sender} ${recipient}
 
 dovecot   unix   -       n       n       -       -       pipe
   flags=DRhu user=vmail:vmail argv=/usr/lib/dovecot/deliver -d ${recipient}
