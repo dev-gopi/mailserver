@@ -273,15 +273,14 @@ function switchTab(tabId) {
     pane.classList.remove("active");
   });
 
-  const targetPaneId = tabId === "users" || tabId === "mailboxes" ? "tab-users" : `tab-${tabId}`;
+  const targetPaneId = `tab-${tabId}`;
   const activePane = $(targetPaneId);
   if (activePane) activePane.classList.add("active");
 
   const titles = {
     overview: "Overview",
     dashboard: "Visual Dashboard & Analytics",
-    users: "Users & Mailbox Accounts",
-    mailboxes: "Users & Mailbox Accounts",
+    mailboxes: "Mailboxes",
     domains: "Hosted Domains",
     aliases: "Email Aliases & Forwarding",
     services: "Services, Mail Queue & Diagnostics",
@@ -475,9 +474,9 @@ async function refreshAllData() {
       request("/api/dashboard"),
       request("/api/company"),
       request("/api/domains"),
-      request("/api/users"),      // Uses virtual_users view (Dovecot-compatible)
+      request("/api/mailboxes"),  // Uses virtual_users view (Dovecot-compatible)
       request("/api/aliases"),    // Admin view — includes inactive aliases
-      request("/api/users/client-config"),
+      request("/api/mailboxes/client-config"),
       request("/api/backups").catch(() => null)
     ]);
 
@@ -595,7 +594,7 @@ function renderOverview() {
 
   // Badges in Nav
   $("badge-nav-domains").textContent = state.domains.length;
-  if ($("badge-nav-users")) $("badge-nav-users").textContent = state.mailboxes.length;
+  if ($("badge-nav-mailboxes")) $("badge-nav-mailboxes").textContent = state.mailboxes.length;
   $("badge-nav-aliases").textContent = state.aliases.length;
 
   // Recent activity stream
@@ -665,7 +664,7 @@ function updateSortIndicators(table, sort) {
   }
 }
 
-// 2. Mailbox Management (User Mail Box)
+// 2. Mailbox Management
 function setMailboxFilterStatus(status) {
   state.mailboxStatusFilter = status;
   if ($("mailbox-status-filter")) {
@@ -679,7 +678,7 @@ function setMailboxFilterStatus(status) {
 
 function exportMailboxesCsv() {
   if (!state.mailboxes || state.mailboxes.length === 0) {
-    showToast("Export Failed", "No user mailboxes to export.", "warning");
+    showToast("Export Failed", "No mailboxes to export.", "warning");
     return;
   }
 
@@ -720,7 +719,7 @@ function renderMailboxes() {
   if ($("count-mb-all")) $("count-mb-all").textContent = state.mailboxes.length;
   if ($("count-mb-active")) $("count-mb-active").textContent = activeCount;
   if ($("count-mb-suspended")) $("count-mb-suspended").textContent = suspendedCount;
-  if ($("users-header-counts")) $("users-header-counts").textContent = `${activeCount} Active • ${suspendedCount} Suspended`;
+  if ($("mailboxes-header-counts")) $("mailboxes-header-counts").textContent = `${activeCount} Active • ${suspendedCount} Suspended`;
 
   const filtered = state.mailboxes.filter((m) => {
     if (query) {
@@ -820,14 +819,14 @@ function renderMailboxes() {
             <button class="btn-action-icon" title="Mail Client Setup Guide" onclick="openClientGuide('${m.address}', '${m.domain_name}')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
             </button>
-            <button class="btn-action-icon" title="Test User IMAP / SMTP Password" onclick="openTestUserAuth('${m.id}', '${m.address}')">
+            <button class="btn-action-icon" title="Test Mailbox IMAP / SMTP Password" onclick="openTestUserAuth('${m.id}', '${m.address}')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             </button>
-            <button class="btn-action-icon" title="Edit User / Password / Quota" onclick="openEditMailbox('${m.id}')">
+            <button class="btn-action-icon" title="Edit Mailbox / Password / Quota" onclick="openEditMailbox('${m.id}')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
             </button>
             <button class="btn-action-icon ${m.active ? "danger" : "verify"}"
-              title="${m.active ? "Suspend User (Disables access, preserves emails)" : "Activate / Reactivate User"}"
+              title="${m.active ? "Suspend Mailbox (Disables access, preserves emails)" : "Activate / Reactivate Mailbox"}"
               onclick="toggleMailboxActive('${m.id}', ${!m.active})">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 ${m.active
@@ -836,7 +835,7 @@ function renderMailboxes() {
                 }
               </svg>
             </button>
-            <button class="btn-action-icon danger" title="Delete User Permanently" onclick="deleteMailbox('${m.id}', '${m.address}')">
+            <button class="btn-action-icon danger" title="Delete Mailbox Permanently" onclick="deleteMailbox('${m.id}', '${m.address}')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
             </button>
           </div>
@@ -992,7 +991,7 @@ async function handleCreateMailbox(event) {
   }
 }
 
-// Create User Handler
+// Create Mailbox Handler
 async function handleCreateUser(event) {
   event.preventDefault();
   const prefix = $("user-prefix").value.trim().toLowerCase();
@@ -1009,10 +1008,10 @@ async function handleCreateUser(event) {
 
   const fullAddress = `${prefix}@${domain}`;
   btn.disabled = true;
-  btn.textContent = "Creating User...";
+  btn.textContent = "Creating Mailbox...";
 
   try {
-    await request("/api/users", {
+    await request("/api/mailboxes", {
       method: "POST",
       body: JSON.stringify({
         address: fullAddress,
@@ -1025,13 +1024,13 @@ async function handleCreateUser(event) {
     closeModal("modal-create-user");
     event.target.reset();
     setUserQuotaPreset(5368709120, document.querySelector('#user-quota-presets .btn-preset[data-quota="5368709120"]'));
-    showToast("User Created", `User ${fullAddress} is ready for email traffic.`, "success");
+    showToast("Mailbox Created", `Mailbox ${fullAddress} is ready for email traffic.`, "success");
     await refreshAllData();
   } catch (err) {
-    showToast("User Creation Failed", err.message, "error");
+    showToast("Mailbox Creation Failed", err.message, "error");
   } finally {
     btn.disabled = false;
-    btn.textContent = "Create User";
+    btn.textContent = "Create Mailbox";
   }
 }
 
@@ -1106,7 +1105,7 @@ async function toggleMailboxActive(id, newActive) {
     recordFailureAlert({
       category: "Mailbox",
       title: `Failed to ${newActive ? "Activate" : "Suspend"} Mailbox`,
-      target: `User ID #${id}`,
+      target: `Mailbox ID #${id}`,
       reason: err.message
     });
     showToast("Status Change Failed", err.message, "error");
@@ -1115,7 +1114,7 @@ async function toggleMailboxActive(id, newActive) {
 
 // Delete Mailbox
 async function deleteMailbox(id, address) {
-  if (!confirm(`PERMANENT DELETION WARNING:\n\nAre you sure you want to PERMANENTLY DELETE user "${address}"?\n\nThis permanently erases the user account, maildir directory, and all stored emails from disk.\n\nTip: If you only want to temporarily disable access without deleting emails, click Cancel and click the Suspend button instead.`)) {
+  if (!confirm(`PERMANENT DELETION WARNING:\n\nAre you sure you want to PERMANENTLY DELETE mailbox "${address}"?\n\nThis permanently erases the mailbox, maildir directory, and all stored emails from disk.\n\nTip: If you only want to temporarily disable access without deleting emails, click Cancel and click the Suspend button instead.`)) {
     return;
   }
 
@@ -1147,7 +1146,7 @@ async function openClientGuide(address = "", domain = "") {
   }
 
   const query = requestedMailbox && userAddr ? `?email=${encodeURIComponent(userAddr)}` : "";
-  const config = requestedMailbox ? await request(`/api/users/client-config${query}`) : state.clientConfig;
+  const config = requestedMailbox ? await request(`/api/mailboxes/client-config${query}`) : state.clientConfig;
   if (!config) {
     showToast("Configuration unavailable", "Mail client settings could not be loaded.", "error");
     return;
@@ -1159,14 +1158,16 @@ async function openClientGuide(address = "", domain = "") {
   $("guide-smtp-host").textContent = config.outgoing.hostname;
   $("guide-smtp-user").textContent = userAddr;
   $("guide-imap-port").textContent = config.incoming.port;
+  $("guide-imap-alt-port").textContent = config.incoming.alternativePort;
   $("guide-pop3-alt-port").textContent = config.pop3.alternativePort;
   $("guide-pop3-port").textContent = config.pop3.port;
   $("guide-smtp-port").textContent = config.outgoing.port;
   $("guide-smtp-alt-port").textContent = config.outgoing.alternativePort;
+  $("guide-smtp-plain-port").textContent = config.outgoing.plaintextPort;
   openModal("modal-client-guide");
 }
 
-// Test User IMAP & SMTP Login Credentials
+// Test Mailbox IMAP & SMTP Login Credentials
 function openTestUserAuth(id, address) {
   $("test-auth-user-id").value = id;
   $("test-auth-user-address").textContent = address;
@@ -1190,7 +1191,7 @@ async function handleTestUserAuthSubmit(event) {
   btn.textContent = "Verifying...";
 
   try {
-    const res = await request(`/api/users/${id}/test-auth`, {
+    const res = await request(`/api/mailboxes/${id}/test-auth`, {
       method: "POST",
       body: JSON.stringify({ password })
     });
@@ -1207,8 +1208,8 @@ async function handleTestUserAuthSubmit(event) {
       resultBox.innerHTML = `<strong>Authentication Failed:</strong> ${escapeHtml(res.message)}`;
       recordFailureAlert({
         category: "Mailbox Auth",
-        title: "User Password Verification Failed",
-        target: $("test-auth-user-address")?.textContent || `User #${id}`,
+        title: "Mailbox Password Verification Failed",
+        target: $("test-auth-user-address")?.textContent || `Mailbox #${id}`,
         reason: res.message
       });
       showToast("Login Failed", res.message, "warning");
@@ -1219,8 +1220,8 @@ async function handleTestUserAuthSubmit(event) {
     resultBox.innerHTML = `<strong>Error:</strong> ${escapeHtml(err.message)}`;
     recordFailureAlert({
       category: "Mailbox Auth",
-      title: "User Auth Probe Failed",
-      target: $("test-auth-user-address")?.textContent || `User #${id}`,
+      title: "Mailbox Authentication Probe Failed",
+      target: $("test-auth-user-address")?.textContent || `Mailbox #${id}`,
       reason: err.message
     });
     showToast("Auth Error", err.message, "error");
@@ -1914,6 +1915,7 @@ function renderConnectionHelp(config) {
   $("help-pop3-port").textContent = config.pop3.port;
   $("help-smtp-port").textContent = config.outgoing.port;
   $("help-smtp-alt-port").textContent = config.outgoing.alternativePort;
+  $("help-smtp-plain-port").textContent = config.outgoing.plaintextPort;
 }
 
 // 7. Settings & Company Profile
@@ -3086,11 +3088,11 @@ function toggleTheme() {
 function focusSearch() {
   const activeTab = document.querySelector(".tab-pane.active")?.id;
   let input = null;
-  if (activeTab === "tab-users") input = $("mailbox-search");
+  if (activeTab === "tab-mailboxes") input = $("mailbox-search");
   else if (activeTab === "tab-domains") input = $("domain-search");
   else if (activeTab === "tab-aliases") input = $("alias-search");
   else {
-    switchTab("users");
+    switchTab("mailboxes");
     input = $("mailbox-search");
   }
   if (input) {

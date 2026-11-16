@@ -19,7 +19,7 @@ export class MailboxService {
   }
 
   /**
-   * Returns all mail users joined from virtual_users (Dovecot's view).
+   * Returns all mailboxes joined from virtual_users (Dovecot's view).
    * Active flag reflects what Dovecot actually sees.
    */
   async getAllMailboxes() {
@@ -174,14 +174,14 @@ export class MailboxService {
   async testUserAuth(req: Request, id: number, password: string) {
     // Use virtual_users-backed findById so only accounts Dovecot can see are tested
     const mailbox = await mailboxRepository.findById(id);
-    if (!mailbox) throw new Error("Mail user not found in virtual_users");
+    if (!mailbox) throw new Error("Mailbox not found in virtual_users");
 
     if (!mailbox.active) {
       await auditService.log(req, "mailbox.auth.failed", "mailbox", id, {
         address: mailbox.address,
         active: false,
         reason: "Account is suspended. IMAP/SMTP login rejected by Dovecot.",
-        error: "User is suspended"
+        error: "Mailbox is suspended"
       });
       return {
         success: false,
@@ -196,7 +196,7 @@ export class MailboxService {
     // Retrieve the raw hash from base table (virtual_users.password = mailboxes.password_hash)
     const storedHash = await mailboxRepository.getPasswordHash(id);
     if (!storedHash) {
-      throw new Error("No password hash found for this user");
+      throw new Error("No password hash found for this mailbox");
     }
 
     // Strip Dovecot scheme prefix before bcrypt.compare
@@ -220,7 +220,7 @@ export class MailboxService {
       smtpReady: matches && mailbox.active,
       dovecotScheme: "BLF-CRYPT",
       message: matches
-        ? "Credentials valid! User can authenticate via Thunderbird / IMAP (993 SSL) and SMTP (587 STARTTLS)."
+        ? "Credentials valid! Mailbox can authenticate via Thunderbird / IMAP (993 SSL) and SMTP (587 STARTTLS)."
         : "Invalid password. IMAP/SMTP login rejected (Dovecot BLF-CRYPT mismatch)."
     };
   }
@@ -283,7 +283,7 @@ export class MailboxService {
         authentication: "Normal password",
         username: email,
         alternativePort: env.client.imapAlternativePort,
-        alternativeSocketType: "STARTTLS"
+        alternativeSocketType: "STARTTLS or None (insecure)"
       },
       pop3: {
         protocol: "POP3",
@@ -291,7 +291,7 @@ export class MailboxService {
         port: env.client.pop3Port,
         alternativePort: env.client.pop3AlternativePort,
         socketType: "SSL/TLS",
-        alternativeSocketType: "STARTTLS",
+        alternativeSocketType: "STARTTLS or None (insecure)",
         authentication: "Normal password",
         username: email
       },
@@ -302,6 +302,8 @@ export class MailboxService {
         socketType: "STARTTLS",
         alternativePort: env.client.smtpAlternativePort,
         alternativeSocketType: "SSL/TLS",
+        plaintextPort: env.client.smtpPlainPort,
+        plaintextSocketType: "None (insecure)",
         authentication: "Normal password",
         username: email
       },

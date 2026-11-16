@@ -47,20 +47,7 @@ adminRouter.post("/domains/:id/verify", domainController.verify);
 adminRouter.patch("/domains/:id", validate({ body: domainPatchSchema }), domainController.updateActive);
 adminRouter.delete("/domains/:id", domainController.delete);
 
-// ── Users & Mailboxes (virtual_users backed) ───────────────────────────────────
-adminRouter.get("/users", mailboxController.list);
-adminRouter.get("/users/client-config", validate({ query: clientConfigQuerySchema }), mailboxController.getClientConfig);
-adminRouter.get("/users/:id", mailboxController.get);
-adminRouter.post("/users", validate({ body: mailboxCreateSchema }), mailboxController.create);
-adminRouter.patch("/users/:id", validate({ body: mailboxPatchSchema }), mailboxController.update);
-adminRouter.delete("/users/:id", mailboxController.delete);
-adminRouter.post(
-  "/users/:id/test-auth",
-  validate({ body: mailboxTestAuthSchema }),
-  mailboxController.testAuth
-);
-
-// /api/mailboxes — legacy alias for /api/users (keeps backward compat)
+// ── Mailboxes (virtual_users backed) ───────────────────────────────────────────
 adminRouter.get("/mailboxes", mailboxController.list);
 adminRouter.get("/mailboxes/client-config", validate({ query: clientConfigQuerySchema }), mailboxController.getClientConfig);
 adminRouter.get("/mailboxes/:id", mailboxController.get);

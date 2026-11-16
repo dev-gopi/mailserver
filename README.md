@@ -105,7 +105,7 @@ testing. Changing seed variables does not modify an existing database.
 
 | Host variable | Default | Service | Purpose |
 | --- | ---: | --- | --- |
-| `SMTP_PORT` | 25 | Postfix | SMTP server-to-server mail |
+| `SMTP_PORT` | 25 | Postfix | SMTP server-to-server mail and legacy plaintext client submission (insecure) |
 | `SUBMISSION_PORT` | 587 | Postfix | STARTTLS SMTP submission |
 | `SMTPS_PORT` | 465 | Postfix | Implicit-TLS SMTP submission |
 | `IMAPS_PORT` | 993 | Dovecot | IMAP over TLS |
@@ -113,6 +113,13 @@ testing. Changing seed variables does not modify an existing database.
 | `POP3S_PORT` | 995 | Dovecot | POP3 over TLS |
 | `POP3_STARTTLS_PORT` | 110 | Dovecot | POP3 with STARTTLS |
 | `ADMIN_UI_PORT` | 8080 | Admin UI | HTTP console and proxied API |
+
+Mail clients send through SMTP and read through IMAP or POP3. Secure client
+configuration is the default: SMTP 587 (STARTTLS) or 465 (implicit TLS), and
+IMAP 993 or POP3 995. For legacy clients, SMTP 25, IMAP 143, and POP3 110 also
+accept authentication without TLS. Plaintext authentication exposes mailbox
+passwords to anyone who can observe the connection; restrict those ports to a
+trusted private network or firewall them off when they are not needed.
 
 PostgreSQL, Redis, SpamAssassin, ClamAV, OpenDKIM, and the API have no host
 port mappings. The dashboard is plain HTTP by default: retain local/trusted
@@ -136,7 +143,7 @@ encrypted TOTP data unusable.
 Useful authenticated API areas:
 
 - `/api/dashboard`, `/api/system/services`, and `/api/system/queue`
-- `/api/domains`, `/api/users` (and legacy `/api/mailboxes`), and `/api/aliases`
+- `/api/domains`, `/api/mailboxes`, and `/api/aliases`
 - `/api/audit-log`
 - `/api/backups` for creating, downloading, retaining, and deleting archives
 

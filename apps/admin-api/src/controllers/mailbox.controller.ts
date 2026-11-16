@@ -71,7 +71,7 @@ export class MailboxController {
 
   async testAuth(req: Request, res: Response) {
     const id = Number(req.params.id);
-    if (!id || isNaN(id)) return res.status(400).json({ error: "Invalid user ID" });
+    if (!id || isNaN(id)) return res.status(400).json({ error: "Invalid mailbox ID" });
 
     const { password } = req.body;
     if (typeof password !== "string" || !password) {

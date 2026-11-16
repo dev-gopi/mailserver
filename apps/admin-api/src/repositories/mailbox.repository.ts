@@ -7,14 +7,14 @@ import { env } from "../config/env";
 /**
  * MailboxRepository
  *
- * READ queries for listing / looking up mail users use the virtual_users view
+ * READ queries for listing / looking up mailboxes use the virtual_users view
  * (the same view Dovecot queries for authentication).  WRITE operations
  * (INSERT / UPDATE / DELETE) always target the base `mailboxes` table because
  * PostgreSQL views without INSTEAD-OF triggers are not directly updatable.
  */
 export class MailboxRepository {
   /**
-   * List all mail users from the base mailboxes table joined with the domains
+   * List all mailboxes from the base mailboxes table joined with the domains
    * table so administrators can see and manage all mailboxes (including suspended ones).
    */
   async findAll(): Promise<MailboxEntity[]> {
@@ -70,7 +70,7 @@ export class MailboxRepository {
   }
 
   /**
-   * Fetch a single mail user by id via base table so administrators can view/edit suspended users.
+   * Fetch a single mailbox by id via base table so administrators can view/edit suspended mailboxes.
    */
   async findById(id: number): Promise<MailboxEntity | null> {
     const res = await db.query<MailboxEntity>(

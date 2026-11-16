@@ -1,4 +1,5 @@
 import net from "net";
+import tls from "tls";
 import { db } from "../db/pool";
 import { ServiceHealthStatus, MailQueueStatus } from "../models/entities";
 import { env } from "../config/env";
@@ -10,11 +11,16 @@ export class SystemRepository {
     host: string,
     port: number,
     greetingCommand?: string,
-    expectBanner = false
+    expectBanner = false,
+    useTls = false
   ): Promise<ServiceHealthStatus> {
     return new Promise((resolve) => {
       const start = Date.now();
-      const socket = new net.Socket();
+      // IMAPS (993) sends its IMAP greeting only after the TLS handshake.
+      // A plain TCP connection therefore waits until the probe times out.
+      const socket = useTls
+        ? tls.connect({ host, port, rejectUnauthorized: false })
+        : new net.Socket();
       socket.setTimeout(2500);
 
       let resolved = false;
@@ -25,7 +31,7 @@ export class SystemRepository {
         }
       };
 
-      socket.connect(port, host, () => {
+      const onConnect = () => {
         if (greetingCommand) {
           socket.write(greetingCommand);
         } else if (!expectBanner) {
@@ -40,7 +46,13 @@ export class SystemRepository {
             lastChecked: new Date().toISOString()
           });
         }
-      });
+      };
+
+      if (useTls) {
+        socket.once("secureConnect", onConnect);
+      } else {
+        socket.connect(port, host, onConnect);
+      }
 
       socket.once("data", (data) => {
         const banner = data.toString().trim().substring(0, 120);
@@ -121,7 +133,7 @@ export class SystemRepository {
 
     const probes = await Promise.all([
       this.probeTcp("postfix", "Postfix MTA (SMTP/Submission)", env.services.postfixHost, env.services.postfixPort, undefined, true),
-      this.probeTcp("dovecot", "Dovecot MDA (IMAP)", env.services.dovecotHost, env.services.dovecotPort, undefined, true),
+      this.probeTcp("dovecot", "Dovecot MDA (IMAP)", env.services.dovecotHost, env.services.dovecotPort, undefined, true, true),
       // spamd expects command first, followed by the SPAMC protocol version
       // and a blank line terminating the headers.
       this.probeTcp("spamassassin", "SpamAssassin Filter", env.services.spamassassinHost, env.services.spamassassinPort, "PING SPAMC/1.5\r\n\r\n"),

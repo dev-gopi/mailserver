@@ -38,6 +38,7 @@ export const env = {
     imapAlternativePort: Number(process.env.IMAP_STARTTLS_PORT ?? 143),
     pop3Port: Number(process.env.POP3S_PORT ?? 995),
     pop3AlternativePort: Number(process.env.POP3_STARTTLS_PORT ?? 110),
+    smtpPlainPort: Number(process.env.SMTP_PORT ?? 25),
     smtpPort: Number(process.env.SUBMISSION_PORT ?? 587),
     smtpAlternativePort: Number(process.env.SMTPS_PORT ?? 465)
   },
@@ -80,6 +81,7 @@ for (const [name, value] of Object.entries({
   IMAP_STARTTLS_PORT: env.client.imapAlternativePort,
   POP3S_PORT: env.client.pop3Port,
   POP3_STARTTLS_PORT: env.client.pop3AlternativePort,
+  SMTP_PORT: env.client.smtpPlainPort,
   SUBMISSION_PORT: env.client.smtpPort,
   SMTPS_PORT: env.client.smtpAlternativePort
 })) {

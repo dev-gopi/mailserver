@@ -12,6 +12,10 @@
 smtp      inet n       -       n       -       -       smtpd
   # Inbound SMTP: scan through ClamAV before delivery
   -o content_filter=clamav:clamav:10026
+  # Permit authenticated legacy clients that explicitly select "None" for
+  # connection security on port 25. Credentials are exposed on the network;
+  # use submission (587 STARTTLS) or smtps (465) whenever possible.
+  -o smtpd_tls_auth_only=no
 #smtp      inet  n       -       y       -       1       postscreen
 #smtpd     pass  -       -       y       -       -       smtpd
 #dnsblog   unix  -       -       y       -       0       dnsblog
