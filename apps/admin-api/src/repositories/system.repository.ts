@@ -1,7 +1,7 @@
 import net from "net";
 import tls from "tls";
 import { db } from "../db/pool";
-import { ServiceHealthStatus, MailQueueStatus } from "../models/entities";
+import { ServiceHealthStatus, MailQueueStatus, CertificateHealthStatus } from "../models/entities";
 import { env } from "../config/env";
 
 export class SystemRepository {
@@ -150,8 +150,22 @@ export class SystemRepository {
     const summary = lines.find((line) => /requests?/i.test(line)) || "";
     const match = summary.match(/(?:in\s+)?(\d+)\s+requests?/i);
     const total = match ? Number(match[1]) : 0;
-    return { activeCount: total, deferredCount: 0, totalCount: total,
-      queueStatus: total > 100 ? "congested" : total ? "processing" : "idle" };
+    // `postqueue -p` groups every deferred recipient block beneath its queue
+    // id. Count unique IDs rather than lines, so one message with several
+    // recipients remains one queue item.
+    const queueIds = new Set(lines
+      .map((line) => line.match(/^([A-F0-9]{5,})(?:[*!])?\s+/i)?.[1])
+      .filter((id): id is string => Boolean(id)));
+    const deferredCount = lines.filter((line) => /\(connect to |status=deferred|delivery temporarily suspended/i.test(line)).length;
+    const oldestMatch = lines.join("\n").match(/\(queue active\)|([A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2})/);
+    return {
+      activeCount: Math.max(0, total - deferredCount),
+      deferredCount,
+      totalCount: total || queueIds.size,
+      queueStatus: total > 100 ? "congested" : total ? "processing" : "idle",
+      oldestMessageAt: oldestMatch?.[1],
+      sampledAt: new Date().toISOString()
+    };
   }
 
   async flushMailQueue(): Promise<{ success: boolean; message: string; flushedAt: string }> {
@@ -159,7 +173,38 @@ export class SystemRepository {
     return { success: true, message: "Postfix queue flush requested", flushedAt: new Date().toISOString() };
   }
 
-  private postfixBridge(command: "STATUS" | "FLUSH"): Promise<string> {
+  async getCertificateHealth(): Promise<CertificateHealthStatus> {
+    const host = env.services.postfixHost;
+    const port = 465;
+    const checkedAt = new Date().toISOString();
+    return new Promise((resolve) => {
+      const socket = tls.connect({ host, port, servername: env.mailHostname || undefined, rejectUnauthorized: false });
+      socket.setTimeout(5000);
+      const unavailable = (error: string): CertificateHealthStatus => ({
+        status: "unavailable", subject: "", issuer: "", validFrom: null, validTo: null,
+        daysRemaining: null, host, port, checkedAt, error
+      });
+      socket.once("secureConnect", () => {
+        const cert = socket.getPeerCertificate();
+        socket.end();
+        if (!cert || !cert.valid_to) return resolve(unavailable("Server did not present a TLS certificate"));
+        const expires = new Date(cert.valid_to);
+        const daysRemaining = Math.floor((expires.getTime() - Date.now()) / 86_400_000);
+        resolve({
+          status: daysRemaining < 0 ? "expired" : daysRemaining <= 30 ? "expiring" : "healthy",
+          subject: cert.subject?.CN || cert.subjectaltname || "Unknown subject",
+          issuer: cert.issuer?.O || cert.issuer?.CN || "Unknown issuer",
+          validFrom: cert.valid_from ? new Date(cert.valid_from).toISOString() : null,
+          validTo: expires.toISOString(),
+          daysRemaining, host, port, checkedAt
+        });
+      });
+      socket.once("timeout", () => { socket.destroy(); resolve(unavailable("TLS connection timed out")); });
+      socket.once("error", (error) => resolve(unavailable(error.message)));
+    });
+  }
+
+  private postfixBridge(command: "STATUS" | "DETAIL" | "FLUSH"): Promise<string> {
     const host = env.services.postfixHost;
     const port = env.services.postfixBridgePort;
     return new Promise((resolve, reject) => {

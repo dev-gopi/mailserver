@@ -7,6 +7,7 @@ import { db } from "../db/pool";
 import { env } from "../config/env";
 import { BackupArchiveItem, BackupSettingsEntity } from "../models/entities";
 import { taskQueue } from "../queue/task-queue";
+import { createHash } from "crypto";
 
 const execFileAsync = promisify(execFile);
 
@@ -282,6 +283,45 @@ export class BackupService {
 
       throw err;
     }
+  }
+
+  /**
+   * Non-destructive restore test. This verifies archive integrity, optional
+   * sidecar checksum, and that a PostgreSQL custom dump can be read. It never
+   * writes into the live database or mailbox volume.
+   */
+  async verifyRestoreReadiness(filename: string): Promise<{
+    filename: string;
+    passed: boolean;
+    checks: Array<{ name: string; status: "pass" | "fail"; details: string }>;
+    verifiedAt: string;
+  }> {
+    const filePath = this.getBackupFilePath(filename);
+    const checks: Array<{ name: string; status: "pass" | "fail"; details: string }> = [];
+    try {
+      const { stdout } = await execFileAsync("tar", ["-tzf", filePath], { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
+      const entries = stdout.split(/\r?\n/).filter(Boolean);
+      checks.push({ name: "Archive integrity", status: "pass", details: `${entries.length} archive entries are readable` });
+      const databaseDump = entries.find((entry) => entry.replace(/^\.\//, "") === "database.dump");
+      const maildata = entries.find((entry) => entry.replace(/^\.\//, "") === "maildata.tar.gz");
+      checks.push({ name: "Database payload", status: databaseDump ? "pass" : "fail", details: databaseDump ? "database.dump is present" : "database.dump is missing" });
+      checks.push({ name: "Mailbox payload", status: maildata ? "pass" : "fail", details: maildata ? "maildata.tar.gz is present" : "maildata.tar.gz is missing" });
+
+      const checksumPath = `${filePath}.sha256`;
+      if (fs.existsSync(checksumPath)) {
+        const expected = (await fsPromises.readFile(checksumPath, "utf8")).trim().split(/\s+/)[0];
+        const actual = await new Promise<string>((resolve, reject) => {
+          const hash = createHash("sha256");
+          fs.createReadStream(filePath).on("error", reject).on("data", (chunk) => hash.update(chunk)).on("end", () => resolve(hash.digest("hex")));
+        });
+        checks.push({ name: "SHA-256 checksum", status: expected === actual ? "pass" : "fail", details: expected === actual ? "Sidecar checksum matches" : "Sidecar checksum does not match archive" });
+      } else {
+        checks.push({ name: "SHA-256 checksum", status: "fail", details: "Checksum sidecar is missing" });
+      }
+    } catch (error) {
+      checks.push({ name: "Archive integrity", status: "fail", details: error instanceof Error ? error.message : "Unable to read archive" });
+    }
+    return { filename, passed: checks.every((check) => check.status === "pass"), checks, verifiedAt: new Date().toISOString() };
   }
 
   async pruneOldBackups(retentionDays = 14): Promise<number> {

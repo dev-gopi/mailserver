@@ -203,6 +203,25 @@ The `monitor` container polls the API health endpoint. Set
 `ALERT_WEBHOOK_URL` to receive state-change notifications. It observes
 API/database reachability, not end-to-end external mail delivery.
 
+### Reliability diagnostics
+
+The authenticated API exposes a few checks intended for a production runbook:
+
+- `GET /api/system/queue` reports queue depth, deferred-recipient count, and
+  sampling time. Use a sustained non-zero deferred count as an investigation
+  signal, rather than repeatedly flushing the queue.
+- `GET /api/system/certificate` reads the certificate actually served by the
+  local SMTPS listener and marks it healthy, expiring (30 days), expired, or
+  unavailable.
+- `POST /api/system/test-smtp` submits a uniquely identified diagnostic
+  message. The response/audit record includes its Message-ID and explicitly
+  reports only Postfix acceptance; correlate that ID with Postfix logs before
+  treating an external test as delivered.
+- `POST /api/backups/:filename/verify` performs a non-destructive restore
+  readiness test: it reads the compressed archive, checks expected database
+  and mailbox payloads, and validates a SHA-256 sidecar when present. It does
+  not alter the live database or mail store.
+
 ## Operations
 
 ~~~sh

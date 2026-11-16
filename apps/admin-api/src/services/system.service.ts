@@ -218,6 +218,10 @@ export class SystemService {
     return systemRepository.getMailQueueStatus();
   }
 
+  async getCertificateHealth() {
+    return systemRepository.getCertificateHealth();
+  }
+
   async flushMailQueue(req: Request) {
     const result = await systemRepository.flushMailQueue();
     await auditService.log(req, "system.queue.flush", "system", "postfix-spool", result);
@@ -240,12 +244,13 @@ export class SystemService {
     }
     const senderDomain = sender.split("@")[1] || env.mailDomain;
 
+    const messageId = `<diagnostic-${Date.now()}@${senderDomain}>`;
     const message = [
       `From: ${sender}`,
       `To: ${input.recipient}`,
       `Subject: ${input.subject.replace(/[\r\n]/g, " ")}`,
       `Date: ${new Date().toUTCString()}`,
-      `Message-ID: <diagnostic-${Date.now()}@${senderDomain}>`,
+      `Message-ID: ${messageId}`,
       "",
       input.body.replace(/\r?\n/g, "\r\n").replace(/^\./gm, ".."),
       ""
@@ -258,6 +263,11 @@ export class SystemService {
       queueResponse: response,
       sender,
       recipient: input.recipient,
+      messageId,
+      // The remote server will only be known after Postfix completes delivery.
+      // This records a durable audit event that can be correlated with Postfix
+      // logs by Message-ID without claiming external delivery prematurely.
+      deliveryState: "accepted-by-postfix",
       sentAt: new Date().toISOString()
     };
     await auditService.log(req, "system.test.smtp", "system", "postfix", result);

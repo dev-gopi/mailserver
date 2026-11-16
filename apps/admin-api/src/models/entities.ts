@@ -184,6 +184,21 @@ export interface MailQueueStatus {
   totalCount: number;
   queueStatus: "idle" | "processing" | "congested";
   lastFlushedAt?: string;
+  oldestMessageAt?: string;
+  sampledAt?: string;
+}
+
+export interface CertificateHealthStatus {
+  status: "healthy" | "expiring" | "expired" | "unavailable";
+  subject: string;
+  issuer: string;
+  validFrom: string | null;
+  validTo: string | null;
+  daysRemaining: number | null;
+  host: string;
+  port: number;
+  checkedAt: string;
+  error?: string;
 }
 
 export interface SystemMetrics {

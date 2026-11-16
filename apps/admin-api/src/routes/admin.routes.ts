@@ -74,6 +74,7 @@ adminRouter.get("/audit-log/export", auditController.exportCsv);
 // ── System Services & Diagnostics ─────────────────────────────────────────────
 adminRouter.get("/system/services", systemController.checkServices);
 adminRouter.get("/system/queue", systemController.getMailQueue);
+adminRouter.get("/system/certificate", systemController.getCertificateHealth);
 adminRouter.post("/system/queue/flush", systemController.flushMailQueue);
 adminRouter.post("/system/test-smtp", validate({ body: testSmtpSchema }), systemController.testSmtp);
 adminRouter.post("/system/test-spam", validate({ body: testSpamSchema }), systemController.testSpam);
@@ -87,3 +88,4 @@ adminRouter.get("/backups/settings", backupController.getSettings);
 adminRouter.put("/backups/settings", validate({ body: backupSettingsSchema }), backupController.updateSettings);
 adminRouter.delete("/backups/:filename", backupController.delete);
 adminRouter.get("/backups/:filename/download", backupController.download);
+adminRouter.post("/backups/:filename/verify", backupController.verify);

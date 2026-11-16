@@ -62,6 +62,7 @@ export const openapi = {
 
     "/api/system/services": { get: { security: [{ bearerAuth: [] }], summary: "Real-time health probes of Postfix, Dovecot, ClamAV, SpamAssassin, Postgres, and Redis" } },
     "/api/system/queue": { get: { security: [{ bearerAuth: [] }], summary: "Inspect Postfix mail spool & queue status" } },
+    "/api/system/certificate": { get: { security: [{ bearerAuth: [] }], summary: "Inspect the SMTP TLS certificate expiry" } },
     "/api/system/queue/flush": { post: { security: [{ bearerAuth: [] }], summary: "Flush Postfix mail queue" } },
     "/api/system/test-smtp": { post: { security: [{ bearerAuth: [] }], summary: "Trigger diagnostic SMTP delivery test" } },
     "/api/system/test-spam": { post: { security: [{ bearerAuth: [] }], summary: "Test SpamAssassin filter score with custom content" } },

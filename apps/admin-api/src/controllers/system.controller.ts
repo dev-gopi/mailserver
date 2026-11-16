@@ -31,6 +31,14 @@ export class SystemController {
     }
   }
 
+  async getCertificateHealth(req: Request, res: Response) {
+    try {
+      return res.json(await systemService.getCertificateHealth());
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Certificate check failed" });
+    }
+  }
+
   async flushMailQueue(req: Request, res: Response) {
     if (!canWrite(req)) {
       return res.status(403).json({ error: "Read-only administrator" });

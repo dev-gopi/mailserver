@@ -89,6 +89,17 @@ export class BackupController {
       return res.status(404).json({ error: err.message || "Backup archive not found" });
     }
   }
+
+  async verify(req: Request, res: Response) {
+    if (req.admin?.role === "viewer") return res.status(403).json({ error: "Read-only administrator" });
+    try {
+      const result = await backupService.verifyRestoreReadiness(req.params.filename);
+      await auditService.log(req, "backup.restore_test", "backup", req.params.filename, { passed: result.passed });
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message || "Backup verification failed" });
+    }
+  }
 }
 
 export const backupController = new BackupController();
