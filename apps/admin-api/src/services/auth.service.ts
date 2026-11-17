@@ -10,16 +10,19 @@ import { totpService } from "./totp.service";
 import { PasskeyCredential } from "../models/entities";
 import { decryptSecret, encryptSecret } from "../utils/secret-crypto";
 import { validateAdministratorPassword } from "../utils/password-policy";
+import { releaseAttemptLock, takeOneTimeValue, tryAcquireAttemptLock } from "../utils/one-time-map";
 
 interface MfaPendingSession {
   adminId: number;
   username: string;
   expiresAt: number;
   attempts: number;
+  verificationInProgress?: boolean;
 }
 
 interface PasskeyPendingChallenge {
   challenge: string;
+  purpose: "registration" | "authentication";
   adminId?: number;
   origin: string;
   rpId: string;
@@ -158,55 +161,64 @@ export class AuthService {
       this.mfaPendingSessions.delete(mfaToken);
       throw new Error("Verification session expired. Please sign in again.");
     }
-
-    const admin = await adminRepository.findById(pending.adminId);
-    if (!admin || !admin.active) {
-      this.mfaPendingSessions.delete(mfaToken);
-      throw new Error("Administrator account is inactive or not found");
-    }
-    if (admin.locked_until && new Date(admin.locked_until) > new Date()) {
-      this.mfaPendingSessions.delete(mfaToken);
-      throw new Error("Invalid credentials or account temporarily unavailable.");
+    if (!tryAcquireAttemptLock(pending)) {
+      throw new Error("A verification attempt is already in progress. Please try again.");
     }
 
-    if (code) {
-      const isValid = totpService.verifyTotp(code, decryptSecret(admin.totp_secret || ""));
-      if (!isValid) {
-        pending.attempts += 1;
-        await adminRepository.recordFailedLogin(admin.id);
-        if (pending.attempts >= 5) this.mfaPendingSessions.delete(mfaToken);
-        await auditService.log(req, "admin.mfa.failed", "admin", admin.id, {
-          username: admin.username,
-          method: "totp",
-          attempts: pending.attempts,
-          reason: "Invalid 6-digit TOTP code"
-        });
-        throw new Error(pending.attempts >= 5
-          ? "Too many verification attempts. Sign in again."
-          : "Invalid 6-digit verification code. Please check your authenticator app.");
+    try {
+      const admin = await adminRepository.findById(pending.adminId);
+      if (!admin || !admin.active) {
+        this.mfaPendingSessions.delete(mfaToken);
+        throw new Error("Administrator account is inactive or not found");
       }
-    } else if (recoveryCode) {
-      const consumed = await adminRepository.consumeRecoveryCode(admin.id, recoveryCode);
-      if (!consumed) {
-        pending.attempts += 1;
-        await adminRepository.recordFailedLogin(admin.id);
-        if (pending.attempts >= 5) this.mfaPendingSessions.delete(mfaToken);
-        await auditService.log(req, "admin.mfa.failed", "admin", admin.id, {
-          username: admin.username,
-          method: "recovery_code",
-          attempts: pending.attempts,
-          reason: "Invalid or already consumed recovery code"
-        });
-        throw new Error(pending.attempts >= 5
-          ? "Too many verification attempts. Sign in again."
-          : "Invalid or previously used recovery code.");
+      if (admin.locked_until && new Date(admin.locked_until) > new Date()) {
+        this.mfaPendingSessions.delete(mfaToken);
+        throw new Error("Invalid credentials or account temporarily unavailable.");
       }
-    } else {
-      throw new Error("Either 6-digit code or emergency recovery code is required.");
-    }
 
-    this.mfaPendingSessions.delete(mfaToken);
-    return this.finalizeSuccessfulLogin(req, admin, recoveryCode ? "recovery_code" : "totp");
+      if (code) {
+        const isValid = totpService.verifyTotp(code, decryptSecret(admin.totp_secret || ""));
+        if (!isValid) {
+          pending.attempts += 1;
+          await adminRepository.recordFailedLogin(admin.id);
+          if (pending.attempts >= 5) this.mfaPendingSessions.delete(mfaToken);
+          await auditService.log(req, "admin.mfa.failed", "admin", admin.id, {
+            username: admin.username,
+            method: "totp",
+            attempts: pending.attempts,
+            reason: "Invalid 6-digit TOTP code"
+          });
+          throw new Error(pending.attempts >= 5
+            ? "Too many verification attempts. Sign in again."
+            : "Invalid 6-digit verification code. Please check your authenticator app.");
+        }
+      } else if (recoveryCode) {
+        const consumed = await adminRepository.consumeRecoveryCode(admin.id, recoveryCode);
+        if (!consumed) {
+          pending.attempts += 1;
+          await adminRepository.recordFailedLogin(admin.id);
+          if (pending.attempts >= 5) this.mfaPendingSessions.delete(mfaToken);
+          await auditService.log(req, "admin.mfa.failed", "admin", admin.id, {
+            username: admin.username,
+            method: "recovery_code",
+            attempts: pending.attempts,
+            reason: "Invalid or already consumed recovery code"
+          });
+          throw new Error(pending.attempts >= 5
+            ? "Too many verification attempts. Sign in again."
+            : "Invalid or previously used recovery code.");
+        }
+      } else {
+        throw new Error("Either 6-digit code or emergency recovery code is required.");
+      }
+
+      // Consume before session creation so the same MFA token cannot be replayed.
+      this.mfaPendingSessions.delete(mfaToken);
+      return await this.finalizeSuccessfulLogin(req, admin, recoveryCode ? "recovery_code" : "totp");
+    } finally {
+      // A failed attempt can be retried until the attempt/expiry policy closes it.
+      if (this.mfaPendingSessions.get(mfaToken) === pending) releaseAttemptLock(pending);
+    }
   }
 
   private async finalizeSuccessfulLogin(req: Request, admin: any, authMethod: string) {
@@ -371,6 +383,7 @@ export class AuthService {
     });
     this.passkeyChallenges.set(challengeId, {
       challenge: options.challenge,
+      purpose: "registration",
       adminId: admin.id,
       origin,
       rpId,
@@ -381,15 +394,14 @@ export class AuthService {
 
   async verifyPasskeyRegister(req: Request, challengeId: string, credential: any, name?: string) {
     this.cleanupExpiredSessions();
-    const pending = this.passkeyChallenges.get(challengeId);
-    if (!pending || pending.expiresAt < Date.now()) {
-      this.passkeyChallenges.delete(challengeId);
-      throw new Error("Passkey registration challenge expired. Please try again.");
+    const pending = takeOneTimeValue(this.passkeyChallenges, challengeId);
+    if (!pending || pending.purpose !== "registration" || pending.expiresAt < Date.now()) {
+      throw new Error("Passkey registration challenge expired, mismatched, or already used. Please try again.");
     }
+    if (pending.adminId === undefined) throw new Error("Passkey registration challenge is invalid.");
 
-    const admin = await adminRepository.findById(pending.adminId!);
+    const admin = await adminRepository.findById(pending.adminId);
     if (!admin) {
-      this.passkeyChallenges.delete(challengeId);
       throw new Error("Admin not found");
     }
 
@@ -416,8 +428,6 @@ export class AuthService {
     };
 
     await adminRepository.addPasskey(admin.id, newPasskey);
-    this.passkeyChallenges.delete(challengeId);
-
     await auditService.log(req, "admin.passkey.registered", "admin", admin.id, {
       name: newPasskey.name,
       passkeyId: newPasskey.id
@@ -441,6 +451,7 @@ export class AuthService {
     });
     this.passkeyChallenges.set(challengeId, {
       challenge: options.challenge,
+      purpose: "authentication",
       origin,
       rpId,
       expiresAt: Date.now() + 5 * 60 * 1000
@@ -450,24 +461,20 @@ export class AuthService {
 
   async verifyPasskeyLogin(req: Request, challengeId: string, credential: any) {
     this.cleanupExpiredSessions();
-    const pending = this.passkeyChallenges.get(challengeId);
-    if (!pending || pending.expiresAt < Date.now()) {
-      this.passkeyChallenges.delete(challengeId);
-      throw new Error("Passkey login session expired. Please try again.");
+    const pending = takeOneTimeValue(this.passkeyChallenges, challengeId);
+    if (!pending || pending.purpose !== "authentication" || pending.expiresAt < Date.now()) {
+      throw new Error("Passkey login challenge expired, mismatched, or already used. Please try again.");
     }
 
     const admin = await adminRepository.findAdminByPasskeyId(credential.id);
     if (!admin || !admin.active) {
-      this.passkeyChallenges.delete(challengeId);
       throw new Error("Passkey not recognized or account is inactive.");
     }
     if (admin.locked_until && new Date(admin.locked_until) > new Date()) {
-      this.passkeyChallenges.delete(challengeId);
       throw new Error("Account temporarily unavailable. Try again later.");
     }
     const storedPasskey = (admin.passkeys || []).find((passkey: PasskeyCredential) => passkey.id === credential.id);
     if (!storedPasskey?.publicKey || storedPasskey.counter === undefined) {
-      this.passkeyChallenges.delete(challengeId);
       throw new Error("This passkey uses an obsolete registration. Register it again.");
     }
 
@@ -488,7 +495,6 @@ export class AuthService {
       });
       if (!verification.verified) throw new Error("Passkey signature verification failed.");
     } catch (error) {
-      this.passkeyChallenges.delete(challengeId);
       await adminRepository.recordFailedLogin(admin.id);
       await auditService.log(req, "admin.passkey.login.failed", "admin", admin.id, {
         method: "passkey", reason: "Passkey assertion verification failed"
@@ -496,7 +502,6 @@ export class AuthService {
       throw new Error("Passkey authentication failed.");
     }
 
-    this.passkeyChallenges.delete(challengeId);
     await adminRepository.updatePasskeyCounter(admin.id, storedPasskey.id, verification.authenticationInfo.newCounter);
     return this.finalizeSuccessfulLogin(req, admin, "passkey");
   }

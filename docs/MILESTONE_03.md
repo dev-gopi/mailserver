@@ -9,6 +9,31 @@ runtime and migration database privileges, and make deployment credentials
 available to containers as Docker secrets rather than ordinary environment
 values.
 
+## 0. Corrections verified against the latest supplied archive
+
+The admin UI Dockerfile limits the official Nginx image's `envsubst` processing
+to `ADMIN_UI_API_HOST` and `ADMIN_UI_API_PORT`. This is important because the
+Nginx configuration also contains runtime variables such as `$host`, `$uri`,
+`$remote_addr` and `$proxy_add_x_forwarded_for`; unrestricted template
+substitution would erase those variables and can make the generated config
+invalid or change request handling. The regression checker verifies they
+survive rendering.
+
+Passkey registration and login challenges are now removed synchronously from
+the in-memory challenge map before any database or WebAuthn verification
+await. Challenges are also tagged by purpose so a registration challenge cannot
+be used for authentication (or vice versa). MFA verification has an in-flight
+guard so concurrent requests cannot both consume the same pending MFA token.
+Failed MFA checks can still be retried under the existing attempt and expiry
+limits.
+
+Generated `secrets/runtime/*` files are excluded from version control and
+source ZIP distributions. Keep the existing files from your working
+installation when upgrading: they contain the passwords that must continue to
+match your existing PostgreSQL volume and service accounts. For a fresh install,
+run the secret bootstrap script to generate new values. Never publish or commit
+these generated files.
+
 ## 1. Browser authentication
 
 The admin UI now uses a server-managed session cookie instead of storing a
@@ -62,9 +87,13 @@ Compose now has a one-shot `migrate` service:
 - The `app` service waits for the migration service to complete successfully.
 - The migration service joins only the internal `dbnet` network.
 
-The API grants cover current tables/sequences and future objects created by the
-migration owner in the public schema. If future migrations introduce another
-schema, function, sequence, or object requiring runtime access, add an explicit
+The migration first strips pre-existing role memberships and stale table and
+sequence privileges from each service login, then grants only the reviewed
+permissions. Service roles are explicitly `NOSUPERUSER`, `NOCREATEDB`,
+`NOCREATEROLE`, `NOREPLICATION`, `NOBYPASSRLS` and `NOINHERIT`. The API grants
+cover current tables/sequences and future objects created by the migration
+owner in the public schema. If future migrations introduce another schema,
+function, sequence, or object requiring runtime access, add an explicit
 reviewed grant for it rather than giving the API DDL or owner privileges.
 
 ## 4. Docker secret bootstrap
@@ -148,10 +177,16 @@ remove `unsafe-inline` using a nonce/hash-based policy.
 1. Extract this archive over a separate working directory; do not replace your
    live project until you have a verified backup.
 2. Preserve the existing root `.env`, any host-side TLS certificate files,
-   `secrets/runtime/`, backup archives, and all Docker named volumes.
-3. Check that `POSTGRES_PASSWORD` still matches the current PostgreSQL user.
+   `secrets/runtime/`, backup archives, and all Docker named volumes. The source
+   ZIP intentionally contains only `secrets/runtime/.gitkeep`; copy the existing
+   runtime secret files from your current working project before starting an
+   upgrade. Do not replace them with newly generated values for an existing DB.
+3. Check that `secrets/runtime/postgres_password` still matches the current
+   PostgreSQL bootstrap account password.
 4. Run the secret bootstrap script. It preserves existing secret files and
-   creates any missing per-service credentials.
+   creates any missing per-service credentials. After verifying the PostgreSQL
+   secret is safely persisted, remove the duplicate cleartext `POSTGRES_PASSWORD`
+   from the root `.env` if you no longer need it for recovery/bootstrap.
 5. Validate and apply the stack:
 
 ```sh
@@ -176,7 +211,8 @@ Run:
 ```
 
 The static checks verify cookie/CSRF handling, password policy, Compose secret
-wiring, role separation, and UI token-storage behavior. If Docker is installed,
+wiring, role separation, UI token-storage behavior, Nginx template rendering,
+and one-time passkey/MFA challenge handling. If Docker is installed,
 the script also runs `docker compose config -q`. The API unit tests can be run
 with Node 22 after installing the project dependencies:
 

@@ -83,6 +83,12 @@ not part of the active path.
    ./infrastructure/secrets/bootstrap.sh
    ~~~
 
+   Generated files under `secrets/runtime/` are intentionally excluded from
+   source-control and source-ZIP distributions. On an upgrade, copy the existing
+   `secrets/runtime/` files from your current installation before running this
+   command; on a fresh install, the script generates them. Do not commit or share
+   these generated values.
+
    This creates `secrets/runtime/` with separate database login passwords and a
    stable 32-byte auth-encryption key, plus an independent Redis password.
    The script preserves existing values and ensures database/Redis passwords
@@ -162,7 +168,11 @@ interfaces without an explicit firewall policy.
 6. Configure mail clients with the mailbox email address and password.
 
 The browser admin UI uses Secure, HttpOnly, SameSite session cookies with
-per-session CSRF protection. Do not copy browser session tokens into local
+per-session CSRF protection. The Nginx image substitutes only the two
+`ADMIN_UI_API_*` template variables so built-in Nginx variables remain intact.
+Passkey challenges are one-time and consumed before asynchronous verification;
+concurrent MFA submissions are serialized per pending challenge. Do not copy
+browser session tokens into local
 storage or session storage. The API also supports non-browser integrations:
 clients may explicitly request a bearer token using
 `X-MailCore-Auth-Mode: bearer` on login, MFA verification or passkey login, then

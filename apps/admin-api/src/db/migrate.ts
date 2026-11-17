@@ -65,12 +65,31 @@ export async function runMigrations(): Promise<void> {
         [account.username]
       );
       const roleSql = existing.rows[0]?.exists
-        ? "ALTER ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOINHERIT PASSWORD %L"
-        : "CREATE ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOINHERIT PASSWORD %L";
+        ? "ALTER ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT PASSWORD %L"
+        : "CREATE ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT PASSWORD %L";
       const roleStatement = await db.query<{ statement: string }>(
         "SELECT format($1::text, $2::text, $3::text) AS statement", [roleSql, account.username, account.password]
       );
       await db.query(roleStatement.rows[0].statement);
+
+      // A previously-created service login may have inherited broad role
+      // memberships. Remove every membership before granting only its reviewed
+      // table/view permissions below. NOINHERIT alone does not prevent SET ROLE.
+      const memberships = await db.query<{ role_name: string }>(
+        `SELECT DISTINCT parent.rolname AS role_name
+         FROM pg_auth_members membership
+         JOIN pg_roles parent ON parent.oid = membership.roleid
+         JOIN pg_roles member ON member.oid = membership.member
+         WHERE member.rolname = $1`, [account.username]
+      );
+      for (const membership of memberships.rows) {
+        const revokeMembership = await db.query<{ statement: string }>(
+          "SELECT format('REVOKE %I FROM %I', $1::text, $2::text) AS statement",
+          [membership.role_name, account.username]
+        );
+        await db.query(revokeMembership.rows[0].statement);
+      }
+
       const connectGrant = await db.query<{ statement: string }>(
         "SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), $1::text) AS statement",
         [account.username]
@@ -82,6 +101,11 @@ export async function runMigrations(): Promise<void> {
         [account.username]
       );
       await db.query(revoke.rows[0].statement);
+      const revokeSequences = await db.query<{ statement: string }>(
+        "SELECT format('REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM %I', $1::text) AS statement",
+        [account.username]
+      );
+      await db.query(revokeSequences.rows[0].statement);
       const schemaUsage = await db.query<{ statement: string }>(
         "SELECT format('GRANT USAGE ON SCHEMA public TO %I', $1::text) AS statement",
         [account.username]

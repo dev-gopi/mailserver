@@ -16,6 +16,11 @@ const migrationEntry = read("apps/admin-api/src/scripts/migrate.ts");
 const bootstrap = read("infrastructure/secrets/bootstrap.sh");
 const nginx = read("apps/admin-ui/nginx.conf");
 const helmet = read("apps/admin-api/src/app.ts");
+const nginxDockerfile = read("apps/admin-ui/Dockerfile");
+const nginxTemplate = read("apps/admin-ui/nginx.conf");
+const gitignore = read(".gitignore");
+const authService = read("apps/admin-api/src/services/auth.service.ts");
+const oneTimeMap = read("apps/admin-api/src/utils/one-time-map.ts");
 
 assert.match(compose, /^  migrate:\n/m, "Compose must provide a one-shot migration service");
 assert.match(compose, /command: \["node", "dist\/scripts\/migrate\.js"\]/, "migration service must execute the compiled migration script");
@@ -61,6 +66,9 @@ assert.match(env, /readSecret\("PGPASSWORD"\)/, "API database password must supp
 assert.match(env, /readSecret\("AUTH_ENCRYPTION_KEY"\)/, "auth encryption key must support secret-file loading");
 assert.match(migrations, /GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %I/, "API role must receive DML but not DDL grants");
 assert.match(migrations, /GRANT CONNECT ON DATABASE/, "every service login must receive explicit database CONNECT");
+assert.match(migrations, /NOBYPASSRLS/, "service roles must not bypass row-level security");
+assert.match(migrations, /REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public/, "old sequence permissions must be removed before least-privilege grants");
+assert.match(migrations, /FROM pg_auth_members/, "pre-existing service-role memberships must be inspected and revoked");
 assert.match(migrations, /GRANT SELECT \(email, password, maildir, quota_bytes, active\) ON virtual_users/, "Dovecot must retain narrow mailbox lookup grants");
 assert.doesNotMatch(apiEntry, /runMigrations/, "API startup must not run schema migrations");
 assert.match(migrationEntry, /runMigrations\(\)/, "one-shot migration entry must call runMigrations");
@@ -71,4 +79,22 @@ assert.match(nginx, /frame-ancestors 'none'/, "admin UI CSP must block framing")
 assert.match(nginx, /Referrer-Policy/, "admin UI must set a Referrer Policy");
 assert.match(helmet, /frameAncestors: \["'none'"\]/, "API responses must include a frame restriction CSP");
 
-console.log("Milestone 03 static security checks passed.");
+
+assert.match(nginxDockerfile, /NGINX_ENVSUBST_FILTER="\^ADMIN_UI_API_\(HOST\|PORT\)\$"/, "Nginx template substitution must be restricted to the two application variables");
+const renderedNginx = nginxTemplate.replace(/\$\{(ADMIN_UI_API_HOST|ADMIN_UI_API_PORT)\}/g, (_match, name) => name === "ADMIN_UI_API_HOST" ? "app" : "8080");
+for (const nginxVariable of ["$binary_remote_addr", "$host", "$http_host", "$remote_addr", "$proxy_add_x_forwarded_for", "$request_uri", "$uri"]) {
+  assert.ok(renderedNginx.includes(nginxVariable), `Nginx built-in variable ${nginxVariable} must survive template rendering`);
+}
+assert.doesNotMatch(renderedNginx, /\$\{ADMIN_UI_API_(?:HOST|PORT)\}/, "application template variables must be resolved at container startup");
+assert.match(gitignore, /secrets\/runtime\/\*/);
+assert.match(gitignore, /!secrets\/runtime\/\.gitkeep/);
+assert.equal((authService.match(/takeOneTimeValue\(this\.passkeyChallenges, challengeId\)/g) || []).length, 2, "passkey registration and login must both consume challenges before async verification");
+assert.match(authService, /purpose: "registration"/);
+assert.match(authService, /purpose: "authentication"/);
+assert.match(authService, /pending\.purpose !== "registration"/);
+assert.match(authService, /pending\.purpose !== "authentication"/);
+assert.match(authService, /tryAcquireAttemptLock\(pending\)/);
+assert.match(authService, /releaseAttemptLock\(pending\)/);
+assert.match(oneTimeMap, /store\.delete\(key\)/);
+
+console.log("Milestone 03 static security checks passed, including Nginx template and one-time challenge replay regressions.");
