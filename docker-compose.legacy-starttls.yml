@@ -1,0 +1,8 @@
+# Optional compatibility override. The Dovecot configuration requires TLS
+# before PLAIN/LOGIN authentication, so ports 143/110 must negotiate STARTTLS.
+# Use only when legacy mail clients need these ports; secure defaults are 993/995.
+services:
+  dovecot:
+    ports:
+      - "${IMAP_STARTTLS_PORT:-143}:143"
+      - "${POP3_STARTTLS_PORT:-110}:110"

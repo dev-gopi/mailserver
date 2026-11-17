@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MailCore Admin — Production Mail Server Control Panel</title>
-  <meta name="description" content="Production-ready multi-tenant mail server management console for domains, mailboxes, aliases, and security audit logs.">
-  <link rel="stylesheet" href="/styles.css?v=20261113-4">
+  <title>MailCore Admin — Single-Tenant Mail Server Control Panel</title>
+  <meta name="description" content="Single-tenant self-hosted mail server management console for domains, mailboxes, aliases, and security audit logs.">
+  <link rel="stylesheet" href="/styles.css?v=20261117-1">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -756,11 +756,11 @@
                   </div>
                   <div class="conn-spec-row">
                     <span class="conn-label">Alt Port</span>
-                    <span><strong id="help-imap-alt-port">—</strong> &bull; STARTTLS or None <em>(insecure)</em></span>
+                    <span><strong id="help-imap-alt-port">—</strong> &bull; STARTTLS <em>(TLS required; optional)</em></span>
                   </div>
                   <div class="conn-spec-row">
                     <span class="conn-label">POP3</span>
-                    <span><strong id="help-pop3-alt-port">—</strong> &bull; STARTTLS or None <em>(insecure)</em> / <strong id="help-pop3-port">—</strong> &bull; SSL/TLS</span>
+                    <span><strong id="help-pop3-alt-port">—</strong> &bull; STARTTLS <em>(TLS required; optional)</em> / <strong id="help-pop3-port">—</strong> &bull; SSL/TLS</span>
                   </div>
                   <div class="conn-spec-row">
                     <span class="conn-label">Username</span>
@@ -805,8 +805,8 @@
                     <span><strong id="help-smtp-alt-port">—</strong> &bull; SSL / TLS (Implicit)</span>
                   </div>
                   <div class="conn-spec-row">
-                    <span class="conn-label">Legacy Port</span>
-                    <span><strong id="help-smtp-plain-port">—</strong> &bull; None <em>(insecure)</em></span>
+                    <span class="conn-label">Server SMTP</span>
+                    <span><strong id="help-smtp-plain-port">—</strong> &bull; server-to-server only; SMTP AUTH disabled</span>
                   </div>
                   <div class="conn-spec-row">
                     <span class="conn-label">Username</span>
@@ -1763,11 +1763,11 @@
             </div>
             <div class="guide-row">
               <span>IMAP Port:</span>
-              <strong><span id="guide-imap-port">—</span> (SSL/TLS) or <span id="guide-imap-alt-port">—</span> (STARTTLS / None — insecure)</strong>
+              <strong><span id="guide-imap-port">—</span> (SSL/TLS) or <span id="guide-imap-alt-port">—</span> (STARTTLS optional; TLS required)</strong>
             </div>
             <div class="guide-row">
               <span>POP3:</span>
-              <strong><span id="guide-pop3-alt-port">—</span> (STARTTLS / None — insecure) or <span id="guide-pop3-port">—</span> (SSL/TLS)</strong>
+              <strong><span id="guide-pop3-alt-port">—</span> (STARTTLS optional; TLS required) or <span id="guide-pop3-port">—</span> (SSL/TLS)</strong>
             </div>
             <div class="guide-row">
               <span>Username:</span>
@@ -1794,7 +1794,7 @@
             </div>
             <div class="guide-row">
               <span>Legacy SMTP:</span>
-              <strong><span id="guide-smtp-plain-port">—</span> (None — insecure)</strong>
+              <strong><span id="guide-smtp-plain-port">—</span> (server-to-server only)</strong>
             </div>
             <div class="guide-row">
               <span>Username:</span>
@@ -2223,6 +2223,6 @@
   </div>
 
   <!-- Script logic -->
-  <script src="/app.js?v=20261113-3"></script>
+  <script src="/app.js?v=20261117-1"></script>
 </body>
 </html>

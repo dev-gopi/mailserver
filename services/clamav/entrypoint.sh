@@ -37,12 +37,12 @@ fi
 restart_clamsmtpd() {
   local postfix_ip=""
   for _ in $(seq 1 30); do
-    postfix_ip=$(getent ahostsv4 postfix | awk 'NR == 1 { print $1 }')
+    postfix_ip=$(getent ahostsv4 postfix-filter | awk 'NR == 1 { print $1 }')
     [ -n "$postfix_ip" ] && break
     sleep 1
   done
   if [ -z "$postfix_ip" ]; then
-    echo "[ERROR] Unable to resolve the postfix service" >&2
+    echo "[ERROR] Unable to resolve the postfix-filter alias on the private filtering network" >&2
     return 1
   fi
   sed "s|postfix:10025|${postfix_ip}:10025|" /etc/clamsmtpd.conf > /tmp/clamsmtpd.conf

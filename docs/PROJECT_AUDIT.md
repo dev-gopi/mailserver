@@ -31,8 +31,9 @@ deliberately does not delete your existing local files.
 2. DKIM signing is generated per verified domain and shared with OpenDKIM through the
    `dkimkeys` volume. Publish the generated `mail._domainkey` TXT record and verify signing
    before production use.
-3. Do not expose PostgreSQL, SpamAssassin, ClamAV, plain IMAP, or plain POP3 publicly. The API
-   binds to loopback; expose it only through an authenticated HTTPS reverse proxy.
+3. Do not expose PostgreSQL, Redis, SpamAssassin, ClamAV, or the admin API publicly. The API
+   has no host port mapping; the admin UI is HTTPS-only and loopback-bound by default. IMAP/POP3
+   STARTTLS ports are not published by default, and Dovecot requires TLS for every IMAP/POP3 session.
 4. Replace `mail.local` with a domain you control, publish MX/SPF/DKIM/DMARC records, and
    obtain a publicly trusted TLS certificate.
 
@@ -44,13 +45,19 @@ deliberately does not delete your existing local files.
    in a private environment.
 4. Add off-host encrypted backups for `dbdata` and `maildata`, fail2ban, certificate renewal,
    and operational log retention.
+5. Complete the end-to-end internal and external delivery tests in `docs/MILESTONE_01.md`.
 
 ## Implemented hardening
 
 - Postfix and Dovecot database connection settings are injected from Compose environment values.
 - Mailbox and alias delivery views require an active, DNS-verified domain.
 - SMTP listeners apply ClamAV once, reinject through SpamAssassin, and avoid filter recursion.
-- Plain IMAP and POP3 host ports are not published by Compose.
+- Plain IMAP and POP3 host ports are not published by the default Compose configuration.
+- SMTP AUTH is disabled on port 25 and only enabled on TLS-protected submission ports.
+- Dovecot refuses PLAIN/LOGIN authentication until TLS is active.
+- The admin console is HTTPS-only and bound to loopback by default.
+- TLS certificate/key bind mounts no longer mask the container system CA bundle.
+- Postfix and Dovecot have service readiness health checks.
 - Postfix SQL lookup files are readable by the Postfix service group without being world-readable.
 - Admin API validation includes bounded credentials, IANA timezone validation, XML escaping,
   safe audit pagination, and JSON error responses.

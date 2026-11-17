@@ -12,10 +12,9 @@
 smtp      inet n       -       n       -       -       smtpd
   # Inbound SMTP: scan through ClamAV before delivery
   -o content_filter=clamav:clamav:10026
-  # Permit authenticated legacy clients that explicitly select "None" for
-  # connection security on port 25. Credentials are exposed on the network;
-  # use submission (587 STARTTLS) or smtps (465) whenever possible.
-  -o smtpd_tls_auth_only=no
+  # Server-to-server SMTP on port 25 never offers AUTH. User submission must
+  # use port 587 (STARTTLS) or 465 (implicit TLS).
+  -o smtpd_sasl_auth_enable=no
 #smtp      inet  n       -       y       -       1       postscreen
 #smtpd     pass  -       -       y       -       -       smtpd
 #dnsblog   unix  -       -       y       -       0       dnsblog
@@ -43,8 +42,8 @@ smtps     inet  n       -       n       -       -       smtpd
   -o syslog_name=postfix/smtps
   -o smtpd_tls_wrappermode=yes
   -o smtpd_tls_security_level=encrypt
-  -o smtpd_tls_cert_file=/etc/ssl/certs/cert.pem
-  -o smtpd_tls_key_file=/etc/ssl/certs/privkey.key
+  -o smtpd_tls_cert_file=/etc/mailcore/tls/cert.pem
+  -o smtpd_tls_key_file=/etc/mailcore/tls/privkey.key
   -o smtpd_sasl_auth_enable=yes
 #  -o smtpd_reject_unlisted_recipient=no
 #  -o smtpd_client_restrictions=$mua_client_restrictions
@@ -171,7 +170,7 @@ scan      unix  -       -       n       -       10      smtp
   -o content_filter=spamassassin
   -o smtpd_tls_security_level=none
   -o smtpd_sasl_auth_enable=no
-  -o mynetworks=127.0.0.0/8,[::ffff:127.0.0.0]/104,[::1]/128,172.16.0.0/12,172.30.0.0/28
+  -o mynetworks=127.0.0.0/8,[::ffff:127.0.0.0]/104,[::1]/128,172.30.0.0/28
   -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks
   -o smtpd_helo_restrictions=
   -o smtpd_client_restrictions=permit_mynetworks,reject

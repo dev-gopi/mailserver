@@ -27,15 +27,16 @@ compatibility_level = 3.6
 #smtpd_tls_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem
 #smtpd_tls_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
 
-smtpd_tls_cert_file=/etc/ssl/certs/cert.pem
-smtpd_tls_key_file=/etc/ssl/certs/privkey.key
+smtpd_tls_cert_file=/etc/mailcore/tls/cert.pem
+smtpd_tls_key_file=/etc/mailcore/tls/privkey.key
 smtpd_use_tls=yes
-smtpd_tls_auth_only=yes
 smtpd_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
 smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
 smtp_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
 smtp_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
 smtpd_tls_security_level=may
+smtpd_tls_auth_only = yes
+smtpd_tls_received_header = yes
 
 smtp_tls_CApath=/etc/ssl/certs
 smtp_tls_security_level=may
@@ -85,7 +86,9 @@ mydestination = localhost, localhost.localdomain
 relayhost = 
 # Only the private filtering network may reinject scanned mail on port 10025.
 # Public SMTP, submission, and SMTPS never trust the Docker service network.
-mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128 172.30.0.0/28
+# Trust loopback only on public SMTP/submission listeners. Port 10025 has its
+# own exact filter-subnet override in master.cf for ClamSMTP reinjection.
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
 mailbox_size_limit = 0
 recipient_delimiter = +
 inet_interfaces = all

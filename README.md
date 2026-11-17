@@ -83,7 +83,8 @@ not part of the active path.
    ~~~
 
    It is self-signed for `mail.local`, `localhost`, and loopback addresses, and
-   must not be used for public clients.
+   must not be used for public clients. The same certificate is used by Postfix,
+   Dovecot, and the HTTPS admin UI.
 
 4. Validate, build, and start:
 
@@ -92,10 +93,7 @@ not part of the active path.
    docker compose up --build -d
    ~~~
 
-5. Visit `http://localhost:8080/`. Sign in using `MAIL_ADMIN_USERNAME` and its
-   matching unhashed password, then change the initial password when prompted.
-   API docs are at `http://localhost:8080/docs/`; the health probe is
-   `http://localhost:8080/health`.
+5. Visit `https://localhost:8443/`. The development certificate is self-signed, so your browser will show a certificate warning until you explicitly trust it. Sign in using `MAIL_ADMIN_USERNAME` and its matching unhashed password, then change the initial password when prompted. API docs are at `https://localhost:8443/docs/`; the health probe is `https://localhost:8443/health`.
 
 The initial database seed runs only when the `dbdata` volume is empty. It
 creates the initial owner and a verified `MAIL_DOMAIN` record for local
@@ -105,26 +103,32 @@ testing. Changing seed variables does not modify an existing database.
 
 | Host variable | Default | Service | Purpose |
 | --- | ---: | --- | --- |
-| `SMTP_PORT` | 25 | Postfix | SMTP server-to-server mail and legacy plaintext client submission (insecure) |
-| `SUBMISSION_PORT` | 587 | Postfix | STARTTLS SMTP submission |
-| `SMTPS_PORT` | 465 | Postfix | Implicit-TLS SMTP submission |
+| `SMTP_PORT` | 25 | Postfix | Server-to-server SMTP; AUTH is disabled on this listener |
+| `SUBMISSION_PORT` | 587 | Postfix | Authenticated submission with mandatory STARTTLS |
+| `SMTPS_PORT` | 465 | Postfix | Authenticated submission with implicit TLS |
 | `IMAPS_PORT` | 993 | Dovecot | IMAP over TLS |
-| `IMAP_STARTTLS_PORT` | 143 | Dovecot | IMAP with STARTTLS |
-| `POP3S_PORT` | 995 | Dovecot | POP3 over TLS |
-| `POP3_STARTTLS_PORT` | 110 | Dovecot | POP3 with STARTTLS |
-| `ADMIN_UI_PORT` | 8080 | Admin UI | HTTP console and proxied API |
+| `POP3S_PORT` | 995 | Dovecot | POP3 over TLS (optional for clients) |
+| `ADMIN_UI_BIND_ADDRESS` | 127.0.0.1 | Admin UI | Host interface used for the HTTPS console binding |
+| `ADMIN_UI_HTTPS_PORT` | 8443 | Admin UI | HTTPS administration console |
 
-Mail clients send through SMTP and read through IMAP or POP3. Secure client
-configuration is the default: SMTP 587 (STARTTLS) or 465 (implicit TLS), and
-IMAP 993 or POP3 995. For legacy clients, SMTP 25, IMAP 143, and POP3 110 also
-accept authentication without TLS. Plaintext authentication exposes mailbox
-passwords to anyone who can observe the connection; restrict those ports to a
-trusted private network or firewall them off when they are not needed.
+Ports 143 (IMAP STARTTLS) and 110 (POP3 STARTTLS) are **not published by the
+default Compose file**. Dovecot still listens on them inside its container,
+and Dovecot requires TLS for the entire session (`ssl = required`). PLAIN/LOGIN
+authentication is never accepted before STARTTLS has been negotiated. When an older client requires
+STARTTLS, explicitly opt in with:
 
-PostgreSQL, Redis, SpamAssassin, ClamAV, OpenDKIM, and the API have no host
-port mappings. The dashboard is plain HTTP by default: retain local/trusted
-network access or place it behind an authenticated HTTPS reverse proxy before
-remote use.
+~~~sh
+IMAP_STARTTLS_ENABLED=true POP3_STARTTLS_ENABLED=true docker compose -f docker-compose.yml -f docker-compose.legacy-starttls.yml config
+IMAP_STARTTLS_ENABLED=true POP3_STARTTLS_ENABLED=true docker compose -f docker-compose.yml -f docker-compose.legacy-starttls.yml up -d
+~~~
+
+SMTP port 25 is for server-to-server delivery and does not offer SMTP AUTH.
+Mailbox clients must use 587 (STARTTLS) or 465 (implicit TLS). PostgreSQL,
+Redis, SpamAssassin, ClamAV, OpenDKIM, and the API have no host port mappings.
+The admin UI has no host HTTP mapping: it is HTTPS-only and loopback-bound by
+default. For remote administration, prefer a VPN and set
+`ADMIN_UI_BIND_ADDRESS` to the VPN interface address; do not bind it to all
+interfaces without an explicit firewall policy.
 
 ## Administrator workflow
 
@@ -160,14 +164,14 @@ For each public domain, publish the values from its DNS setup view. At minimum:
 - One valid SPF TXT record, the generated DKIM TXT record, and a DMARC TXT
   record
 
-Install a trusted certificate for `MAIL_HOSTNAME` at:
+Install a trusted certificate whose Subject Alternative Names cover `MAIL_HOSTNAME` and the admin-console hostname at:
 
 ~~~text
 secrets/tls/cert.pem
 secrets/tls/privkey.key
 ~~~
 
-They are mounted read-only into Postfix and Dovecot. The provided
+They are mounted read-only into Postfix, Dovecot, and the admin UI. The dedicated mount path preserves the operating-system CA bundle inside each image. The provided
 `infrastructure/tls/renew.sh` runs Certbot in webroot mode, but you must
 arrange ACME reachability, DNS/firewall policy, and certificate deployment.
 
@@ -177,7 +181,7 @@ patching, or deliverability monitoring.
 
 ## Filtering and delivery
 
-- SMTP listeners send mail to ClamSMTP on the internal filtering network.
+- SMTP listeners send mail to ClamSMTP on the internal filtering network. Only the filter subnet is trusted by the private Postfix reinjection listener; ClamSMTP resolves Postfix through a network-scoped filter alias.
 - Malware found by ClamAV is dropped.
 - Clean mail returns to Postfix on port 10025, then passes through
   SpamAssassin.
@@ -252,6 +256,8 @@ docker compose down
 mailboxes, database state, DKIM keys, and filtering data. Use it only for a
 deliberate disposable reset.
 
+Run `./infrastructure/tests/milestone-01-check.sh` after the stack is up to validate the effective Postfix/Dovecot TLS policy, certificate mounts, Nginx configuration, and published-port policy. See [Milestone 01: core infrastructure hardening and mail-flow verification](docs/MILESTONE_01.md) for the internal delivery, external delivery, relay, and DNS verification runbook.
+
 Read [the project audit](docs/PROJECT_AUDIT.md) before public exposure. Keep
 any local integration-test evidence alongside the deployment rather than
 treating it as a substitute for production deliverability testing.
@@ -273,5 +279,7 @@ infrastructure/
   database/init/   Schema and initial administrator seed
   monitor/         API-health monitor
   tls/             Development certificate and renewal helpers
-docs/              Audit and integration documentation
+  tests/           Runtime validation scripts
+scripts/           Compose policy checks
+docs/              Audit, milestone, and integration documentation
 ~~~

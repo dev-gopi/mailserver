@@ -1158,8 +1158,8 @@ async function openClientGuide(address = "", domain = "") {
   $("guide-smtp-host").textContent = config.outgoing.hostname;
   $("guide-smtp-user").textContent = userAddr;
   $("guide-imap-port").textContent = config.incoming.port;
-  $("guide-imap-alt-port").textContent = config.incoming.alternativePort;
-  $("guide-pop3-alt-port").textContent = config.pop3.alternativePort;
+  $("guide-imap-alt-port").textContent = config.incoming.alternativePort ?? "Disabled";
+  $("guide-pop3-alt-port").textContent = config.pop3.alternativePort ?? "Disabled";
   $("guide-pop3-port").textContent = config.pop3.port;
   $("guide-smtp-port").textContent = config.outgoing.port;
   $("guide-smtp-alt-port").textContent = config.outgoing.alternativePort;
@@ -1910,8 +1910,8 @@ function renderConnectionHelp(config) {
   if (imapEl) imapEl.textContent = config.incoming.hostname;
   if (smtpEl) smtpEl.textContent = config.outgoing.hostname;
   $("help-imap-port").textContent = config.incoming.port;
-  $("help-imap-alt-port").textContent = config.incoming.alternativePort;
-  $("help-pop3-alt-port").textContent = config.pop3.alternativePort;
+  $("help-imap-alt-port").textContent = config.incoming.alternativePort ?? "Disabled";
+  $("help-pop3-alt-port").textContent = config.pop3.alternativePort ?? "Disabled";
   $("help-pop3-port").textContent = config.pop3.port;
   $("help-smtp-port").textContent = config.outgoing.port;
   $("help-smtp-alt-port").textContent = config.outgoing.alternativePort;
@@ -2417,7 +2417,7 @@ function renderServicesLatencyChart(services) {
   const list = Array.isArray(services) && services.length > 0 ? services : [
     { service: "postgresql", displayName: "PostgreSQL 16", port: 5432, status: "healthy", latencyMs: 2 },
     { service: "postfix", displayName: "Postfix MTA (SMTP)", port: 25, status: "healthy", latencyMs: 4 },
-    { service: "dovecot", displayName: "Dovecot MDA (IMAP)", port: 143, status: "healthy", latencyMs: 5 },
+    { service: "dovecot", displayName: "Dovecot MDA (IMAPS)", port: 993, status: "healthy", latencyMs: 5 },
     { service: "spamassassin", displayName: "SpamAssassin Filter", port: 783, status: "healthy", latencyMs: 8 },
     { service: "clamav", displayName: "ClamAV Anti-Virus", port: 3310, status: "healthy", latencyMs: 12 },
     { service: "redis", displayName: "Redis Task Queue", port: 6379, status: "healthy", latencyMs: 3 }

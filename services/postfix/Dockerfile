@@ -27,7 +27,8 @@ RUN groupadd -g 5000 vmail && \
     usermod -aG vmail postfix && \
     useradd --system --no-create-home --shell /usr/sbin/nologin spamfilter
 
-RUN mv /etc/postfix/main.cf /etc/postfix/main.cf.bk
+RUN mkdir -p /etc/mailcore/tls && \
+    mv /etc/postfix/main.cf /etc/postfix/main.cf.bk
 RUN mv /etc/postfix/master.cf /etc/postfix/master.cf.bk
 
 COPY main.cf /etc/postfix/main.cf

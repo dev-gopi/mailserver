@@ -108,15 +108,18 @@ services:
     build: ./services/postfix
     volumes:
       - maildata:/var/mail/vhosts
-      - ./secrets/tls:/etc/ssl/certs:ro
+      - ./secrets/tls/cert.pem:/etc/mailcore/tls/cert.pem:ro
+      - ./secrets/tls/privkey.key:/etc/mailcore/tls/privkey.key:ro
       - mailspool:/var/spool/postfix
     ports:
       - "${SMTP_PORT:?set SMTP_PORT in .env}:25"
       - "${SUBMISSION_PORT:?set SUBMISSION_PORT in .env}:587"
       - "${SMTPS_PORT:?set SMTPS_PORT in .env}:465"
     networks:
-      - mailnet
-      - filternet
+      mailnet: {}
+      filternet:
+        aliases:
+          - postfix-filter
     restart: unless-stopped
     logging: *service-logging
     environment:
@@ -139,22 +142,26 @@ services:
       opendkim:
         condition: service_healthy
       dovecot:
-        condition: service_started
+        condition: service_healthy
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "postfix status >/dev/null 2>&1 && bash -c '</dev/tcp/127.0.0.1/25' && bash -c '</dev/tcp/127.0.0.1/587' && bash -c '</dev/tcp/127.0.0.1/465'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   dovecot:
     build: ./services/dovecot
     volumes:
       - maildata:/var/mail/vhosts
-      - ./secrets/tls:/etc/ssl/certs:ro
-      - ./secrets/tls:/etc/dovecot/private:ro
+      - ./secrets/tls/cert.pem:/etc/mailcore/tls/cert.pem:ro
+      - ./secrets/tls/privkey.key:/etc/mailcore/tls/privkey.key:ro
       - mailspool:/var/spool/postfix
     ports:
       - "${IMAPS_PORT:?set IMAPS_PORT in .env}:993"
       - "${POP3S_PORT:?set POP3S_PORT in .env}:995"
-      - "${IMAP_STARTTLS_PORT:-143}:143"
-      - "${POP3_STARTTLS_PORT:-110}:110"
     networks:
       - mailnet
     restart: unless-stopped
@@ -170,6 +177,12 @@ services:
       - MAIL_DB_USER=${POSTGRES_USER:?set POSTGRES_USER in .env}
     depends_on:
       - db
+    healthcheck:
+      test: ["CMD-SHELL", "doveconf -n >/dev/null 2>&1 && bash -c '</dev/tcp/127.0.0.1/993' && bash -c '</dev/tcp/127.0.0.1/995'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   db:
     image: postgres:16
@@ -258,6 +271,8 @@ services:
       DMARC_POLICY: ${DMARC_POLICY:-quarantine}
       IMAPS_PORT: ${IMAPS_PORT:?set IMAPS_PORT in .env}
       IMAP_STARTTLS_PORT: ${IMAP_STARTTLS_PORT:?set IMAP_STARTTLS_PORT in .env}
+      IMAP_STARTTLS_ENABLED: ${IMAP_STARTTLS_ENABLED:-false}
+      POP3_STARTTLS_ENABLED: ${POP3_STARTTLS_ENABLED:-false}
       POP3S_PORT: ${POP3S_PORT:?set POP3S_PORT in .env}
       POP3_STARTTLS_PORT: ${POP3_STARTTLS_PORT:?set POP3_STARTTLS_PORT in .env}
       SMTP_PORT: ${SMTP_PORT:?set SMTP_PORT in .env}
@@ -288,7 +303,10 @@ services:
   admin-ui:
     build: ./apps/admin-ui
     ports:
-      - "${ADMIN_UI_PORT:?set ADMIN_UI_PORT in .env}:80"
+      - "${ADMIN_UI_BIND_ADDRESS:-127.0.0.1}:${ADMIN_UI_HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./secrets/tls/cert.pem:/etc/nginx/tls/cert.pem:ro
+      - ./secrets/tls/privkey.key:/etc/nginx/tls/privkey.key:ro
     environment:
       ADMIN_UI_API_HOST: ${ADMIN_UI_API_HOST:?set ADMIN_UI_API_HOST in .env}
       ADMIN_UI_API_PORT: ${API_PORT:?set API_PORT in .env}

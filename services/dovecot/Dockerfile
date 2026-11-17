@@ -19,7 +19,8 @@ RUN apt update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -g 5000 vmail && \
+RUN mkdir -p /etc/mailcore/tls && \
+    groupadd -g 5000 vmail && \
     useradd -u 5000 -g vmail -d /var/mail -s /usr/sbin/nologin vmail
 
 COPY config/dovecot-sql.conf.ext /etc/dovecot/dovecot-sql.conf.ext

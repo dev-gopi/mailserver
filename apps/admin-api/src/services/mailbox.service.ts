@@ -282,16 +282,16 @@ export class MailboxService {
         socketType: "SSL/TLS",
         authentication: "Normal password",
         username: email,
-        alternativePort: env.client.imapAlternativePort,
-        alternativeSocketType: "STARTTLS or None (insecure)"
+        alternativePort: env.client.imapStarttlsEnabled ? env.client.imapAlternativePort : null,
+        alternativeSocketType: env.client.imapStarttlsEnabled ? "STARTTLS (TLS required)" : "Disabled by default"
       },
       pop3: {
         protocol: "POP3",
         hostname: mailHost,
         port: env.client.pop3Port,
-        alternativePort: env.client.pop3AlternativePort,
+        alternativePort: env.client.pop3StarttlsEnabled ? env.client.pop3AlternativePort : null,
         socketType: "SSL/TLS",
-        alternativeSocketType: "STARTTLS or None (insecure)",
+        alternativeSocketType: env.client.pop3StarttlsEnabled ? "STARTTLS (TLS required)" : "Disabled by default",
         authentication: "Normal password",
         username: email
       },
@@ -303,7 +303,7 @@ export class MailboxService {
         alternativePort: env.client.smtpAlternativePort,
         alternativeSocketType: "SSL/TLS",
         plaintextPort: env.client.smtpPlainPort,
-        plaintextSocketType: "None (insecure)",
+        plaintextSocketType: "Server-to-server only; SMTP AUTH disabled",
         authentication: "Normal password",
         username: email
       },

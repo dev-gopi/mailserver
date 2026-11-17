@@ -36,8 +36,10 @@ export const env = {
   client: {
     imapPort: Number(process.env.IMAPS_PORT ?? 993),
     imapAlternativePort: Number(process.env.IMAP_STARTTLS_PORT ?? 143),
+    imapStarttlsEnabled: (process.env.IMAP_STARTTLS_ENABLED ?? "false").toLowerCase() === "true",
     pop3Port: Number(process.env.POP3S_PORT ?? 995),
     pop3AlternativePort: Number(process.env.POP3_STARTTLS_PORT ?? 110),
+    pop3StarttlsEnabled: (process.env.POP3_STARTTLS_ENABLED ?? "false").toLowerCase() === "true",
     smtpPlainPort: Number(process.env.SMTP_PORT ?? 25),
     smtpPort: Number(process.env.SUBMISSION_PORT ?? 587),
     smtpAlternativePort: Number(process.env.SMTPS_PORT ?? 465)
