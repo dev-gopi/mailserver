@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Controlled single-container restart simulation. Staging only and explicitly armed.
 set -Eeuo pipefail
-: "${M08_ENVIRONMENT:?Set M08_ENVIRONMENT=staging; production simulations are not permitted by this helper}"
-[[ "$M08_ENVIRONMENT" == staging ]] || { echo "Failure simulation is restricted to M08_ENVIRONMENT=staging" >&2; exit 2; }
+: "${ENVIRONMENT:?Set ENVIRONMENT=staging; production simulations are not permitted by this helper}"
+[[ "$ENVIRONMENT" == staging ]] || { echo "Failure simulation is restricted to ENVIRONMENT=staging" >&2; exit 2; }
 : "${ALLOW_FAILURE_SIMULATION:?Set ALLOW_FAILURE_SIMULATION=YES to arm this test}"
 [[ "$ALLOW_FAILURE_SIMULATION" == YES ]] || { echo "Simulation not armed" >&2; exit 2; }
 service="${1:-}"

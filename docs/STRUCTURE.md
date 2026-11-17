@@ -33,8 +33,8 @@ infrastructure/
   backup/                    Backup helper script
   tls/                       Development certificate and Certbot helpers
   tests/                     Runtime validation scripts
-scripts/                     Static Compose and milestone checks
-docs/                        Architecture, audit and milestone runbooks
+scripts/                     Static Compose checks
+docs/                        Architecture and audit documentation
 ```
 
 ## Runtime topology
@@ -97,7 +97,7 @@ The API also mounts the host `./backups` directory.
 - Docker volumes and `backups/` are runtime data, not source-controlled config.
 
 
-## Event subsystem (Milestone 06)
+## Event subsystem
 
 - `apps/admin-api/src/utils/event.utils.ts`: event classification, details sanitization, Postfix log parsing and CSV-safe cells.
 - `apps/admin-api/src/repositories/event.repository.ts`: event persistence, search, metrics, alert rules, notification reads, retention, and outbox operations.

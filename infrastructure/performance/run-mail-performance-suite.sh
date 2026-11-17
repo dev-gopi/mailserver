@@ -3,8 +3,8 @@
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
-: "${M08_ENVIRONMENT:?Set M08_ENVIRONMENT=staging}"
-[[ "$M08_ENVIRONMENT" == staging ]] || { echo 'Mail performance suite is restricted to staging' >&2; exit 2; }
+: "${ENVIRONMENT:?Set ENVIRONMENT=staging}"
+[[ "$ENVIRONMENT" == staging ]] || { echo 'Mail performance suite is restricted to staging' >&2; exit 2; }
 : "${ALLOW_MAIL_LOAD_TEST:?Set ALLOW_MAIL_LOAD_TEST=YES to send test messages/open test sessions}"
 [[ "$ALLOW_MAIL_LOAD_TEST" == YES ]] || { echo 'Mail load test is not armed' >&2; exit 2; }
 profile="${1:-smoke}"
@@ -18,7 +18,7 @@ case "$profile" in
 esac
 smtp="infrastructure/performance/smtp_load.py"
 imap="infrastructure/performance/imap_load.py"
-config="${M08_LOAD_TEST_ENV_FILE:-infrastructure/performance/load-test.env}"
+config="${LOAD_TEST_ENV_FILE:-infrastructure/performance/load-test.env}"
 [[ -f "$config" && ! -L "$config" ]] || { echo "Private load-test settings missing: $config" >&2; exit 2; }
 mode="$(stat -c '%a' "$config")"
 (( (8#$mode & 077) == 0 )) || { echo 'Load-test settings must be chmod 600' >&2; exit 2; }

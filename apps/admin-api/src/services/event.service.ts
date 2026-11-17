@@ -63,6 +63,7 @@ export class EventService extends EventEmitter {
   async notifications(adminId: number, unreadOnly = false, limit = 50) { return eventRepository.listNotifications(adminId, unreadOnly, limit); }
   async unreadCount(adminId: number) { return eventRepository.countUnreadNotifications(adminId); }
   async markNotificationRead(adminId: number, id: string) { return eventRepository.markNotificationRead(adminId, id); }
+  async acknowledgeNotification(adminId: number, id: string) { return eventRepository.acknowledgeNotification(adminId, id); }
   async markAllNotificationsRead(adminId: number) { return eventRepository.markAllNotificationsRead(adminId); }
   async alertRules() { return eventRepository.listAlertRules(); }
   async retentionSettings() { return eventRepository.getRetentionSettings(); }

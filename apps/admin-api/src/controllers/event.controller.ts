@@ -212,6 +212,14 @@ export class EventController {
     return res.json({ success: true, unreadCount: await eventService.unreadCount(req.admin!.id) });
   }
 
+  async acknowledgeNotification(req: Request, res: Response) {
+    const id = String(req.params.id);
+    const acknowledged = await eventService.acknowledgeNotification(req.admin!.id, id);
+    if (!acknowledged) return res.status(404).json({ error: "Notification not found" });
+    await auditService.log(req, "event.notification.acknowledged", "event_notification", id, { acknowledged: true });
+    return res.json({ success: true, acknowledged: true, unreadCount: await eventService.unreadCount(req.admin!.id) });
+  }
+
   async markAllNotificationsRead(req: Request, res: Response) {
     const updated = await eventService.markAllNotificationsRead(req.admin!.id);
     return res.json({ success: true, updated, unreadCount: 0 });

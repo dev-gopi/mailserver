@@ -138,6 +138,7 @@ adminRouter.get("/events/export", requireRoles("admin"), validate({ query: event
 adminRouter.get("/events/stream", requireRoles("admin"), eventController.stream);
 adminRouter.get("/events/notifications", requireRoles("admin"), validate({ query: eventNotificationQuerySchema }), eventController.notifications);
 adminRouter.patch("/events/notifications/:id/read", requireRoles("admin"), validate({ params: eventNotificationIdParamSchema }), eventController.markNotificationRead);
+adminRouter.post("/events/notifications/:id/acknowledge", requireRoles("admin"), validate({ params: eventNotificationIdParamSchema }), eventController.acknowledgeNotification);
 adminRouter.post("/events/notifications/read-all", requireRoles("admin"), eventController.markAllNotificationsRead);
 adminRouter.get("/events/alert-rules", requireRoles("admin"), eventController.listAlertRules);
 adminRouter.post("/events/alert-rules", requireRoles("owner"), validate({ body: eventAlertRuleCreateSchema }), eventController.createAlertRule);

@@ -2,8 +2,8 @@
 # Proves that a job left in the Redis processing list is recovered after API restart.
 # The intentionally unknown job is expected to reach the dead-letter list and is removed afterwards.
 set -Eeuo pipefail
-: "${M08_ENVIRONMENT:?Set M08_ENVIRONMENT=staging}"
-[[ "$M08_ENVIRONMENT" == staging ]] || { echo 'Queue recovery drill is staging-only' >&2; exit 2; }
+: "${ENVIRONMENT:?Set ENVIRONMENT=staging}"
+[[ "$ENVIRONMENT" == staging ]] || { echo 'Queue recovery drill is staging-only' >&2; exit 2; }
 : "${ALLOW_QUEUE_RECOVERY_DRILL:?Set ALLOW_QUEUE_RECOVERY_DRILL=YES to restart the API container}"
 [[ "$ALLOW_QUEUE_RECOVERY_DRILL" == YES ]] || { echo 'Queue recovery drill is not armed' >&2; exit 2; }
 command -v docker >/dev/null 2>&1 || { echo 'Docker is required' >&2; exit 127; }
@@ -11,13 +11,13 @@ docker compose ps --format '{{.State}}' app | grep -qx running || { echo 'API co
 docker compose ps --format '{{.State}}' redis | grep -qx running || { echo 'Redis container must be running' >&2; exit 1; }
 
 probe_id="m08-recovery-$(date +%s)-$RANDOM"
-export M08_QUEUE_TEST_ID="$probe_id"
+export QUEUE_TEST_ID="$probe_id"
 cleanup_probe() {
   docker compose exec -T app node - <<'NODE' >/dev/null 2>&1 || true
 const fs = require('node:fs');
 const { createClient } = require('redis');
 (async () => {
-  const id = process.env.M08_QUEUE_TEST_ID;
+  const id = process.env.QUEUE_TEST_ID;
   const password = fs.readFileSync(process.env.REDIS_PASSWORD_FILE, 'utf8').trim();
   const client = createClient({ socket: { host: process.env.REDIS_HOST, port: Number(process.env.REDIS_PORT) }, password });
   client.on('error', () => {});
@@ -36,7 +36,7 @@ NODE
 trap cleanup_probe EXIT
 
 echo "[INFO] Injecting isolated processing-list probe $probe_id"
-docker compose exec -T -e M08_QUEUE_TEST_ID="$probe_id" app node - <<'NODE'
+docker compose exec -T -e QUEUE_TEST_ID="$probe_id" app node - <<'NODE'
 const fs = require('node:fs');
 const { createClient } = require('redis');
 (async () => {
@@ -46,8 +46,8 @@ const { createClient } = require('redis');
   await client.connect();
   const queue = process.env.REDIS_QUEUE || 'mail_tasks';
   const job = {
-    id: process.env.M08_QUEUE_TEST_ID,
-    name: 'm08.recovery.probe', data: { milestone: 8 },
+    id: process.env.QUEUE_TEST_ID,
+    name: 'recovery.probe', data: { source: 'recovery-drill' },
     status: 'processing', attempts: 0, maxAttempts: 1, createdAt: Date.now()
   };
   await client.lPush(`${queue}:processing`, JSON.stringify(job));
@@ -66,11 +66,11 @@ for _ in $(seq 1 60); do
 done
 [[ "$(docker compose ps --format '{{.State}}' app | tail -n1)" == running ]] || { echo 'API did not return to running state' >&2; exit 1; }
 
-docker compose exec -T -e M08_QUEUE_TEST_ID="$probe_id" app node - <<'NODE'
+docker compose exec -T -e QUEUE_TEST_ID="$probe_id" app node - <<'NODE'
 const fs = require('node:fs');
 const { createClient } = require('redis');
 (async () => {
-  const id = process.env.M08_QUEUE_TEST_ID;
+  const id = process.env.QUEUE_TEST_ID;
   const password = fs.readFileSync(process.env.REDIS_PASSWORD_FILE, 'utf8').trim();
   const client = createClient({ socket: { host: process.env.REDIS_HOST, port: Number(process.env.REDIS_PORT) }, password });
   client.on('error', () => {});

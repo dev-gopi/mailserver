@@ -204,6 +204,11 @@ export async function runMigrations(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_event_notifications_time
         ON event_notifications (admin_id, id DESC);
 
+      ALTER TABLE event_notifications ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ;
+      ALTER TABLE event_notifications ADD COLUMN IF NOT EXISTS acknowledged_by BIGINT REFERENCES admins(id) ON DELETE SET NULL;
+      CREATE INDEX IF NOT EXISTS idx_event_notifications_unacknowledged
+        ON event_notifications (admin_id, severity, created_at DESC) WHERE acknowledged_at IS NULL;
+
       CREATE TABLE IF NOT EXISTS event_retention_settings (
         id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
         retention_days INTEGER NOT NULL DEFAULT 90 CHECK (retention_days BETWEEN 7 AND 3650),

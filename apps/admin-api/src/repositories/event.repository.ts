@@ -160,7 +160,7 @@ export class EventRepository {
   async listNotifications(adminId: number, unreadOnly = false, limit = 50) {
     const result = await db.query(
       `SELECT id::text AS id, event_id::text AS event_id, category, severity, title, message,
-              created_at, read_at
+              created_at, read_at, acknowledged_at, acknowledged_by
        FROM event_notifications WHERE admin_id = $1 AND ($2::boolean = false OR read_at IS NULL)
        ORDER BY id DESC LIMIT $3`, [adminId, unreadOnly, Math.min(100, Math.max(1, limit))]
     );
@@ -177,6 +177,18 @@ export class EventRepository {
   async markNotificationRead(adminId: number, id: string): Promise<boolean> {
     const result = await db.query(
       "UPDATE event_notifications SET read_at = COALESCE(read_at, now()) WHERE id = $1::bigint AND admin_id = $2 RETURNING id", [id, adminId]
+    );
+    return result.rowCount === 1;
+  }
+
+  async acknowledgeNotification(adminId: number, id: string): Promise<boolean> {
+    const result = await db.query(
+      `UPDATE event_notifications
+       SET acknowledged_at = COALESCE(acknowledged_at, now()),
+           acknowledged_by = COALESCE(acknowledged_by, $2),
+           read_at = COALESCE(read_at, now())
+       WHERE id = $1::bigint AND admin_id = $2
+       RETURNING id`, [id, adminId]
     );
     return result.rowCount === 1;
   }

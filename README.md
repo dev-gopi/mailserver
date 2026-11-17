@@ -184,9 +184,7 @@ send it as `Authorization: Bearer <token>`. Cookie-authenticated write requests
 must include the `mailcore_admin_csrf` cookie value in the `X-CSRF-Token` header.
 
 Keep `secrets/runtime/auth_encryption_key` safe and unchanged: altering it can
-make existing encrypted TOTP data unusable. See
-[`docs/MILESTONE_03.md`](docs/MILESTONE_03.md) for the security design and
-upgrade procedure.
+make existing encrypted TOTP data unusable.
 
 Useful authenticated API areas:
 
@@ -247,7 +245,7 @@ patching, or deliverability monitoring.
   alone does not constitute a malware verdict. The interactive scan endpoint is
   owner/admin-only and rate-limited to 10 scans per minute per client. These
   policy thresholds are tracked in configuration; a dynamic policy editor is
-  not part of Milestone 04.
+  available in the administration console.
 - The optional SpamAssassin profile is not active by default and must not be
   enabled as a second production filter without a reviewed A/B plan.
 - The admin Quarantine page exposes held-message metadata only, not message
@@ -259,9 +257,6 @@ patching, or deliverability monitoring.
 - Dovecot stores Maildir data in `maildata` and reads virtual mailbox/alias
   configuration from PostgreSQL. OpenDKIM signs mail with per-domain keys
   managed by the administration service.
-
-See [`docs/MILESTONE_04.md`](docs/MILESTONE_04.md) for the scanner topology,
-limits, quarantine workflow, test procedure, and upgrade notes.
 
 ## Backups and monitoring
 
@@ -328,8 +323,6 @@ docker compose down
 mailboxes, database state, DKIM keys, and filtering data. Use it only for a
 deliberate disposable reset.
 
-Run `./infrastructure/tests/milestone-01-check.sh` after the stack is up to validate the effective Postfix/Dovecot TLS policy, current Rspamd/OpenDKIM Milter route, scanner configuration, certificate mounts, Nginx configuration, and published-port policy. Run `./infrastructure/tests/milestone-04-runtime.sh` for scanner-path and queue-bridge probes. See [Milestone 01: core infrastructure hardening and mail-flow verification](docs/MILESTONE_01.md) for the internal delivery, external delivery, relay, and DNS verification runbook.
-
 Read [the project audit](docs/PROJECT_AUDIT.md) before public exposure. Keep
 any local integration-test evidence alongside the deployment rather than
 treating it as a substitute for production deliverability testing.
@@ -353,34 +346,32 @@ infrastructure/
   monitor/         API-health monitor
   tls/             Development certificate and renewal helpers
   tests/           Runtime validation scripts
-scripts/           Compose and milestone policy checks
-docs/              Audit, milestone, and integration documentation
+scripts/           Compose validation utilities
+docs/              Architecture and audit documentation
 ~~~
 
+## Security hardening
 
-## Security hardening (Milestone 02)
-
-Milestone 02 adds API-enforced administrator roles, idle and absolute session
+The service provides API-enforced administrator roles, idle and absolute session
 expiry, a concurrent-session cap, administrator session revocation endpoints,
 stronger authentication rate limits, MFA/passkey failure handling, a session
 review/revocation panel in Security & 2FA, and an isolated internal network for
-PostgreSQL and Redis. See
-[`docs/MILESTONE_02.md`](docs/MILESTONE_02.md) for the permission matrix,
-configuration, and verification steps.
+PostgreSQL and Redis.
 
-## Advanced email security (Milestone 04)
+## Advanced email security
 
-Milestone 04 enables Rspamd as the active Postfix Milter, ClamAV INSTREAM
+Rspamd is the active Postfix Milter with ClamAV INSTREAM
 scanning, fail-closed scanner behavior, Bayesian state in authenticated Redis,
 MIME attachment risk scoring, an admin spam-diagnostic endpoint, and an
-audited Postfix HOLD quarantine view. Run `node scripts/check-milestone-04.mjs`
-for static checks and `infrastructure/tests/milestone-04-runtime.sh` against the
-started Docker stack. Held mail requires a documented retention/review policy. The admin release path re-scans the exact held message through Rspamd and ClamAV and verifies the queue content hash before releasing it; the legacy direct-release command is disabled.
+audited Postfix HOLD quarantine view. Held mail requires a documented
+retention/review policy. The admin release path re-scans the exact held message
+through Rspamd and ClamAV and verifies the queue content hash before releasing
+it; the legacy direct-release command is disabled.
 
 
-## Enterprise security policies (Milestone 05)
+## Enterprise security policies
 
-Milestone 05 completes the database-backed security-policy console for organization,
+The database-backed security-policy console supports organization,
 domain, and mailbox spam thresholds; sender/domain allowlists and blocklists;
 blocked attachment extensions; policy-change history; and scanner-verified
 quarantine release. The PostgreSQL policy tables remain the source of truth. The
@@ -388,15 +379,12 @@ API writes generated Rspamd map files to the shared named volume, and Rspamd
 monitors those files for reload. A successful API update confirms map-file
 publication, not an end-to-end scanner reload acknowledgement. Allowlisted senders
 and domains receive only a spam-score reduction: SPF, DKIM, DMARC, phishing and
-mandatory ClamAV inspection remain active. See
-[`docs/MILESTONE_05.md`](docs/MILESTONE_05.md), then run
-`node scripts/check-milestone-05.mjs` and
-`infrastructure/tests/milestone-05-runtime.sh` before relying on policy changes.
+mandatory ClamAV inspection remain active.
 
 
-## Event management and audit (Milestone 06)
+## Event management and audit
 
-Milestone 06 adds a PostgreSQL-backed `system_events` timeline and transactional
+The PostgreSQL-backed `system_events` timeline and transactional
 `event_outbox`. Administrator audit actions persist the legacy audit row, event
 record, and outbox row in one transaction. A `SKIP LOCKED` dispatcher creates
 rule-matched administrator notifications and publishes committed event IDs over
@@ -416,15 +404,10 @@ and retries database writes while the API is alive. Event retention archives
 older rows in PostgreSQL by default. The legacy `audit_log` remains separate and is
 not deleted by event retention.
 
-See [`docs/MILESTONE_06.md`](docs/MILESTONE_06.md) for sources, event semantics,
-retention, permissions, upgrade steps and operational caveats. Run
-`node scripts/check-milestone-06.mjs` for static checks and
-`infrastructure/tests/milestone-06-runtime.sh` against the running Docker stack.
-
 
 ## Monitoring and analytics
 
-Milestone 07 adds Prometheus and Grafana. The API exposes aggregate event metrics at
+Prometheus and Grafana provide monitoring. The API exposes aggregate event metrics at
 `/metrics` only to a bearer token stored in a private Docker named volume and
 reachable over the private monitoring network. A one-shot `monitoring-secrets-init`
 service creates the scrape token and Grafana admin password before the API,
@@ -434,9 +417,15 @@ port 9090 and Grafana on loopback port 3001 by default. Run
 `./infrastructure/secrets/bootstrap.sh` for the database, Redis and encryption
 credentials. Read the Grafana administrator password with
 `docker compose exec -T grafana cat /run/mailcore-secrets/grafana_admin_password`.
-See [`docs/MILESTONE_07.md`](docs/MILESTONE_07.md) for deployment and validation.
 
 
-## Milestone 08 — Performance, Reliability & Disaster Recovery
+## Security operations and enterprise hardening
 
-See [`docs/MILESTONE_08.md`](docs/MILESTONE_08.md) for SMTP/IMAPS load probes, PostgreSQL diagnostics, storage checks, hardened backups, isolated restore drills, and controlled failure simulations.
+Host-native Fail2ban protection covers Postfix, Dovecot and
+Admin UI authentication logs; versioned TLS certificate deployment with
+validated renewal and rollback; guarded PostgreSQL, Redis, monitoring and MFA
+secret rotation; S3 Object Lock verification and encrypted audit/host-state
+archives; CycloneDX SBOM and npm/Trivy/Syft scanning; and an incident ledger
+with evidence collection and HTTPS alert escalation. Live security certification
+requires host/provider evidence and controlled staging tests; repository checks
+alone do not certify a deployment.

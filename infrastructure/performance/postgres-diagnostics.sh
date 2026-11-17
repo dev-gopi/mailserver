@@ -12,7 +12,7 @@ umask 077
  tmp="$(mktemp "${out}.tmp.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
 docker compose exec -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/postgres_password)"; exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
-  < "$ROOT/infrastructure/sql/milestone-08-diagnostics.sql" > "$tmp"
+  < "$ROOT/infrastructure/sql/postgres-diagnostics.sql" > "$tmp"
 chmod 600 "$tmp"
 mv -f "$tmp" "$out"
 trap - EXIT

@@ -45,6 +45,10 @@ cp -f /etc/resolv.conf /var/spool/postfix/etc/resolv.conf 2>/dev/null || true
 cp -f /etc/hosts /var/spool/postfix/etc/hosts 2>/dev/null || true
 cp -f /etc/services /var/spool/postfix/etc/services 2>/dev/null || true
 
+# Host-visible authentication logs are consumed by host Fail2ban.
+mkdir -p /var/log/mailcore
+chmod 0750 /var/log/mailcore
+
 # Start the container-specific logger. It receives Postfix messages from
 # /dev/log and forwards every facility to Docker's stdout.
 if [ -f /run/rsyslog-postfix.pid ]; then

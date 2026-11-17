@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS mail_security_list_entries (
 );
 CREATE INDEX IF NOT EXISTS idx_mail_security_list_type_value ON mail_security_list_entries (list_type, value);
 
--- Milestone 06: durable event management and transactional notifications.
+-- Durable event management and transactional notifications.
 CREATE TABLE IF NOT EXISTS system_events (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -168,10 +168,13 @@ CREATE TABLE IF NOT EXISTS event_notifications (
   message TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   read_at TIMESTAMPTZ,
+  acknowledged_at TIMESTAMPTZ,
+  acknowledged_by BIGINT REFERENCES admins(id) ON DELETE SET NULL,
   UNIQUE (admin_id, event_id)
 );
 CREATE INDEX IF NOT EXISTS idx_event_notifications_unread ON event_notifications (admin_id, created_at DESC) WHERE read_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_event_notifications_time ON event_notifications (admin_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_event_notifications_unacknowledged ON event_notifications (admin_id, severity, created_at DESC) WHERE acknowledged_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS event_retention_settings (
   id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),

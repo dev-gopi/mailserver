@@ -172,10 +172,12 @@ services:
       - postfix_db_password
     volumes:
       - maildata:/var/mail/vhosts
-      - ./secrets/tls/cert.pem:/etc/mailcore/tls/cert.pem:ro
-      - ./secrets/tls/privkey.key:/etc/mailcore/tls/privkey.key:ro
+      # Mount the directory so atomically replaced cert/key files are visible
+      # to the daemon after a validated reload.
+      - ./secrets/tls:/etc/mailcore/tls:ro
       - mailspool:/var/spool/postfix
       - postfixeventqueue:/var/spool/rsyslog
+      - ./var/log/mailcore:/var/log/mailcore
     ports:
       - "${SMTP_PORT:?set SMTP_PORT in .env}:25"
       - "${SUBMISSION_PORT:?set SUBMISSION_PORT in .env}:587"
@@ -228,9 +230,9 @@ services:
       - dovecot_db_password
     volumes:
       - maildata:/var/mail/vhosts
-      - ./secrets/tls/cert.pem:/etc/mailcore/tls/cert.pem:ro
-      - ./secrets/tls/privkey.key:/etc/mailcore/tls/privkey.key:ro
+      - ./secrets/tls:/etc/mailcore/tls:ro
       - mailspool:/var/spool/postfix
+      - ./var/log/mailcore:/var/log/mailcore
     ports:
       - "${IMAPS_PORT:?set IMAPS_PORT in .env}:993"
       - "${POP3S_PORT:?set POP3S_PORT in .env}:995"
@@ -482,11 +484,13 @@ services:
     ports:
       - "${ADMIN_UI_BIND_ADDRESS:-127.0.0.1}:${ADMIN_UI_HTTPS_PORT:-8443}:443"
     volumes:
-      - ./secrets/tls/cert.pem:/etc/nginx/tls/cert.pem:ro
-      - ./secrets/tls/privkey.key:/etc/nginx/tls/privkey.key:ro
+      - ./secrets/tls:/etc/nginx/tls:ro
+      - ./secrets/acme-webroot:/var/www/certbot:ro
+      - ./var/log/mailcore:/var/log/mailcore:rw
     environment:
       ADMIN_UI_API_HOST: ${ADMIN_UI_API_HOST:?set ADMIN_UI_API_HOST in .env}
       ADMIN_UI_API_PORT: ${API_PORT:?set API_PORT in .env}
+      ADMIN_UI_TRUSTED_PROXY_CIDR: ${ADMIN_UI_TRUSTED_PROXY_CIDR:-127.0.0.1/32}
     networks:
       - mailnet
     restart: unless-stopped

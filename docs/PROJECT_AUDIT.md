@@ -43,9 +43,9 @@ deliberately does not delete your existing local files.
 2. Replace development credentials with secret-managed values.
 3. Test SMTP submission, LMTP delivery, Rspamd spam filtering, ClamAV INSTREAM
    antivirus scanning, and DKIM signing in a private environment.
-4. Configure the encrypted Restic off-host backup workflow in `docs/MILESTONE_08.md`, including a remote repository, immutable retention where supported, scheduled sync, and a successful isolated restore drill. The automation is implemented; remote-provider configuration and restore certification remain environment-specific.
+4. Configure the encrypted Restic off-host backup workflow, including a remote repository, immutable retention where supported, scheduled sync, and a successful isolated restore drill. The automation is implemented; remote-provider configuration and restore certification remain environment-specific.
 5. Add Fail2ban (or an equivalent edge-level abuse control), automated public TLS certificate renewal/expiry alerts, and a documented operational log-retention policy.
-6. Complete the end-to-end internal and external delivery tests in `docs/MILESTONE_01.md`, then the scanner and quarantine checks in `docs/MILESTONE_04.md`.
+6. Complete end-to-end internal and external delivery tests, followed by scanner and quarantine checks.
 
 ## Implemented hardening
 
@@ -62,7 +62,7 @@ deliberately does not delete your existing local files.
 - Admin API validation includes bounded credentials, IANA timezone validation, XML escaping,
   safe audit pagination, and JSON error responses.
 
-## Milestone 04 filtering controls
+## Filtering controls
 
 The active scan path is Postfix Milter (filternet) → Rspamd → ClamAV INSTREAM
 (clamavnet) → Postfix policy → Dovecot LMTP. Rspamd and clamd listeners bind

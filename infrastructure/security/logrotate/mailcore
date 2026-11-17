@@ -1,0 +1,11 @@
+__PROJECT_ROOT__/var/log/mailcore/*.log {
+    daily
+    rotate 30
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su root root
+    create 0640 root root
+}

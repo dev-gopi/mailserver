@@ -46,6 +46,7 @@ const state = {
 let eventStream = null;
 let eventUiRefreshTimer = null;
 let eventLoadInProgress = false;
+let lastModalTrigger = null;
 
 // DOM Helper
 const $ = (id) => document.getElementById(id);
@@ -262,12 +263,13 @@ function showToast(title, message, type = "info", duration = 4500) {
 
   const toast = document.createElement("div");
   toast.className = `toast toast-${type}`;
+  toast.setAttribute("role", type === "error" || type === "warning" ? "alert" : "status");
   toast.innerHTML = `
     <div class="toast-content">
       <div class="toast-title">${escapeHtml(title)}</div>
       <div class="toast-msg">${escapeHtml(message)}</div>
     </div>
-    <button class="toast-close" onclick="this.parentElement.remove()">&times;</button>
+    <button class="toast-close" type="button" aria-label="Dismiss notification" onclick="this.parentElement.remove()">&times;</button>
   `;
 
   container.appendChild(toast);
@@ -300,7 +302,9 @@ function switchTab(tabId) {
   state.currentTab = tabId;
 
   document.querySelectorAll(".nav-item").forEach((btn) => {
-    btn.classList.toggle("active", btn.getAttribute("data-tab") === tabId);
+    const isActive = btn.getAttribute("data-tab") === tabId;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-current", isActive ? "page" : "false");
   });
 
   document.querySelectorAll(".tab-pane").forEach((pane) => {
@@ -310,6 +314,9 @@ function switchTab(tabId) {
   const targetPaneId = `tab-${tabId}`;
   const activePane = $(targetPaneId);
   if (activePane) activePane.classList.add("active");
+  $("app-main-content")?.focus({ preventScroll: true });
+  const content = document.querySelector(".content-scroll");
+  if (content) content.scrollTo({ top: 0, behavior: "smooth" });
 
   const titles = {
     overview: "Overview",
@@ -379,12 +386,20 @@ function updateUserInfo() {
 // Modal Handlers
 function openModal(id) {
   const el = $(id);
-  if (el) el.classList.remove("hidden");
+  if (!el) return;
+  lastModalTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  el.classList.remove("hidden");
+  window.setTimeout(() => {
+    el.querySelector("[autofocus], input, select, textarea, button")?.focus();
+  }, 0);
 }
 
 function closeModal(id) {
   const el = $(id);
-  if (el) el.classList.add("hidden");
+  if (!el) return;
+  el.classList.add("hidden");
+  lastModalTrigger?.focus?.();
+  lastModalTrigger = null;
 }
 
 function handleBackdropClick(event, modalId) {
@@ -3978,14 +3993,17 @@ $("password-form").onsubmit = async (event) => {
 };
 
 // Logout
-$("btn-logout").onclick = async () => {
+async function signOut() {
   try {
     await request("/auth/logout", { method: "POST" });
   } catch {}
   state.adminUser = null;
   showView("login");
   showToast("Signed Out", "Session ended securely.", "info");
-};
+}
+
+$("btn-logout").onclick = signOut;
+$("btn-topbar-logout")?.addEventListener("click", signOut);
 
 // Topbar refresh button
 $("btn-refresh-all").onclick = () => refreshAllData();
@@ -4011,6 +4029,28 @@ function applyTheme(theme) {
     if ($("theme-icon-moon")) $("theme-icon-moon").classList.remove("hidden");
     if ($("theme-text")) $("theme-text").textContent = "Dark";
   }
+  $("btn-theme-toggle")?.setAttribute("aria-pressed", String(theme === "dark"));
+}
+
+function enhanceUiAccessibility() {
+  document.querySelectorAll(".nav-item").forEach((button) => {
+    const tab = button.getAttribute("data-tab");
+    const label = button.querySelector("span:not(.nav-pill)")?.textContent?.trim() || "Navigation";
+    button.setAttribute("aria-label", label);
+    button.setAttribute("title", label);
+    button.setAttribute("aria-current", button.classList.contains("active") ? "page" : "false");
+    if (tab && $("tab-" + tab)) button.setAttribute("aria-controls", "tab-" + tab);
+  });
+
+  document.querySelectorAll(".modal-backdrop").forEach((modal) => {
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    const heading = modal.querySelector("h2, h3");
+    if (heading) {
+      if (!heading.id) heading.id = `${modal.id}-title`;
+      modal.setAttribute("aria-labelledby", heading.id);
+    }
+  });
 }
 
 function toggleTheme() {
@@ -4040,7 +4080,7 @@ function focusSearch() {
 document.addEventListener("keydown", (e) => {
   // Escape closes all open modals and banner
   if (e.key === "Escape") {
-    document.querySelectorAll(".modal-backdrop:not(.hidden)").forEach((m) => m.classList.add("hidden"));
+    document.querySelectorAll(".modal-backdrop:not(.hidden)").forEach((m) => closeModal(m.id));
     const failedAlerts = $("failed-alerts-banner-container");
     if (failedAlerts && !failedAlerts.classList.contains("hidden")) {
       failedAlerts.classList.add("hidden");
@@ -4065,6 +4105,7 @@ document.addEventListener("submit", (event) => {
 
 // App Boot
 (async function init() {
+  enhanceUiAccessibility();
   const savedTheme = localStorage.getItem("mailAdminTheme") ||
     (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   applyTheme(savedTheme);

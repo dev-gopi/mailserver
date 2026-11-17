@@ -41,4 +41,4 @@ assert.match(adminUi, /async function revokeOtherAdminSessions/, "Admin UI must 
 assert.match(adminUiHtml, /id="security-sessions-list"/, "Security modal must provide an active sessions panel");
 assert.equal((read("apps/admin-api/src/config/env.ts").match(/databaseUser:/g) || []).length, 1, "Database user config must have a single declaration");
 
-console.log("Milestone 02 static security policy checks passed.");
+console.log("Static security policy checks passed.");

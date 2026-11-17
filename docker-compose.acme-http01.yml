@@ -1,0 +1,6 @@
+# Opt-in override for public HTTP-01 certificate issuance/renewal.
+# The default Compose file does not bind host port 80 to avoid unexpected exposure.
+services:
+  admin-ui:
+    ports:
+      - "${ACME_HTTP_BIND_ADDRESS:-0.0.0.0}:${ACME_HTTP_HOST_PORT:-80}:80"

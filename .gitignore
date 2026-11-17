@@ -19,6 +19,15 @@ apps/admin-api/dist/
 apps/admin-api/coverage/
 *.tsbuildinfo
 
+# Generated caches and temporary files
+__pycache__/
+*.py[cod]
+.cache/
+.pytest_cache/
+.mypy_cache/
+*.tmp
+*.bak
+
 # Local runtime data, logs, and editor files
 data/
 logs/

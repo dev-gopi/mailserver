@@ -1,0 +1,13 @@
+[Unit]
+Description=Escalate stale unacknowledged MailCore security notifications
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=__PROJECT_ROOT__
+ExecStart=__PROJECT_ROOT__/infrastructure/security/escalate-unacknowledged-alerts.sh
+User=root
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

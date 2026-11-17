@@ -185,7 +185,7 @@ export const securityPolicyListEntryIdParamSchema = z.object({
   id: z.coerce.number().int().positive()
 });
 
-// Milestone 06: bounded event explorer and administrator notification controls.
+// Bounded event explorer and administrator notification controls.
 const eventCategorySchema = z.enum([
   "authentication", "mailboxes", "domains", "security", "backup", "system", "administration", "mail", "audit"
 ]);

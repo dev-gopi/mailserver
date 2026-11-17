@@ -60,6 +60,16 @@ raise SystemExit(0 if any(s.get("hostname") == host and path in (s.get("paths") 
   echo "[PASS] Remote snapshot verified for $(basename "$archive")"
 fi
 
+# Replicate the recovery-critical host configuration and private keys in the
+# encrypted Restic repository as a separately tagged, content-addressed snapshot.
+if [[ "${RESTIC_BACKUP_HOST_STATE:-true}" == true ]]; then
+  bash "$ROOT/infrastructure/backup/offsite-host-state.sh"
+elif [[ "${RESTIC_BACKUP_HOST_STATE:-true}" == false ]]; then
+  echo '[INFO] Host-state backup disabled by RESTIC_BACKUP_HOST_STATE=false'
+else
+  echo 'RESTIC_BACKUP_HOST_STATE must be true or false' >&2; exit 2
+fi
+
 # Full pack reads can be expensive. Run the repository metadata check once per
 # configured interval (default 24 hours); optional subset reads are operator-controlled.
 cache_base="${RESTIC_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/mailcore-restic}"
