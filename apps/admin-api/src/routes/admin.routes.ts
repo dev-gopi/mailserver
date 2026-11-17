@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireAdmin, requirePasswordChanged, requireRoles } from "../middleware/auth";
+import { requireAdmin, requirePasswordChanged, requireRoles, requireCsrf } from "../middleware/auth";
 import { validate } from "../validation/validate";
 import {
   companyUpdateSchema,
@@ -14,7 +14,10 @@ import {
   testSpamSchema,
   clientConfigQuerySchema,
   deliverabilityQuerySchema,
-  backupSettingsSchema
+  backupSettingsSchema,
+  administratorCreateSchema,
+  administratorUpdateSchema,
+  administratorIdParamSchema
 } from "../validation/schemas";
 import { companyController } from "../controllers/company.controller";
 import { domainController } from "../controllers/domain.controller";
@@ -23,12 +26,20 @@ import { aliasController } from "../controllers/alias.controller";
 import { auditController } from "../controllers/audit.controller";
 import { systemController } from "../controllers/system.controller";
 import { backupController } from "../controllers/backup.controller";
+import { adminManagementController } from "../controllers/admin-management.controller";
 
 export const adminRouter = Router();
 
 // All routes behind authentication + forced password-change gate
 adminRouter.use(requireAdmin);
+adminRouter.use(requireCsrf);
 adminRouter.use(requirePasswordChanged);
+
+// ── Administrator lifecycle (owner-only) ──────────────────────────────────────
+adminRouter.get("/admins", requireRoles("owner"), adminManagementController.list);
+adminRouter.post("/admins", requireRoles("owner"), validate({ body: administratorCreateSchema }), adminManagementController.create);
+adminRouter.patch("/admins/:id", requireRoles("owner"), validate({ params: administratorIdParamSchema, body: administratorUpdateSchema }), adminManagementController.update);
+adminRouter.delete("/admins/:id", requireRoles("owner"), validate({ params: administratorIdParamSchema }), (req, _res, next) => { req.body = { active: false }; next(); }, adminManagementController.update);
 
 // ── Dashboard ──────────────────────────────────────────────────────────────────
 adminRouter.get("/dashboard", systemController.getDashboard);

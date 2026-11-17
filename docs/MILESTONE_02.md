@@ -1,5 +1,12 @@
 # Milestone 02 — Security architecture hardening
 
+> **Milestone 03 update:** The startup/migration and credential-handling details
+> in this historical Milestone 02 note are superseded by
+> [`MILESTONE_03.md`](MILESTONE_03.md). Use the one-shot migration service and
+> `secrets/runtime/` files; do not pass bootstrap database credentials to the
+> long-running API container.
+
+
 ## Scope delivered
 
 This milestone builds on Milestone 01 and does not replace the Postfix/Dovecot
@@ -56,9 +63,14 @@ The admin API keeps using the database owner account for migrations and manageme
 
 The roles have no superuser, database-creation or role-creation privileges and do not inherit privileges from other roles. The migration revokes table privileges before applying the exact column-level view grants. This limits the data exposed by a compromised mail daemon compared with reusing the database owner login.
 
-The API provisions these accounts during startup migration. Postfix, Dovecot and OpenDKIM wait for API health before starting so their SQL accounts exist before they connect.
+The account grants described here are retained. Milestone 03 moves role
+provisioning into a one-shot `migrate` container that runs as the database
+owner before the API starts. The API runtime now uses the separate DML-only
+`mail_api` role. See `docs/MILESTONE_03.md` for the updated secret wiring and
+upgrade procedure.
 
-Set distinct secrets in the root `.env` file:
+Before Milestone 03, distinct service secrets could be supplied in the root
+`.env` file:
 
 ```dotenv
 POSTFIX_DB_USER=mail_postfix
@@ -69,7 +81,10 @@ OPENDKIM_DB_USER=mail_opendkim
 OPENDKIM_DB_PASSWORD=<another-unique-random-secret>
 ```
 
-For existing installations, Compose falls back to `POSTGRES_PASSWORD` when one of these service passwords is omitted, which allows upgrades without breaking mail flow. Replace those fallbacks with unique random passwords before treating the environment as production-ready.
+Milestone 03 removes those plaintext environment fallbacks. The
+`infrastructure/secrets/bootstrap.sh` script creates/preserves individual
+password files under `secrets/runtime/`, and the one-shot migration assigns the
+corresponding database roles to those passwords.
 
 ### 4. Network segmentation
 

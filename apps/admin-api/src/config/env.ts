@@ -1,4 +1,17 @@
 import "dotenv/config";
+import fs from "node:fs";
+
+function readSecret(name: string): string | undefined {
+  const file = process.env[`${name}_FILE`];
+  if (file) {
+    try {
+      return fs.readFileSync(file, "utf8").replace(/\r?\n$/, "");
+    } catch (error) {
+      throw new Error(`${name}_FILE could not be read: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return process.env[name];
+}
 
 function required(name: string): string {
   const value = process.env[name];
@@ -9,26 +22,29 @@ function required(name: string): string {
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "production",
   port: Number(process.env.PORT ?? 8080),
+  migrationMode: (process.env.MAILCORE_MIGRATION_MODE ?? "false").toLowerCase() === "true",
   databaseUrl: process.env.DATABASE_URL,
   databaseHost: process.env.PGHOST,
   databasePort: Number(process.env.PGPORT ?? 5432),
   databaseName: process.env.PGDATABASE,
   databaseUser: process.env.PGUSER ?? "",
-  databasePassword: process.env.PGPASSWORD,
+  databasePassword: readSecret("PGPASSWORD"),
   dbServiceAccounts: {
-    postfix: { username: process.env.POSTFIX_DB_USER ?? "mail_postfix", password: process.env.POSTFIX_DB_PASSWORD ?? process.env.PGPASSWORD ?? "" },
-    dovecot: { username: process.env.DOVECOT_DB_USER ?? "mail_dovecot", password: process.env.DOVECOT_DB_PASSWORD ?? process.env.PGPASSWORD ?? "" },
-    opendkim: { username: process.env.OPENDKIM_DB_USER ?? "mail_opendkim", password: process.env.OPENDKIM_DB_PASSWORD ?? process.env.PGPASSWORD ?? "" }
+    api: { username: process.env.API_DB_USER ?? "mail_api", password: readSecret("API_DB_PASSWORD") ?? "" },
+    postfix: { username: process.env.POSTFIX_DB_USER ?? "mail_postfix", password: readSecret("POSTFIX_DB_PASSWORD") ?? "" },
+    dovecot: { username: process.env.DOVECOT_DB_USER ?? "mail_dovecot", password: readSecret("DOVECOT_DB_PASSWORD") ?? "" },
+    opendkim: { username: process.env.OPENDKIM_DB_USER ?? "mail_opendkim", password: readSecret("OPENDKIM_DB_PASSWORD") ?? "" }
   },
   sessionHours: Number(process.env.SESSION_HOURS ?? 8),
   sessionIdleMinutes: Number(process.env.SESSION_IDLE_MINUTES ?? 30),
   adminMaxSessions: Number(process.env.ADMIN_MAX_SESSIONS ?? 5),
+  sessionCookieSecure: (process.env.SESSION_COOKIE_SECURE ?? "true").toLowerCase() === "true",
   dkimKeyDir: process.env.DKIM_KEY_DIR ?? "/var/lib/opendkim/keys",
   mailStoragePath: process.env.MAIL_STORAGE_PATH ?? "/var/mail/vhosts",
   backupDir: process.env.BACKUP_DIR ?? "/backups",
   webauthnRpId: process.env.WEBAUTHN_RP_ID ?? "",
   webauthnRpName: process.env.WEBAUTHN_RP_NAME ?? "MailCore Admin Console",
-  authEncryptionKey: process.env.AUTH_ENCRYPTION_KEY ?? "",
+  authEncryptionKey: readSecret("AUTH_ENCRYPTION_KEY") ?? "",
   dkimKeyUid: Number(process.env.DKIM_KEY_UID ?? 10001),
   dkimKeyGid: Number(process.env.DKIM_KEY_GID ?? process.env.DKIM_KEY_UID ?? 10001),
   mailDomain: process.env.MAIL_DOMAIN ?? "",
@@ -63,6 +79,7 @@ export const env = {
     clamavPort: Number(process.env.CLAMAV_PORT ?? 3310),
     redisHost: process.env.REDIS_HOST ?? "",
     redisPort: Number(process.env.REDIS_PORT ?? 6379),
+    redisPassword: readSecret("REDIS_PASSWORD") ?? "",
     databasePort: Number(process.env.PGPORT ?? 5432)
   }
 };
@@ -85,19 +102,30 @@ if (!Number.isInteger(env.adminMaxSessions) || env.adminMaxSessions < 1 || env.a
 if (!env.databaseUrl && (!env.databaseHost || !env.databaseName || !env.databaseUser || !env.databasePassword)) {
   required("DATABASE_URL or PGHOST/PGDATABASE/PGUSER/PGPASSWORD");
 }
-const dbRoleNames = Object.values(env.dbServiceAccounts).map((account) => account.username);
-if (new Set(dbRoleNames).size !== dbRoleNames.length) {
-  throw new Error("POSTFIX_DB_USER, DOVECOT_DB_USER and OPENDKIM_DB_USER must be distinct");
+if (env.nodeEnv === "production" && !env.sessionCookieSecure) {
+  throw new Error("SESSION_COOKIE_SECURE must remain true in production");
 }
-for (const [service, account] of Object.entries(env.dbServiceAccounts)) {
-  if (!/^[a-z_][a-z0-9_]{0,62}$/.test(account.username)) {
-    throw new Error(`${service.toUpperCase()}_DB_USER must use lowercase letters, digits and underscores`);
+if (env.nodeEnv === "production" && !env.migrationMode && !env.services.redisPassword) {
+  throw new Error("REDIS_PASSWORD or REDIS_PASSWORD_FILE must be configured for the production API");
+}
+if (/[\r\n]/.test(env.services.redisPassword)) {
+  throw new Error("REDIS_PASSWORD must be a single-line secret");
+}
+if (env.migrationMode) {
+  const dbRoleNames = Object.values(env.dbServiceAccounts).map((account) => account.username);
+  if (new Set(dbRoleNames).size !== dbRoleNames.length) {
+    throw new Error("API_DB_USER, POSTFIX_DB_USER, DOVECOT_DB_USER and OPENDKIM_DB_USER must be distinct");
   }
-  if (!account.password || account.password.length < 16) {
-    throw new Error(`${service.toUpperCase()}_DB_PASSWORD must contain at least 16 characters`);
-  }
-  if (env.databaseUser && account.username === env.databaseUser) {
-    throw new Error(`${service.toUpperCase()}_DB_USER must not equal the administrative database user`);
+  for (const [service, account] of Object.entries(env.dbServiceAccounts)) {
+    if (!/^[a-z_][a-z0-9_]{0,62}$/.test(account.username)) {
+      throw new Error(`${service.toUpperCase()}_DB_USER must use lowercase letters, digits and underscores`);
+    }
+    if (!account.password || account.password.length < 16) {
+      throw new Error(`${service.toUpperCase()}_DB_PASSWORD must contain at least 16 characters`);
+    }
+    if (env.databaseUser && account.username === env.databaseUser) {
+      throw new Error(`${service.toUpperCase()}_DB_USER must not equal the migration database user`);
+    }
   }
 }
 for (const [name, value] of Object.entries({

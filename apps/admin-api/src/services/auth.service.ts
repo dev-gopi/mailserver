@@ -9,6 +9,7 @@ import { auditService } from "./audit";
 import { totpService } from "./totp.service";
 import { PasskeyCredential } from "../models/entities";
 import { decryptSecret, encryptSecret } from "../utils/secret-crypto";
+import { validateAdministratorPassword } from "../utils/password-policy";
 
 interface MfaPendingSession {
   adminId: number;
@@ -210,6 +211,7 @@ export class AuthService {
 
   private async finalizeSuccessfulLogin(req: Request, admin: any, authMethod: string) {
     const token = createToken();
+    const csrfToken = randomBytes(32).toString("base64url");
     await adminRepository.recordSuccessfulLogin(admin.id);
 
     const sessionId = randomUUID();
@@ -220,6 +222,7 @@ export class AuthService {
       sessionId,
       admin.id,
       tokenHash(token),
+      tokenHash(csrfToken),
       env.sessionHours,
       ip,
       userAgent,
@@ -238,6 +241,7 @@ export class AuthService {
 
     return {
       token,
+      csrfToken,
       mustChangePassword: admin.must_change_password,
       expiresInSeconds: env.sessionHours * 3600,
       admin: {
@@ -249,9 +253,7 @@ export class AuthService {
   }
 
   async resetPasswordWithRecovery(req: Request, username: string, recoveryCode: string, newPassword: string) {
-    if (!newPassword || newPassword.length < 12) {
-      throw new Error("New password must be at least 12 characters");
-    }
+    validateAdministratorPassword(newPassword, username);
 
     const hashed = await bcrypt.hash(newPassword, 12);
     const resetOk = await adminRepository.resetPasswordWithRecovery(username, recoveryCode, hashed);
@@ -511,15 +513,18 @@ export class AuthService {
       throw new Error("Current password is incorrect");
     }
 
+    validateAdministratorPassword(newPassword, admin.username);
+    if (await bcrypt.compare(newPassword, admin.password_hash)) {
+      throw new Error("Choose a password you have not used for this account.");
+    }
     const hashed = await bcrypt.hash(newPassword, 12);
-    const token = (req.header("authorization") || "").replace(/^Bearer\s+/i, "");
+    const token = req.adminSessionToken;
     await adminRepository.updatePassword(req.admin!.id, hashed, token ? tokenHash(token) : undefined);
     await auditService.log(req, "admin.password.change", "admin", req.admin!.id);
   }
 
   async logout(req: Request) {
-    const rawHeader = req.header("authorization") || "";
-    const token = rawHeader.replace(/^Bearer\s+/i, "");
+    const token = req.adminSessionToken;
     if (token) {
       await adminRepository.revokeSession(tokenHash(token));
       await auditService.log(req, "admin.logout", "admin", req.admin!.id);
@@ -527,8 +532,8 @@ export class AuthService {
   }
 
   async listSessions(req: Request) {
-    const rawToken = (req.header("authorization") || "").replace(/^Bearer\s+/i, "");
-    const currentHash = rawToken ? tokenHash(rawToken) : "";
+    const token = req.adminSessionToken;
+    const currentHash = token ? tokenHash(token) : "";
     const sessions = await adminRepository.listActiveSessions(req.admin!.id, env.sessionIdleMinutes);
     const currentSessionId = currentHash ? await adminRepository.getSessionIdByTokenHash(currentHash) : null;
     return {
@@ -544,9 +549,9 @@ export class AuthService {
   }
 
   async revokeOtherSessions(req: Request) {
-    const rawToken = (req.header("authorization") || "").replace(/^Bearer\s+/i, "");
-    if (!rawToken) throw new Error("Current session is missing.");
-    const count = await adminRepository.revokeOtherSessions(req.admin!.id, tokenHash(rawToken));
+    const token = req.adminSessionToken;
+    if (!token) throw new Error("Current session is missing.");
+    const count = await adminRepository.revokeOtherSessions(req.admin!.id, tokenHash(token));
     await auditService.log(req, "admin.sessions.revoked_others", "admin", req.admin!.id, { revokedCount: count });
     return { revokedCount: count };
   }

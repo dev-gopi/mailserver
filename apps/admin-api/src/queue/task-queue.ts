@@ -24,7 +24,8 @@ export class TaskQueue extends EventEmitter {
   private readonly completedJobs: QueueJob[] = [];
   private readonly handlers = new Map<string, JobHandler>();
   private readonly redis = createClient({
-    socket: { host: env.services.redisHost, port: env.services.redisPort, reconnectStrategy: () => false }
+    socket: { host: env.services.redisHost, port: env.services.redisPort, reconnectStrategy: () => false },
+    password: env.services.redisPassword || undefined
   });
   private worker: any = null;
   private redisConnected = false;

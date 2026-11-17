@@ -7,7 +7,7 @@ export const loginSchema = z.object({
 
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, "Current password is required"),
-  newPassword: z.string().min(12, "New password must be at least 12 characters").max(256)
+  newPassword: z.string().min(14, "Administrator password must be at least 14 characters").max(128)
 });
 
 export const companyUpdateSchema = z.object({
@@ -95,7 +95,7 @@ export const mfaVerifySchema = z.object({
 export const resetPasswordSchema = z.object({
   username: z.string().min(1, "Username is required"),
   recoveryCode: z.string().min(4, "Recovery code is required"),
-  newPassword: z.string().min(12, "New password must be at least 12 characters").max(256)
+  newPassword: z.string().min(14, "Administrator password must be at least 14 characters").max(128)
 });
 
 export const totpEnableSchema = z.object({
@@ -140,3 +140,16 @@ export const backupSettingsSchema = z.object({
 });
 
 export const sessionIdParamSchema = z.object({ id: z.string().uuid("Session ID must be a UUID") });
+
+export const administratorCreateSchema = z.object({
+  username: z.string().trim().min(3).max(64).regex(/^[A-Za-z0-9._-]+$/, "Username may contain letters, numbers, dots, underscores and hyphens"),
+  password: z.string().min(14, "Administrator password must be at least 14 characters").max(128),
+  role: z.enum(["owner", "admin", "viewer"])
+});
+
+export const administratorUpdateSchema = z.object({
+  role: z.enum(["owner", "admin", "viewer"]).optional(),
+  active: z.boolean().optional()
+}).refine((value) => value.role !== undefined || value.active !== undefined, "At least one administrator attribute must be provided");
+
+export const administratorIdParamSchema = z.object({ id: z.coerce.number().int().positive() });

@@ -9,7 +9,12 @@ fi
 : "${MAIL_DB_HOST:?MAIL_DB_HOST must be set}"
 : "${MAIL_DB_NAME:?MAIL_DB_NAME must be set}"
 : "${MAIL_DB_USER:?MAIL_DB_USER must be set}"
-: "${MAIL_DB_PASSWORD:?MAIL_DB_PASSWORD must be set}"
+if [ -n "${MAIL_DB_PASSWORD_FILE:-}" ]; then
+  [ -r "$MAIL_DB_PASSWORD_FILE" ] || { echo "MAIL_DB_PASSWORD_FILE is not readable" >&2; exit 1; }
+  MAIL_DB_PASSWORD="$(cat "$MAIL_DB_PASSWORD_FILE")"
+  export MAIL_DB_PASSWORD
+fi
+: "${MAIL_DB_PASSWORD:?MAIL_DB_PASSWORD or MAIL_DB_PASSWORD_FILE must be set}"
 for value in MAIL_DB_HOST MAIL_DB_NAME MAIL_DB_USER MAIL_DB_PASSWORD; do
   eval "raw=\${$value}"
   escaped=$(printf '%s' "$raw" | sed 's/[&|\\]/\\&/g')

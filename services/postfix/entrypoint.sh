@@ -7,7 +7,12 @@ if [ -n "${TZ:-}" ] && [ -e "/usr/share/zoneinfo/${TZ}" ]; then
   printf '%s\n' "$TZ" > /etc/timezone
 fi
 
-: "${MAIL_DB_PASSWORD:?MAIL_DB_PASSWORD must be set}"
+if [ -n "${MAIL_DB_PASSWORD_FILE:-}" ]; then
+  [ -r "$MAIL_DB_PASSWORD_FILE" ] || { echo "MAIL_DB_PASSWORD_FILE is not readable" >&2; exit 1; }
+  MAIL_DB_PASSWORD="$(cat "$MAIL_DB_PASSWORD_FILE")"
+  export MAIL_DB_PASSWORD
+fi
+: "${MAIL_DB_PASSWORD:?MAIL_DB_PASSWORD or MAIL_DB_PASSWORD_FILE must be set}"
 : "${MAIL_DOMAIN:?MAIL_DOMAIN must be set}"
 : "${MAIL_HOSTNAME:?MAIL_HOSTNAME must be set}"
 for value in MAIL_DOMAIN MAIL_HOSTNAME; do

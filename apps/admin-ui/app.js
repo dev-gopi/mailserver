@@ -5,8 +5,7 @@
 
 // Application State
 const state = {
-  token: sessionStorage.getItem("mailAdminToken"),
-  adminUser: JSON.parse(sessionStorage.getItem("mailAdminUser") || "null"),
+  adminUser: null,
   currentTab: "overview",
   domains: [],
   mailboxes: [],
@@ -31,18 +30,29 @@ const state = {
   pendingMfa: null,
   mfaMode: "totp",
   pendingTotpSetup: null,
-  adminSessions: []
+  adminSessions: [],
+  administrators: []
 };
 
 // DOM Helper
 const $ = (id) => document.getElementById(id);
 
 // Auth Header helper
-const getHeaders = (extra = {}) => ({
-  "Content-Type": "application/json",
-  ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
-  ...extra
-});
+function readCookieValue(name) {
+  const prefix = `${name}=`;
+  const match = document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith(prefix));
+  if (!match) return "";
+  try { return decodeURIComponent(match.slice(prefix.length)); } catch { return ""; }
+}
+
+const getHeaders = (extra = {}, method = "GET") => {
+  const headers = { "Content-Type": "application/json", ...extra };
+  if (!["GET", "HEAD", "OPTIONS"].includes(String(method).toUpperCase())) {
+    const csrfToken = readCookieValue("mailcore_admin_csrf");
+    if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
+  }
+  return headers;
+};
 
 // Failure Alert System
 function recordFailureAlert(alert) {
@@ -170,9 +180,11 @@ function renderDashboardFailuresTable() {
 // Central API Request Handler
 async function request(path, options = {}) {
   const url = path;
+  const method = String(options.method || "GET").toUpperCase();
   const config = {
     ...options,
-    headers: getHeaders(options.headers || {})
+    credentials: "same-origin",
+    headers: getHeaders(options.headers || {}, method)
   };
 
   try {
@@ -185,9 +197,6 @@ async function request(path, options = {}) {
                         path.includes("/auth/passkey/");
 
     if (res.status === 401 && !isAuthRoute) {
-      sessionStorage.removeItem("mailAdminToken");
-      sessionStorage.removeItem("mailAdminUser");
-      state.token = null;
       state.adminUser = null;
       showView("login");
       throw new Error("Session expired. Please sign in again.");
@@ -287,6 +296,7 @@ function switchTab(tabId) {
     services: "Services, Mail Queue & Diagnostics",
     audit: "Audit Log & Security Trail",
     backups: "Mail Backups & Disaster Recovery",
+    administrators: "Administrator Accounts",
     settings: "Settings & Company Profile"
   };
   $("page-title").textContent = titles[tabId] || "Control Panel";
@@ -303,6 +313,9 @@ function switchTab(tabId) {
   if (tabId === "services") {
     runDiagnosticsNow();
   }
+  if (tabId === "administrators") {
+    loadAdministrators();
+  }
 }
 
 // User Info Rendering in Sidebar
@@ -312,6 +325,8 @@ function updateUserInfo() {
   $("user-display-role").textContent = user.role || "admin";
   const initials = (user.username || "AD").slice(0, 2).toUpperCase();
   $("user-avatar-initials").textContent = initials;
+  const adminNav = $("nav-administrators");
+  if (adminNav) adminNav.classList.toggle("hidden", user.role !== "owner");
 }
 
 // Modal Handlers
@@ -1653,6 +1668,7 @@ async function loadAuditLogs() {
 async function exportAuditLogsCsv() {
   try {
     const res = await fetch("/api/audit-log/export", {
+      credentials: "same-origin",
       headers: getHeaders()
     });
     if (!res.ok) {
@@ -1868,6 +1884,7 @@ async function downloadBackupArchive(filename) {
   try {
     showToast("Preparing Download", `Fetching ${filename}...`, "info", 2000);
     const res = await fetch(`/api/backups/${encodeURIComponent(filename)}/download`, {
+      credentials: "same-origin",
       headers: getHeaders()
     });
     if (!res.ok) {
@@ -2516,10 +2533,7 @@ $("login-form").onsubmit = async (event) => {
       return;
     }
 
-    state.token = data.token;
     state.adminUser = data.admin || { username: $("username").value.trim(), role: "admin" };
-    sessionStorage.setItem("mailAdminToken", state.token);
-    sessionStorage.setItem("mailAdminUser", JSON.stringify(state.adminUser));
 
     if (data.mustChangePassword) {
       showView("setup");
@@ -2596,11 +2610,8 @@ async function handleMfaSubmit(event) {
       body: JSON.stringify(payload)
     });
 
-    state.token = data.token;
     state.adminUser = data.admin || { username: state.pendingMfa.username, role: "admin" };
     state.pendingMfa = null;
-    sessionStorage.setItem("mailAdminToken", state.token);
-    sessionStorage.setItem("mailAdminUser", JSON.stringify(state.adminUser));
 
     showToast("Signed In", "Two-step verification successful.", "success");
     if (data.mustChangePassword) {
@@ -2710,10 +2721,7 @@ async function handlePasskeyLogin() {
       })
     });
 
-    state.token = data.token;
     state.adminUser = data.admin || { username: "admin", role: "admin" };
-    sessionStorage.setItem("mailAdminToken", state.token);
-    sessionStorage.setItem("mailAdminUser", JSON.stringify(state.adminUser));
 
     showToast("Passkey Verified", "Welcome back!", "success");
     if (data.mustChangePassword) {
@@ -2739,6 +2747,86 @@ async function handlePasskeyLogin() {
     btn.disabled = false;
   }
 }
+
+// Administrator lifecycle — all mutations are owner-only on the API as well.
+async function loadAdministrators() {
+  const tbody = $("admin-accounts-tbody");
+  if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="text-muted">Loading administrator accounts...</td></tr>';
+  try {
+    const result = await request("/api/admins");
+    state.administrators = Array.isArray(result.administrators) ? result.administrators : [];
+    renderAdministrators();
+  } catch (err) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="text-muted">${escapeHtml(err.message || "Unable to load administrators")}</td></tr>`;
+  }
+}
+
+function renderAdministrators() {
+  const tbody = $("admin-accounts-tbody");
+  const empty = $("admin-accounts-empty");
+  if (!tbody || !empty) return;
+  empty.classList.toggle("hidden", state.administrators.length > 0);
+  if (!state.administrators.length) { tbody.innerHTML = ""; return; }
+  tbody.innerHTML = state.administrators.map((admin) => {
+    const isSelf = Number(admin.id) === Number(state.adminUser?.id);
+    const lastLogin = admin.last_login_at ? formatDate(admin.last_login_at) : "Never";
+    const roleOptions = ["owner", "admin", "viewer"].map((role) => `<option value="${role}" ${admin.role === role ? "selected" : ""}>${role}</option>`).join("");
+    return `<tr>
+      <td><strong>${escapeHtml(admin.username)}</strong><div class="text-muted" style="font-size:.75rem;">${admin.must_change_password ? "Password change required" : "Password configured"}</div></td>
+      <td><select id="admin-role-${Number(admin.id)}" ${isSelf ? "disabled" : ""}>${roleOptions}</select></td>
+      <td><span class="badge ${admin.active ? "badge-success" : "badge-danger"}">${admin.active ? "Active" : "Suspended"}</span></td>
+      <td>${escapeHtml(lastLogin)}</td>
+      <td><div class="table-actions">${isSelf ? '<span class="text-muted">Current account</span>' : `<button type="button" class="btn btn-xs btn-secondary" onclick="saveAdministratorAccess(${Number(admin.id)}, '${admin.role}', ${admin.active})">Apply</button><button type="button" class="btn btn-xs ${admin.active ? "btn-danger-outline" : "btn-primary"}" onclick="setAdministratorActive(${Number(admin.id)}, ${!admin.active})">${admin.active ? "Suspend" : "Reactivate"}</button>`}</div></td>
+    </tr>`;
+  }).join("");
+}
+
+async function saveAdministratorAccess(adminId, currentRole, currentActive) {
+  const select = $(`admin-role-${adminId}`);
+  const role = select?.value || currentRole;
+  if (role === currentRole) { showToast("No Changes", "The selected role is already assigned.", "info"); return; }
+  if (!window.confirm(`Change this account from ${currentRole} to ${role}? Its existing sessions will be revoked.`)) return;
+  try {
+    await request(`/api/admins/${adminId}`, { method: "PATCH", body: JSON.stringify({ role, active: currentActive }) });
+    showToast("Administrator Updated", "Role changed and existing sessions revoked.", "success");
+    await loadAdministrators();
+  } catch (err) { showToast("Update Failed", err.message, "error"); }
+}
+
+async function setAdministratorActive(adminId, active) {
+  const action = active ? "reactivate" : "suspend";
+  if (!window.confirm(`Are you sure you want to ${action} this administrator account?`)) return;
+  try {
+    await request(`/api/admins/${adminId}`, { method: "PATCH", body: JSON.stringify({ active }) });
+    showToast("Administrator Access Updated", active ? "Account reactivated." : "Account suspended; active sessions revoked.", "success");
+    await loadAdministrators();
+  } catch (err) { showToast("Access Update Failed", err.message, "error"); }
+}
+
+$("admin-create-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const error = $("admin-create-error");
+  error?.classList.add("hidden");
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  if (submit) submit.disabled = true;
+  try {
+    const result = await request("/api/admins", {
+      method: "POST",
+      body: JSON.stringify({
+        username: $("admin-create-username").value.trim(),
+        password: $("admin-create-password").value,
+        role: $("admin-create-role").value
+      })
+    });
+    form.reset();
+    showToast("Administrator Created", result.message || "The new administrator must change the initial password.", "success", 6500);
+    await loadAdministrators();
+  } catch (err) {
+    if (error) { error.textContent = err.message; error.classList.remove("hidden"); }
+    showToast("Creation Failed", err.message, "error");
+  } finally { if (submit) submit.disabled = false; }
+});
 
 // Admin Security Modal & 2FA Setup Functions
 async function openAdminSecurityModal() {
@@ -3121,9 +3209,6 @@ $("btn-logout").onclick = async () => {
   try {
     await request("/auth/logout", { method: "POST" });
   } catch {}
-  sessionStorage.removeItem("mailAdminToken");
-  sessionStorage.removeItem("mailAdminUser");
-  state.token = null;
   state.adminUser = null;
   showView("login");
   showToast("Signed Out", "Session ended securely.", "info");
@@ -3202,10 +3287,17 @@ document.addEventListener("keydown", (e) => {
     (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   applyTheme(savedTheme);
 
-  if (state.token) {
-    showView("app");
-    await refreshAllData();
-  } else {
+  try {
+    const profile = await request("/auth/me");
+    state.adminUser = profile.admin || null;
+    if (state.adminUser?.mustChangePassword) {
+      showView("setup");
+    } else {
+      showView("app");
+      await refreshAllData();
+    }
+  } catch {
+    state.adminUser = null;
     showView("login");
   }
 })();

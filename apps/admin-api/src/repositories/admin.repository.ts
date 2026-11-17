@@ -3,6 +3,76 @@ import bcrypt from "bcryptjs";
 import { AdminEntity, PasskeyCredential } from "../models/entities";
 
 export class AdminRepository {
+  async listAdministrators(): Promise<Array<{
+    id: number; username: string; role: "owner" | "admin" | "viewer"; active: boolean;
+    must_change_password: boolean; last_login_at: string | Date | null; created_at: string | Date;
+  }>> {
+    const result = await db.query(
+      `SELECT id, username, role, active, must_change_password, last_login_at, created_at
+       FROM admins ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, username`
+    );
+    return result.rows;
+  }
+
+  async createAdministrator(username: string, passwordHash: string, role: "owner" | "admin" | "viewer"): Promise<{ id: number; username: string; role: "owner" | "admin" | "viewer" }> {
+    const result = await db.query(
+      `INSERT INTO admins (username, password_hash, role, active, must_change_password)
+       VALUES ($1, $2, $3, TRUE, TRUE)
+       RETURNING id, username, role`,
+      [username, passwordHash, role]
+    );
+    return result.rows[0];
+  }
+
+  async updateAdministratorAccess(
+    adminId: number,
+    actorId: number,
+    updates: { role?: "owner" | "admin" | "viewer"; active?: boolean }
+  ): Promise<boolean> {
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      const targetResult = await client.query<{ id: number; role: "owner" | "admin" | "viewer"; active: boolean }>(
+        "SELECT id, role, active FROM admins WHERE id = $1 FOR UPDATE", [adminId]
+      );
+      const target = targetResult.rows[0];
+      if (!target) { await client.query("ROLLBACK"); return false; }
+      if (adminId === actorId && ((updates.active === false) || (updates.role && updates.role !== target.role))) {
+        throw new Error("You cannot deactivate or change the role of your own administrator account.");
+      }
+
+      const nextRole = updates.role ?? target.role;
+      const nextActive = updates.active ?? target.active;
+      const removesActiveOwner = target.role === "owner" && target.active && (nextRole !== "owner" || !nextActive);
+      if (removesActiveOwner) {
+        const ownerCount = await client.query<{ count: string }>(
+          "SELECT count(*)::text AS count FROM admins WHERE role = 'owner' AND active = TRUE"
+        );
+        if (Number(ownerCount.rows[0]?.count ?? 0) <= 1) {
+          throw new Error("The last active owner cannot be demoted or deactivated. Promote another owner through the host recovery procedure first.");
+        }
+      }
+
+      await client.query(
+        "UPDATE admins SET role = $1, active = $2 WHERE id = $3",
+        [nextRole, nextActive, adminId]
+      );
+      if (nextRole !== target.role || (!nextActive && target.active)) {
+        await client.query(
+          "UPDATE admin_sessions SET revoked_at = now() WHERE admin_id = $1 AND revoked_at IS NULL",
+          [adminId]
+        );
+      }
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async findByUsername(username: string): Promise<AdminEntity | null> {
     const res = await db.query<AdminEntity>(
       "SELECT * FROM admins WHERE username = $1",
@@ -50,6 +120,7 @@ export class AdminRepository {
     sessionId: string,
     adminId: number,
     tokenHash: string,
+    csrfTokenHash: string,
     hours: number,
     ipAddress: string | null,
     userAgent: string | null,
@@ -81,9 +152,9 @@ export class AdminRepository {
         [adminId, Math.max(0, maxSessions - 1)]
       );
       await client.query(
-        `INSERT INTO admin_sessions (id, admin_id, token_hash, expires_at, ip_address, user_agent)
-         VALUES ($1, $2, $3, now() + ($4 || ' hours')::interval, $5, $6)`,
-        [sessionId, adminId, tokenHash, hours, ipAddress, userAgent]
+        `INSERT INTO admin_sessions (id, admin_id, token_hash, csrf_token_hash, expires_at, ip_address, user_agent)
+         VALUES ($1, $2, $3, $4, now() + ($5 || ' hours')::interval, $6, $7)`,
+        [sessionId, adminId, tokenHash, csrfTokenHash, hours, ipAddress, userAgent]
       );
       await client.query("COMMIT");
     } catch (error) {

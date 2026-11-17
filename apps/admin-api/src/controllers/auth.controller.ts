@@ -1,12 +1,25 @@
 import { Request, Response } from "express";
 import { authService } from "../services/auth.service";
+import { clearAdminSessionCookies, setAdminSessionCookies } from "../utils/session-cookie";
 
 export class AuthController {
+  private sendLoginResult(req: Request, res: Response, result: any) {
+    // Explicit opt-in keeps non-browser API clients compatible without exposing
+    // bearer tokens to the browser application by default.
+    if (req.header("x-mailcore-auth-mode")?.toLowerCase() === "bearer") return res.json(result);
+    if (result && typeof result.token === "string" && typeof result.csrfToken === "string") {
+      setAdminSessionCookies(res, result.token, result.csrfToken, result.expiresInSeconds);
+      const { token: _token, ...safeResult } = result;
+      return res.json(safeResult);
+    }
+    return res.json(result);
+  }
+
   async login(req: Request, res: Response) {
     try {
       const { username, password } = req.body;
       const result = await authService.login(req, username, password);
-      return res.json(result);
+      return this.sendLoginResult(req, res, result);
     } catch (err: any) {
       return res.status(401).json({ error: err.message || "Invalid credentials" });
     }
@@ -16,7 +29,7 @@ export class AuthController {
     try {
       const { mfaToken, code, recoveryCode } = req.body;
       const result = await authService.verifyMfa(req, mfaToken, code, recoveryCode);
-      return res.json(result);
+      return this.sendLoginResult(req, res, result);
     } catch (err: any) {
       return res.status(401).json({ error: err.message || "Two-step verification failed" });
     }
@@ -112,7 +125,7 @@ export class AuthController {
     try {
       const { challengeId, credential } = req.body;
       const result = await authService.verifyPasskeyLogin(req, challengeId, credential);
-      return res.json(result);
+      return this.sendLoginResult(req, res, result);
     } catch (err: any) {
       return res.status(401).json({ error: err.message || "Passkey authentication failed" });
     }
@@ -141,6 +154,7 @@ export class AuthController {
   async logout(req: Request, res: Response) {
     try {
       await authService.logout(req);
+      clearAdminSessionCookies(res);
       return res.status(204).end();
     } catch (err: any) {
       return res.status(500).json({ error: err.message || "Logout failed" });

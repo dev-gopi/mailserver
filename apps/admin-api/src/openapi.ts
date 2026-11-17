@@ -3,7 +3,7 @@ export const openapi = {
   info: {
     title: "MailCore Single-Tenant Admin API",
     version: "2.1.0",
-    description: "Single-tenant organizational mail platform API. Administrator access is enforced by owner/admin/viewer roles; bearer sessions have absolute and idle expiry."
+    description: "Single-tenant organizational mail platform API. Browser authentication uses Secure, HttpOnly, SameSite cookies with per-session CSRF protection. Non-browser clients may explicitly request a bearer session with X-MailCore-Auth-Mode: bearer. Administrator access is enforced by owner/admin/viewer roles; sessions have absolute and idle expiry."
   },
   servers: [{ url: "/" }],
   components: {

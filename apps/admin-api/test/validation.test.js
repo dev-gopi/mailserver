@@ -8,8 +8,8 @@ test("login validation rejects empty credentials", () => {
 });
 
 test("password policy requires a long new password", () => {
-  assert.throws(() => changePasswordSchema.parse({ currentPassword: "old", newPassword: "short" }));
-  assert.doesNotThrow(() => changePasswordSchema.parse({ currentPassword: "old", newPassword: "a".repeat(12) }));
+  assert.throws(() => changePasswordSchema.parse({ currentPassword: "old", newPassword: "a".repeat(13) }));
+  assert.doesNotThrow(() => changePasswordSchema.parse({ currentPassword: "old", newPassword: "a".repeat(14) }));
 });
 
 test("validate middleware handles getter-only req.query (Express 5 compatibility)", () => {

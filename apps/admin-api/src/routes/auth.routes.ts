@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authController } from "../controllers/auth.controller";
-import { requireAdmin } from "../middleware/auth";
+import { rejectCrossSiteRequest, requireAdmin, requireCsrf } from "../middleware/auth";
 import { validate } from "../validation/validate";
 import {
   loginSchema,
@@ -19,31 +19,36 @@ export const authRouter = Router();
 // Public auth endpoints
 authRouter.post(
   "/login",
+  rejectCrossSiteRequest,
   validate({ body: loginSchema }),
-  authController.login
+  authController.login.bind(authController)
 );
 
 authRouter.post(
   "/mfa/verify",
+  rejectCrossSiteRequest,
   validate({ body: mfaVerifySchema }),
-  authController.verifyMfa
+  authController.verifyMfa.bind(authController)
 );
 
 authRouter.post(
   "/reset-password",
+  rejectCrossSiteRequest,
   validate({ body: resetPasswordSchema }),
   authController.resetPasswordWithRecovery
 );
 
 authRouter.post(
   "/passkey/login-options",
+  rejectCrossSiteRequest,
   authController.getPasskeyLoginOptions
 );
 
 authRouter.post(
   "/passkey/login-verify",
+  rejectCrossSiteRequest,
   validate({ body: passkeyLoginVerifySchema }),
-  authController.verifyPasskeyLogin
+  authController.verifyPasskeyLogin.bind(authController)
 );
 
 // Protected auth & security endpoints
@@ -54,12 +59,13 @@ authRouter.get(
 );
 
 authRouter.get("/sessions", requireAdmin, authController.listSessions);
-authRouter.post("/sessions/revoke-others", requireAdmin, authController.revokeOtherSessions);
-authRouter.delete("/sessions/:id", requireAdmin, validate({ params: sessionIdParamSchema }), authController.revokeSession);
+authRouter.post("/sessions/revoke-others", requireAdmin, requireCsrf, authController.revokeOtherSessions);
+authRouter.delete("/sessions/:id", requireAdmin, requireCsrf, validate({ params: sessionIdParamSchema }), authController.revokeSession);
 
 authRouter.post(
   "/change-password",
   requireAdmin,
+  requireCsrf,
   validate({ body: changePasswordSchema }),
   authController.changePassword
 );
@@ -67,6 +73,7 @@ authRouter.post(
 authRouter.post(
   "/logout",
   requireAdmin,
+  requireCsrf,
   authController.logout
 );
 
@@ -85,6 +92,7 @@ authRouter.get(
 authRouter.post(
   "/totp/enable",
   requireAdmin,
+  requireCsrf,
   validate({ body: totpEnableSchema }),
   authController.enableTotp
 );
@@ -92,6 +100,7 @@ authRouter.post(
 authRouter.post(
   "/totp/disable",
   requireAdmin,
+  requireCsrf,
   validate({ body: passwordConfirmSchema }),
   authController.disableTotp
 );
@@ -99,6 +108,7 @@ authRouter.post(
 authRouter.post(
   "/totp/regenerate-recovery",
   requireAdmin,
+  requireCsrf,
   validate({ body: passwordConfirmSchema }),
   authController.regenerateRecoveryCodes
 );
@@ -106,12 +116,14 @@ authRouter.post(
 authRouter.post(
   "/passkey/register-options",
   requireAdmin,
+  requireCsrf,
   authController.getPasskeyRegisterOptions
 );
 
 authRouter.post(
   "/passkey/register-verify",
   requireAdmin,
+  requireCsrf,
   validate({ body: passkeyRegisterSchema }),
   authController.verifyPasskeyRegister
 );
@@ -119,5 +131,6 @@ authRouter.post(
 authRouter.delete(
   "/passkey/:id",
   requireAdmin,
+  requireCsrf,
   authController.removePasskey
 );

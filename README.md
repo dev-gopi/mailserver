@@ -53,19 +53,21 @@ not part of the active path.
 
 ## Local quick start
 
-1. Create the environment files:
+1. Create the root Compose environment file:
 
    ~~~sh
    cp .env.example .env
-   cp apps/admin-api/.env.example apps/admin-api/.env
    ~~~
 
-2. Edit both files. Replace all placeholder passwords and secrets. Put a
-   bcrypt hash in `MAIL_ADMIN_PASSWORD_HASH` and generate a stable
-   `AUTH_ENCRYPTION_KEY`:
+2. Edit `.env`. Replace the placeholder database and initial administrator
+   values. Put a bcrypt hash in `MAIL_ADMIN_PASSWORD_HASH`. The API no longer
+   receives the PostgreSQL bootstrap password. Its runtime DB password and the
+   mail-daemon DB passwords are generated and persisted as Docker secret files.
+   If you already have an `apps/admin-api/.env` from an earlier version, keep
+   it during the upgrade: the secret bootstrapper can use its existing
+   `AUTH_ENCRYPTION_KEY` to preserve encrypted MFA data.
 
    ~~~sh
-   openssl rand -base64 32
    cd apps/admin-api
    npm ci
    node -e "console.log(require('bcryptjs').hashSync('choose-a-long-password', 12))"
@@ -73,10 +75,21 @@ not part of the active path.
    ~~~
 
    Copy the resulting password hash into the root `.env`. The root file drives
-   Compose and database seeding; the API environment file is also required when
-   running the API outside Compose.
+   Compose and database seeding.
 
-3. Create a local-only certificate:
+3. Create the persistent Docker secrets:
+
+   ~~~sh
+   ./infrastructure/secrets/bootstrap.sh
+   ~~~
+
+   This creates `secrets/runtime/` with separate database login passwords and a
+   stable 32-byte auth-encryption key, plus an independent Redis password.
+   The script preserves existing values and ensures database/Redis passwords
+   are distinct. Protect this directory and never commit it. Keep the auth-encryption key
+   unchanged across upgrades and restores.
+
+4. Create a local-only certificate:
 
    ~~~sh
    ./infrastructure/tls/generate-dev-cert.sh
@@ -86,18 +99,27 @@ not part of the active path.
    must not be used for public clients. The same certificate is used by Postfix,
    Dovecot, and the HTTPS admin UI.
 
-4. Validate, build, and start:
+5. Validate, build, and start:
 
    ~~~sh
-   docker compose config
+   docker compose config -q
    docker compose up --build -d
+   docker compose ps
    ~~~
 
-5. Visit `https://localhost:8443/`. The development certificate is self-signed, so your browser will show a certificate warning until you explicitly trust it. Sign in using `MAIL_ADMIN_USERNAME` and its matching unhashed password, then change the initial password when prompted. API docs are at `https://localhost:8443/docs/`; the health probe is `https://localhost:8443/health`.
+   Compose first runs a one-shot `migrate` service as the database owner. The
+   long-running API waits for it and connects only as the restricted `mail_api`
+   role. Postfix, Dovecot and OpenDKIM use separate restricted database roles.
+
+6. Visit `https://localhost:8443/`. The development certificate is self-signed, so your browser will show a certificate warning until you explicitly trust it. Sign in using `MAIL_ADMIN_USERNAME` and its matching unhashed password, then change the initial password when prompted. API docs are at `https://localhost:8443/docs/`; the health probe is `https://localhost:8443/health`.
 
 The initial database seed runs only when the `dbdata` volume is empty. It
 creates the initial owner and a verified `MAIL_DOMAIN` record for local
-testing. Changing seed variables does not modify an existing database.
+testing. Changing seed variables does not modify an existing database. On an
+existing installation, `secrets/runtime/postgres_password` must continue
+matching the current database owner password. `POSTGRES_PASSWORD` in `.env` is
+used only to create this file when it does not already exist. Changing a
+Compose environment value does not rotate a live PostgreSQL account.
 
 ## Published ports
 
@@ -139,10 +161,18 @@ interfaces without an explicit firewall policy.
 5. Create mailboxes and aliases after domain verification.
 6. Configure mail clients with the mailbox email address and password.
 
-The API uses Bearer session tokens. It supports password authentication,
-optional TOTP with recovery codes, and passkeys. Keep
-`AUTH_ENCRYPTION_KEY` safe and unchanged: altering it can make existing
-encrypted TOTP data unusable.
+The browser admin UI uses Secure, HttpOnly, SameSite session cookies with
+per-session CSRF protection. Do not copy browser session tokens into local
+storage or session storage. The API also supports non-browser integrations:
+clients may explicitly request a bearer token using
+`X-MailCore-Auth-Mode: bearer` on login, MFA verification or passkey login, then
+send it as `Authorization: Bearer <token>`. Cookie-authenticated write requests
+must include the `mailcore_admin_csrf` cookie value in the `X-CSRF-Token` header.
+
+Keep `secrets/runtime/auth_encryption_key` safe and unchanged: altering it can
+make existing encrypted TOTP data unusable. See
+[`docs/MILESTONE_03.md`](docs/MILESTONE_03.md) for the security design and
+upgrade procedure.
 
 Useful authenticated API areas:
 

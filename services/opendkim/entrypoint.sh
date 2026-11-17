@@ -5,6 +5,11 @@ if [ -n "${TZ:-}" ] && [ -e "/usr/share/zoneinfo/${TZ}" ]; then
   ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime
   printf '%s\n' "$TZ" > /etc/timezone
 fi
+if [ -n "${MAIL_DB_PASSWORD_FILE:-}" ]; then
+  [ -r "$MAIL_DB_PASSWORD_FILE" ] || { echo "MAIL_DB_PASSWORD_FILE is not readable" >&2; exit 1; }
+  MAIL_DB_PASSWORD="$(cat "$MAIL_DB_PASSWORD_FILE")"
+  export MAIL_DB_PASSWORD
+fi
 
 key_dir=/var/lib/opendkim/keys
 key_table=/var/lib/opendkim/KeyTable

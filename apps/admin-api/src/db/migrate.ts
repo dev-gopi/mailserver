@@ -12,6 +12,7 @@ export async function runMigrations(): Promise<void> {
       ALTER TABLE admins ADD COLUMN IF NOT EXISTS passkeys JSONB NOT NULL DEFAULT '[]'::jsonb;
       ALTER TABLE admins ADD COLUMN IF NOT EXISTS reset_token_hash TEXT;
       ALTER TABLE admins ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMPTZ;
+      ALTER TABLE admin_sessions ADD COLUMN IF NOT EXISTS csrf_token_hash CHAR(64);
 
       CREATE INDEX IF NOT EXISTS idx_admin_sessions_active_idle_admin
         ON admin_sessions (admin_id, last_seen_at DESC, created_at DESC)
@@ -56,8 +57,8 @@ export async function runMigrations(): Promise<void> {
       await db.query("UPDATE admins SET totp_secret = $1, recovery_codes = $2 WHERE id = $3", [secret, codes, admin.id]);
     }
 
-    // Give mail infrastructure separate, least-privilege PostgreSQL accounts.
-    // The admin API remains the only component using the database owner account.
+    // Create least-privilege service accounts. The API runtime gets DML access
+    // only; this migration command runs separately with the database owner role.
     for (const [service, account] of Object.entries(env.dbServiceAccounts)) {
       const existing = await db.query<{ exists: boolean }>(
         "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1) AS exists",
@@ -70,6 +71,11 @@ export async function runMigrations(): Promise<void> {
         "SELECT format($1::text, $2::text, $3::text) AS statement", [roleSql, account.username, account.password]
       );
       await db.query(roleStatement.rows[0].statement);
+      const connectGrant = await db.query<{ statement: string }>(
+        "SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), $1::text) AS statement",
+        [account.username]
+      );
+      await db.query(connectGrant.rows[0].statement);
 
       const revoke = await db.query<{ statement: string }>(
         "SELECT format('REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM %I', $1::text) AS statement",
@@ -87,7 +93,11 @@ export async function runMigrations(): Promise<void> {
       );
       await db.query(schemaCreateRevoke.rows[0].statement);
 
-      const grants: Record<string, string[]> = {
+      const grants: Record<keyof typeof env.dbServiceAccounts, string[]> = {
+        api: [
+          "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %I",
+          "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %I"
+        ],
         postfix: [
           "GRANT SELECT (name) ON virtual_domains TO %I",
           "GRANT SELECT (email, maildir, active) ON virtual_users TO %I",
@@ -100,13 +110,31 @@ export async function runMigrations(): Promise<void> {
           "GRANT SELECT (name) ON virtual_domains TO %I"
         ]
       };
-      for (const grantTemplate of grants[service]) {
+      for (const grantTemplate of grants[service as keyof typeof env.dbServiceAccounts]) {
         const grantStatement = await db.query<{ statement: string }>(
           "SELECT format($1::text, $2::text) AS statement", [grantTemplate, account.username]
         );
         await db.query(grantStatement.rows[0].statement);
       }
+
+      if (service === "api") {
+        // Future tables and sequences created by this migration owner inherit
+        // the same restricted runtime grants without granting DDL privileges.
+        const defaultTables = await db.query<{ statement: string }>(
+          "SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I', $1::text, $2::text) AS statement",
+          [env.databaseUser, account.username]
+        );
+        await db.query(defaultTables.rows[0].statement);
+        const defaultSequences = await db.query<{ statement: string }>(
+          "SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO %I', $1::text, $2::text) AS statement",
+          [env.databaseUser, account.username]
+        );
+        await db.query(defaultSequences.rows[0].statement);
+      }
     }
+
+    // Public schema creation is not needed by runtime services.
+    await db.query("REVOKE CREATE ON SCHEMA public FROM PUBLIC");
   } catch (err: unknown) {
     throw new Error(`Database migration failed: ${err instanceof Error ? err.message : String(err)}`);
   }

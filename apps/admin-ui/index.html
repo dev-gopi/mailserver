@@ -162,10 +162,10 @@
         </div>
 
         <div class="form-group">
-          <label for="forgot-new-password">New Password (minimum 12 characters)</label>
+          <label for="forgot-new-password">New Password (minimum 14 characters)</label>
           <div class="input-with-icon">
             <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <input id="forgot-new-password" type="password" minlength="12" required placeholder="Min 12 characters">
+            <input id="forgot-new-password" type="password" minlength="14" required placeholder="Min 12 characters">
             <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('forgot-new-password', this)">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
             </button>
@@ -210,9 +210,9 @@
         </div>
 
         <div class="form-group">
-          <label for="new-password">New Password (minimum 12 characters)</label>
+          <label for="new-password">New Password (minimum 14 characters)</label>
           <div class="input-with-icon">
-            <input id="new-password" type="password" minlength="12" required placeholder="Min 12 characters">
+            <input id="new-password" type="password" minlength="14" required placeholder="Min 12 characters">
             <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('new-password', this)">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
             </button>
@@ -280,6 +280,11 @@
         <button type="button" class="nav-item" data-tab="audit">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           <span>Audit Log</span>
+        </button>
+
+        <button type="button" class="nav-item" data-tab="administrators" id="nav-administrators">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
+          <span>Administrators</span>
         </button>
 
         <button type="button" class="nav-item" data-tab="backups">
@@ -1452,6 +1457,64 @@
           </div>
         </section>
 
+        <!-- TAB: ADMINISTRATOR LIFECYCLE -->
+        <section id="tab-administrators" class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2>Administrator Accounts</h2>
+              <p class="section-desc">Create privileged accounts, assign roles, and suspend access. New administrators must replace their initial password at first sign-in.</p>
+            </div>
+          </div>
+
+          <div class="settings-grid">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Create Administrator</h3>
+                  <p class="card-desc">Only an active owner can create or manage administrator accounts.</p>
+                </div>
+              </div>
+              <form id="admin-create-form" class="settings-form">
+                <div class="form-group">
+                  <label for="admin-create-username">Username</label>
+                  <input id="admin-create-username" type="text" minlength="3" maxlength="64" pattern="[A-Za-z0-9._-]+" autocomplete="off" required>
+                </div>
+                <div class="form-group">
+                  <label for="admin-create-password">Initial password (14–128 characters)</label>
+                  <input id="admin-create-password" type="password" minlength="14" maxlength="128" autocomplete="new-password" required>
+                </div>
+                <div class="form-group">
+                  <label for="admin-create-role">Role</label>
+                  <select id="admin-create-role" required>
+                    <option value="viewer">Viewer — read-only access</option>
+                    <option value="admin">Admin — mail operations</option>
+                    <option value="owner">Owner — full administration</option>
+                  </select>
+                </div>
+                <div id="admin-create-error" class="form-inline-error hidden" role="alert"></div>
+                <button type="submit" class="btn btn-primary">Create Administrator</button>
+              </form>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Access Management</h3>
+                  <p class="card-desc">Changing role or suspending an account revokes its existing sessions. The last active owner cannot be removed.</p>
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="loadAdministrators()">Refresh</button>
+              </div>
+              <div class="table-responsive">
+                <table class="data-table">
+                  <thead><tr><th>Account</th><th>Role</th><th>Status</th><th>Last login</th><th>Actions</th></tr></thead>
+                  <tbody id="admin-accounts-tbody"></tbody>
+                </table>
+              </div>
+              <div id="admin-accounts-empty" class="empty-state hidden">No administrator accounts found.</div>
+            </div>
+          </div>
+        </section>
+
         <!-- TAB 6: SETTINGS -->
         <section id="tab-settings" class="tab-pane">
           <div class="section-header">
@@ -1517,9 +1580,9 @@
                 </div>
 
                 <div class="form-group">
-                  <label for="settings-new-pw">New Password (min 12 characters)</label>
+                  <label for="settings-new-pw">New Password (min 14 characters)</label>
                   <div class="input-with-icon">
-                    <input id="settings-new-pw" type="password" minlength="12" required>
+                    <input id="settings-new-pw" type="password" minlength="14" required>
                     <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('settings-new-pw', this)">
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                     </button>
@@ -1528,7 +1591,7 @@
 
                 <div class="form-group">
                   <label for="settings-confirm-pw">Confirm New Password</label>
-                  <input id="settings-confirm-pw" type="password" minlength="12" required>
+                  <input id="settings-confirm-pw" type="password" minlength="14" required>
                 </div>
 
                 <button type="submit" class="btn btn-primary">Update Password</button>
@@ -1581,7 +1644,7 @@
           <div class="form-group">
             <label for="mb-password">Mailbox Password</label>
             <div class="input-with-icon">
-              <input id="mb-password" type="password" minlength="12" required placeholder="Minimum 12 characters" autocomplete="new-password">
+              <input id="mb-password" type="password" minlength="14" required placeholder="Minimum 12 characters" autocomplete="new-password">
               <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('mb-password', this)" title="Show/Hide">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               </button>
@@ -1649,7 +1712,7 @@
           <div class="form-group">
             <label for="user-password">Mailbox Password</label>
             <div class="input-with-icon">
-              <input id="user-password" type="password" minlength="12" required placeholder="Minimum 12 characters" autocomplete="new-password">
+              <input id="user-password" type="password" minlength="14" required placeholder="Minimum 12 characters" autocomplete="new-password">
               <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('user-password', this)" title="Show/Hide">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               </button>
@@ -1698,7 +1761,7 @@
           <div class="form-group">
             <label for="edit-mb-password">Reset Password (leave empty to keep unchanged)</label>
             <div class="input-with-icon">
-              <input id="edit-mb-password" type="password" minlength="12" placeholder="Leave blank to keep existing password">
+              <input id="edit-mb-password" type="password" minlength="14" placeholder="Leave blank to keep existing password">
               <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('edit-mb-password', this)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               </button>

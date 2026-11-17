@@ -54,8 +54,24 @@ export class SystemRepository {
         socket.connect(port, host, onConnect);
       }
 
-      socket.once("data", (data) => {
-        const banner = data.toString().trim().substring(0, 120);
+      socket.on("data", (data) => {
+        const response = data.toString();
+        if (service === "redis" && !response.includes("+PONG")) {
+          if (response.startsWith("-")) {
+            socket.destroy();
+            safeResolve({
+              service,
+              displayName,
+              port,
+              status: "down",
+              latencyMs: Date.now() - start,
+              error: "Redis authentication or PING failed",
+              lastChecked: new Date().toISOString()
+            });
+          }
+          return;
+        }
+        const banner = response.trim().substring(0, 120);
         const latencyMs = Date.now() - start;
 
         // Gracefully disconnect according to service protocol
@@ -138,7 +154,15 @@ export class SystemRepository {
       // and a blank line terminating the headers.
       this.probeTcp("spamassassin", "SpamAssassin Filter", env.services.spamassassinHost, env.services.spamassassinPort, "PING SPAMC/1.5\r\n\r\n"),
       this.probeTcp("clamav", "ClamAV Engine", env.services.clamavHost, env.services.clamavPort, "PING\r\n"),
-      this.probeTcp("redis", "Redis Queue & Cache", env.services.redisHost, env.services.redisPort, "*1\r\n$4\r\nPING\r\n")
+      this.probeTcp(
+        "redis",
+        "Redis Queue & Cache",
+        env.services.redisHost,
+        env.services.redisPort,
+        env.services.redisPassword
+          ? `*2\r\n$4\r\nAUTH\r\n$${Buffer.byteLength(env.services.redisPassword)}\r\n${env.services.redisPassword}\r\n*1\r\n$4\r\nPING\r\n`
+          : "*1\r\n$4\r\nPING\r\n"
+      )
     ]);
 
     return [dbStatus, ...probes];
