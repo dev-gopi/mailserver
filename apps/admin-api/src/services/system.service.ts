@@ -431,7 +431,10 @@ export class SystemService {
           // all, which would bypass the scanners and security rules.
           "Settings": '{groups_disabled = ["greylist"];}'
         },
-        body: message,
+        // Buffer<ArrayBufferLike> is not assignable to fetch's browser-style
+        // BodyInit in newer Node typings. Copy into a Uint8Array backed by an
+        // ArrayBuffer while preserving the raw RFC 822 bytes.
+        body: new Uint8Array(message),
         signal: AbortSignal.timeout(20_000)
       });
     } catch (error) {
