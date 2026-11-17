@@ -435,3 +435,8 @@ port 9090 and Grafana on loopback port 3001 by default. Run
 credentials. Read the Grafana administrator password with
 `docker compose exec -T grafana cat /run/mailcore-secrets/grafana_admin_password`.
 See [`docs/MILESTONE_07.md`](docs/MILESTONE_07.md) for deployment and validation.
+
+
+## Milestone 08 — Performance, Reliability & Disaster Recovery
+
+See [`docs/MILESTONE_08.md`](docs/MILESTONE_08.md) for SMTP/IMAPS load probes, PostgreSQL diagnostics, storage checks, hardened backups, isolated restore drills, and controlled failure simulations.

@@ -4,6 +4,7 @@
 !.env.example
 apps/admin-api/.env
 !apps/admin-api/.env.example
+infrastructure/performance/load-test.env
 
 # TLS and DKIM private material
 secrets/tls/*.key

@@ -18,7 +18,15 @@ export interface QueueJob<T = any> {
 export type JobHandler<T = any> = (job: QueueJob<T>) => Promise<any>;
 
 const QUEUE = process.env.REDIS_QUEUE || "mail_tasks";
+const PROCESSING_QUEUE = `${QUEUE}:processing`;
+const DEAD_LETTER_QUEUE = `${QUEUE}:dead_letter`;
 
+/**
+ * Redis-backed at-least-once task queue.
+ * Jobs are atomically moved from the pending list to a processing list. A job
+ * is acknowledged only after completion or durable dead-letter/retry enqueue.
+ * A worker restart requeues unacknowledged jobs; handlers should be idempotent.
+ */
 export class TaskQueue extends EventEmitter {
   private readonly memoryQueue: QueueJob[] = [];
   private readonly completedJobs: QueueJob[] = [];
@@ -30,6 +38,7 @@ export class TaskQueue extends EventEmitter {
   private worker: any = null;
   private redisConnected = false;
   private processing = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
 
   constructor(start = true) {
     super();
@@ -39,27 +48,52 @@ export class TaskQueue extends EventEmitter {
     void this.connect(start);
   }
 
-  private async connect(start: boolean) {
+  private scheduleReconnect(start: boolean): void {
+    if (this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connect(start);
+    }, 15_000);
+    this.reconnectTimer.unref();
+  }
+
+  private async connect(start: boolean): Promise<void> {
     try {
-      await this.redis.connect();
-      if (start) {
+      if (!this.redis.isOpen) await this.redis.connect();
+      if (start && !this.worker) {
         this.worker = this.redis.duplicate();
+        this.worker.on("error", () => { this.redisConnected = false; });
         await this.worker.connect();
+        await this.recoverProcessingJobs();
         void this.consume();
       }
     } catch {
       this.redisConnected = false;
-      if (start) setInterval(() => void this.connect(true), 15000).unref();
+      this.worker = null;
+      this.scheduleReconnect(start);
     }
   }
 
-  private async consume() {
+  /** Requeue jobs left in processing after an unclean worker exit. */
+  private async recoverProcessingJobs(): Promise<void> {
+    const stranded = await this.redis.lRange(PROCESSING_QUEUE, 0, -1);
+    for (const payload of stranded) {
+      await this.redis.lPush(QUEUE, payload);
+      await this.redis.lRem(PROCESSING_QUEUE, 1, payload);
+    }
+    if (stranded.length) this.emit("recovered", { count: stranded.length });
+  }
+
+  private async consume(): Promise<void> {
     while (this.worker?.isReady) {
       try {
-        const item = await this.worker.brPop(QUEUE, 1);
-        if (item) await this.execute(JSON.parse(item.element) as QueueJob);
+        // BRPOPLPUSH atomically claims a job. It remains recoverable until acked.
+        const payload = await this.worker.brPopLPush(QUEUE, PROCESSING_QUEUE, 1);
+        if (payload) await this.execute(JSON.parse(payload) as QueueJob, payload);
       } catch {
         this.redisConnected = false;
+        this.worker = null;
+        this.scheduleReconnect(true);
         break;
       }
     }
@@ -78,14 +112,17 @@ export class TaskQueue extends EventEmitter {
     const payload = JSON.stringify(job);
     if (this.redisConnected) {
       try { await this.redis.lPush(QUEUE, payload); }
-      catch { this.memoryQueue.push(job); }
+      catch {
+        this.redisConnected = false;
+        this.memoryQueue.push(job);
+      }
     } else this.memoryQueue.push(job);
     this.emit("enqueued", job);
     if (!this.redisConnected) void this.processMemory();
     return job;
   }
 
-  private async processMemory() {
+  private async processMemory(): Promise<void> {
     if (this.processing) return;
     const job = this.memoryQueue.find((candidate) => candidate.status === "pending");
     if (!job) return;
@@ -95,41 +132,47 @@ export class TaskQueue extends EventEmitter {
     else void this.processMemory();
   }
 
-  private async execute(job: QueueJob) {
+  private async execute(job: QueueJob, redisPayload?: string): Promise<void> {
     const handler = this.handlers.get(job.name);
     if (!handler) {
       job.status = "failed";
       job.error = `No handler registered for task: ${job.name}`;
-      this.finishMemory(job);
+      if (redisPayload) {
+        await this.redis.rPush(DEAD_LETTER_QUEUE, JSON.stringify(job));
+        await this.redis.lRem(PROCESSING_QUEUE, 1, redisPayload);
+      }
+      this.emit("failed", job);
       this.processing = false;
+      this.finishMemory(job);
       return;
     }
+
     job.status = "processing";
     job.attempts++;
     try {
       job.result = await handler(job);
       job.status = "completed";
       job.completedAt = Date.now();
+      if (redisPayload) await this.redis.lRem(PROCESSING_QUEUE, 1, redisPayload);
       this.emit("completed", job);
     } catch (error: any) {
+      job.error = error?.message || "Execution error";
       if (job.attempts < job.maxAttempts) {
         job.status = "pending";
-        if (this.redisConnected) {
-          try {
-            await this.redis.lPush(QUEUE, JSON.stringify(job));
-          } catch {
-            if (!this.memoryQueue.includes(job)) {
-              this.memoryQueue.push(job);
-            }
-          }
-        } else {
-          if (!this.memoryQueue.includes(job)) {
-            this.memoryQueue.push(job);
-          }
+        if (redisPayload) {
+          // Enqueue retry before acking the processing copy: crash => duplicate,
+          // never silent loss. The queue contract is at-least-once.
+          await this.redis.lPush(QUEUE, JSON.stringify(job));
+          await this.redis.lRem(PROCESSING_QUEUE, 1, redisPayload);
+        } else if (!this.memoryQueue.includes(job)) {
+          this.memoryQueue.push(job);
         }
       } else {
         job.status = "failed";
-        job.error = error?.message || "Execution error";
+        if (redisPayload) {
+          await this.redis.rPush(DEAD_LETTER_QUEUE, JSON.stringify(job));
+          await this.redis.lRem(PROCESSING_QUEUE, 1, redisPayload);
+        }
         this.emit("failed", job);
       }
     } finally {
@@ -138,7 +181,7 @@ export class TaskQueue extends EventEmitter {
     }
   }
 
-  private finishMemory(job: QueueJob) {
+  private finishMemory(job: QueueJob): void {
     if (job.status === "completed" || job.status === "failed") {
       const index = this.memoryQueue.indexOf(job);
       if (index >= 0) this.memoryQueue.splice(index, 1);
@@ -149,15 +192,22 @@ export class TaskQueue extends EventEmitter {
 
   async getStats() {
     let redisPending = 0;
+    let redisProcessing = 0;
+    let redisDeadLetter = 0;
     if (this.redisConnected) {
-      try { redisPending = await this.redis.lLen(QUEUE); } catch { /* health is reported below */ }
+      try {
+        [redisPending, redisProcessing, redisDeadLetter] = await Promise.all([
+          this.redis.lLen(QUEUE), this.redis.lLen(PROCESSING_QUEUE), this.redis.lLen(DEAD_LETTER_QUEUE)
+        ]);
+      } catch { /* connection state is reported below */ }
     }
     return {
-      backend: this.redisConnected ? "redis" : "memory_resilient",
+      backend: this.redisConnected ? "redis_at_least_once" : "memory_degraded_non_durable",
       redisHost: env.services.redisHost,
       redisPort: env.services.redisPort,
       pendingCount: this.memoryQueue.filter((j) => j.status === "pending").length + redisPending,
-      processingCount: this.memoryQueue.filter((j) => j.status === "processing").length,
+      processingCount: this.memoryQueue.filter((j) => j.status === "processing").length + redisProcessing,
+      deadLetterCount: redisDeadLetter,
       completedCount: this.completedJobs.filter((j) => j.status === "completed").length,
       failedCount: this.completedJobs.filter((j) => j.status === "failed").length,
       recentJobs: this.completedJobs.slice(0, 10).map(({ id, name, status, attempts, createdAt, completedAt }) =>

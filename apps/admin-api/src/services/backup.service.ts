@@ -13,6 +13,7 @@ const execFileAsync = promisify(execFile);
 
 export class BackupService {
   private schedulerTimer: NodeJS.Timeout | null = null;
+  private backupInProgress = false;
 
   public getBackupDirectory(): string {
     const candidateDirs = [
@@ -23,18 +24,16 @@ export class BackupService {
     ];
 
     for (const d of candidateDirs) {
-      if (fs.existsSync(d)) {
+      if (fs.existsSync(d) && fs.statSync(d).isDirectory()) {
+        fs.accessSync(d, fs.constants.W_OK);
         return d;
       }
     }
 
     const defaultDir = path.resolve(process.cwd(), "backups");
-    try {
-      fs.mkdirSync(defaultDir, { recursive: true });
-      return defaultDir;
-    } catch {
-      return "/tmp";
-    }
+    fs.mkdirSync(defaultDir, { recursive: true, mode: 0o700 });
+    fs.accessSync(defaultDir, fs.constants.W_OK);
+    return defaultDir;
   }
 
   private formatBytes(bytes: number): string {
@@ -179,14 +178,17 @@ export class BackupService {
   }
 
   async createBackup(): Promise<BackupArchiveItem> {
-    const settings = await this.getSettings();
+    if (this.backupInProgress) throw new Error("A backup is already in progress");
     const dir = this.getBackupDirectory();
+    this.backupInProgress = true;
     const timestamp = new Date().toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
-    const workdir = `/tmp/mail-backup-${timestamp}`;
+    const workdir = `/tmp/mail-backup-${timestamp}-${process.pid}`;
     const archiveName = `mail-${timestamp}.tar.gz`;
     const finalArchive = path.join(dir, archiveName);
+    const temporaryArchive = `${finalArchive}.tmp`;
 
     try {
+      const settings = await this.getSettings();
       await fsPromises.mkdir(workdir, { recursive: true });
 
       // 1. Dump database if enabled
@@ -201,15 +203,18 @@ export class BackupService {
 
           await execFileAsync(
             "pg_dump",
-            ["--format=custom", `--file=${dumpPath}`, `-h`, dbHost, `-p`, dbPort, `-U`, dbUser, dbName],
+            ["--format=custom", "--no-owner", "--no-acl", `--file=${dumpPath}`, `-h`, dbHost, `-p`, dbPort, `-U`, dbUser, dbName],
             {
               env: {
                 ...process.env,
                 PGPASSWORD: env.databasePassword || ""
               },
-              timeout: 60000
+              timeout: 30 * 60 * 1000
             }
           );
+          const dumpStat = await fsPromises.stat(dumpPath);
+          if (dumpStat.size === 0) throw new Error("Database dump is empty");
+          await execFileAsync("pg_restore", ["--list", dumpPath], { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
         } catch (error) {
           throw new Error(`pg_dump failed; no backup archive was created: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -218,24 +223,33 @@ export class BackupService {
       // 2. Archive maildata vhosts if enabled
       if (settings.include_maildata) {
         const maildataPath = path.join(workdir, "maildata.tar.gz");
-        const vhostsDir = fs.existsSync("/var/mail/vhosts") ? "/var/mail/vhosts" : path.resolve(process.cwd(), "services/postfix/maildata");
-
-        if (fs.existsSync(vhostsDir)) {
-          try {
-            await execFileAsync("tar", ["-C", vhostsDir, "-czf", maildataPath, "."], { timeout: 60000 });
-          } catch {
-            await fsPromises.writeFile(maildataPath, Buffer.from("EMPTY_MAILBOX_STORE"));
-          }
-        } else {
-          await fsPromises.writeFile(maildataPath, Buffer.from("EMPTY_MAILBOX_STORE"));
+        const vhostsDir = "/var/mail/vhosts";
+        if (!fs.existsSync(vhostsDir)) {
+          throw new Error(`Mailbox storage directory is missing: ${vhostsDir}; refusing to publish an incomplete backup`);
         }
+        await execFileAsync("tar", ["--numeric-owner", "-C", vhostsDir, "-czf", maildataPath, "."], { timeout: 30 * 60 * 1000 });
+        const maildataStat = await fsPromises.stat(maildataPath);
+        if (maildataStat.size === 0) throw new Error("Mailbox backup archive is empty");
+        await execFileAsync("tar", ["-tzf", maildataPath], { timeout: 30 * 60 * 1000, maxBuffer: 32 * 1024 * 1024 });
       }
 
       // 3. Compress workdir files into final archive
       const filesToPack = await fsPromises.readdir(workdir);
       if (filesToPack.length > 0) {
-        await execFileAsync("tar", ["-C", workdir, "-czf", finalArchive, ...filesToPack], { timeout: 60000 });
+        await execFileAsync("tar", ["-C", workdir, "-czf", temporaryArchive, ...filesToPack], { timeout: 30 * 60 * 1000 });
+      } else {
+        throw new Error("Backup has no payloads; refusing to publish an empty archive");
       }
+
+      // Validate before atomically publishing the archive and its checksum.
+      await execFileAsync("tar", ["-tzf", temporaryArchive], { timeout: 30 * 60 * 1000, maxBuffer: 32 * 1024 * 1024 });
+      const archiveHash = await new Promise<string>((resolve, reject) => {
+        const hash = createHash("sha256");
+        fs.createReadStream(temporaryArchive).on("error", reject).on("data", (chunk) => hash.update(chunk)).on("end", () => resolve(hash.digest("hex")));
+      });
+      await fsPromises.rename(temporaryArchive, finalArchive);
+      await fsPromises.writeFile(`${finalArchive}.sha256.tmp`, `${archiveHash}  ${archiveName}\n`, { mode: 0o600 });
+      await fsPromises.rename(`${finalArchive}.sha256.tmp`, `${finalArchive}.sha256`);
 
       // Clean up temporary workspace
       await fsPromises.rm(workdir, { recursive: true, force: true });
@@ -271,6 +285,7 @@ export class BackupService {
       if (fs.existsSync(workdir)) {
         await fsPromises.rm(workdir, { recursive: true, force: true }).catch(() => {});
       }
+      await fsPromises.rm(temporaryArchive, { force: true }).catch(() => {});
 
       await db.query(
         `UPDATE backup_settings
@@ -282,6 +297,8 @@ export class BackupService {
       );
 
       throw err;
+    } finally {
+      this.backupInProgress = false;
     }
   }
 
@@ -306,6 +323,21 @@ export class BackupService {
       const maildata = entries.find((entry) => entry.replace(/^\.\//, "") === "maildata.tar.gz");
       checks.push({ name: "Database payload", status: databaseDump ? "pass" : "fail", details: databaseDump ? "database.dump is present" : "database.dump is missing" });
       checks.push({ name: "Mailbox payload", status: maildata ? "pass" : "fail", details: maildata ? "maildata.tar.gz is present" : "maildata.tar.gz is missing" });
+
+      const verifyDir = `/tmp/mail-backup-verify-${process.pid}-${Date.now()}`;
+      await fsPromises.mkdir(verifyDir, { recursive: true, mode: 0o700 });
+      try {
+        if (databaseDump && maildata) {
+          await execFileAsync("tar", ["-xzf", filePath, "-C", verifyDir, "database.dump", "maildata.tar.gz"], { timeout: 30 * 60 * 1000 });
+          await execFileAsync("pg_restore", ["--list", path.join(verifyDir, "database.dump")], { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
+          await execFileAsync("tar", ["-tzf", path.join(verifyDir, "maildata.tar.gz")], { timeout: 30 * 60 * 1000, maxBuffer: 32 * 1024 * 1024 });
+          checks.push({ name: "Payload readability", status: "pass", details: "Database dump and nested mailbox archive are readable" });
+        } else {
+          checks.push({ name: "Payload readability", status: "fail", details: "Both database and mailbox payloads are required for a full restore drill" });
+        }
+      } finally {
+        await fsPromises.rm(verifyDir, { recursive: true, force: true });
+      }
 
       const checksumPath = `${filePath}.sha256`;
       if (fs.existsSync(checksumPath)) {
@@ -341,6 +373,7 @@ export class BackupService {
         const stat = fs.statSync(filePath);
         if (now - stat.mtimeMs > maxAgeMs) {
           fs.unlinkSync(filePath);
+          fs.unlinkSync(`${filePath}.sha256`);
           prunedCount++;
         }
       } catch (err) {
@@ -366,6 +399,7 @@ export class BackupService {
     }
 
     fs.unlinkSync(targetPath);
+    fs.rmSync(`${targetPath}.sha256`, { force: true });
   }
 
   getBackupFilePath(filename: string): string {
