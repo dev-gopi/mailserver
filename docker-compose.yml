@@ -504,6 +504,8 @@ services:
   monitoring-secrets-init:
     image: alpine:3.21.3
     entrypoint: ["/bin/sh", "/init-monitoring-secrets.sh"]
+    environment:
+      GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
     volumes:
       - mailcore_monitoring_secrets:/run/mailcore-secrets
       - ./secrets/runtime:/legacy-secrets:ro
@@ -574,6 +576,7 @@ services:
 
   grafana:
     image: grafana/grafana:12.1.0
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     ports:
       - "${GRAFANA_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3001}:3000"
     environment:
@@ -585,6 +588,7 @@ services:
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
     volumes:
+      - ./infrastructure/monitoring/grafana/entrypoint.sh:/entrypoint.sh:ro
       - mailcore_monitoring_secrets:/run/mailcore-secrets:ro
       - grafanadata:/var/lib/grafana
       - ./infrastructure/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
@@ -604,6 +608,54 @@ services:
         condition: service_completed_successfully
       prometheus:
         condition: service_started
+      loki:
+        condition: service_started
+
+  # Loki provides the log datasource used by Grafana Explore. It is internal
+  # only; Grafana is the sole UI exposed on the host.
+  loki:
+    image: grafana/loki:3.3.0
+    command: ["-config.file=/etc/loki/config.yml"]
+    volumes:
+      - ./infrastructure/monitoring/loki.yml:/etc/loki/config.yml:ro
+      - lokidata:/loki
+    networks:
+      - monitoringnet
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *service-logging
+
+  # Collect the existing MailCore service log files without a Docker-socket
+  # mount. This avoids granting the log collector container Docker control.
+  promtail:
+    image: grafana/promtail:3.3.0
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ./infrastructure/monitoring/promtail.yml:/etc/promtail/config.yml:ro
+      - ./var/log/mailcore:/var/log/mailcore:ro
+      - promtailpositions:/run/promtail
+    networks:
+      - monitoringnet
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+    logging: *service-logging
+    depends_on:
+      loki:
+        condition: service_started
 
 volumes:
   maildata:
@@ -619,6 +671,8 @@ volumes:
   prometheusdata:
   grafanadata:
   mailcore_monitoring_secrets:
+  lokidata:
+  promtailpositions:
 
 secrets:
   postgres_password:

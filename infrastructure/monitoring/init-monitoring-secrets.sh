@@ -10,6 +10,18 @@ generate_secret() {
   name="$1"
   target="$TOKEN_DIR/$name"
   legacy="$LEGACY_DIR/$name"
+  if [ "$name" = "grafana_admin_password" ] && [ -n "${GRAFANA_ADMIN_PASSWORD:-}" ]; then
+    echo "[monitoring-secret-init] configuring grafana_admin_password from environment"
+    umask 077
+    temp="$target.tmp.$$"
+    trap 'rm -f "$temp"' EXIT HUP INT TERM
+    printf '%s' "$GRAFANA_ADMIN_PASSWORD" > "$temp"
+    chmod 0400 "$temp"
+    mv -f "$temp" "$target"
+    trap - EXIT HUP INT TERM
+    chmod 0444 "$target"
+    return 0
+  fi
   if [ -s "$target" ]; then
     echo "[monitoring-secret-init] preserving existing $name in Docker volume"
   elif [ -s "$legacy" ]; then
