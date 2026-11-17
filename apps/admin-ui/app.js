@@ -19,6 +19,7 @@ const state = {
   eventAlertRules: [],
   eventRetention: null,
   dashboardData: null,
+  mailAnalytics: null,
   company: null,
   activeDnsDomain: null,
   failureAlerts: [],
@@ -329,6 +330,7 @@ function switchTab(tabId) {
 
   if (tabId === "dashboard") {
     renderDashboardVisuals();
+    renderMailFlowAnalytics(state.mailAnalytics);
   }
   if (tabId === "backups") {
     renderBackupsView();
@@ -531,17 +533,19 @@ function escapeHtml(str) {
 // Master Refresh
 async function refreshAllData() {
   try {
-    const [dashboard, company, domains, mailboxes, aliases, clientConfig, backupData] = await Promise.all([
+    const [dashboard, company, domains, mailboxes, aliases, clientConfig, backupData, mailAnalytics] = await Promise.all([
       request("/api/dashboard"),
       request("/api/company"),
       request("/api/domains"),
       request("/api/mailboxes"),  // Uses virtual_users view (Dovecot-compatible)
       request("/api/aliases"),    // Admin view — includes inactive aliases
       request("/api/mailboxes/client-config"),
-      request("/api/backups").catch(() => null)
+      request("/api/backups").catch(() => null),
+      request(`/api/analytics/mail?days=${Number($("mail-analytics-period")?.value || 30)}`).catch(() => null)
     ]);
 
     state.dashboardData = dashboard;
+    state.mailAnalytics = mailAnalytics;
     state.company = company;
     state.domains = domains;
     state.mailboxes = mailboxes;
@@ -557,6 +561,7 @@ async function refreshAllData() {
 
     renderOverview();
     renderDashboardVisuals();
+    renderMailFlowAnalytics(state.mailAnalytics);
     renderMailboxes();
     renderDomains();
     renderAliases();
@@ -2994,6 +2999,47 @@ function renderDashboardVisuals() {
   renderDashboardFailuresTable();
 }
 
+function renderMailFlowAnalytics(data) {
+  const chart = $("chart-mail-flow-container");
+  const summary = $("mail-flow-summary-container");
+  if (!chart || !summary) return;
+  if (!data || !data.summary || !Array.isArray(data.daily)) {
+    chart.innerHTML = '<div class="table-empty">Mail-flow analytics are unavailable. Check Postfix event ingestion and API logs.</div>';
+    summary.innerHTML = '<div class="table-empty">No verified delivery summary is available.</div>';
+    return;
+  }
+  const fields = [
+    { key: "queued", label: "Queued", color: "#3b82f6" },
+    { key: "accepted", label: "Accepted", color: "#10b981" },
+    { key: "deferred", label: "Deferred", color: "#f59e0b" },
+    { key: "bounced", label: "Bounced", color: "#ef4444" }
+  ];
+  const maxValue = Math.max(1, ...data.daily.map((day) => fields.reduce((max, field) => Math.max(max, Number(day[field.key] || 0)), 0)));
+  const width = 640, height = 190, left = 30, plotHeight = 145;
+  const step = (width - left - 12) / Math.max(1, data.daily.length);
+  const barWidth = Math.max(2, Math.min(8, (step - 8) / fields.length));
+  const bars = data.daily.map((day, index) => {
+    const startX = left + index * step;
+    const rects = fields.map((field, fieldIndex) => {
+      const value = Math.max(0, Number(day[field.key] || 0));
+      const h = value > 0 ? Math.max(1, (value / maxValue) * plotHeight) : 0;
+      return h ? `<rect x="${startX + fieldIndex * (barWidth + 2)}" y="${plotHeight - h}" width="${barWidth}" height="${h}" rx="2" fill="${field.color}"><title>${escapeHtml(day.date)} · ${field.label}: ${value}</title></rect>` : "";
+    }).join("");
+    const label = String(day.date || "").slice(5);
+    const interval = Math.max(1, Math.ceil(data.daily.length / 7));
+    const showLabel = index === 0 || index === data.daily.length - 1 || index % interval === 0;
+    return `<g>${rects}${showLabel ? `<text x="${startX + step / 2}" y="${plotHeight + 20}" text-anchor="middle" font-size="10" fill="#64748b">${escapeHtml(label)}</text>` : ""}</g>`;
+  }).join("");
+  chart.innerHTML = `<div class="chart-legend">${fields.map((field) => `<span class="legend-item"><span class="legend-dot" style="background:${field.color}"></span>${field.label}</span>`).join("")}</div><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily mail lifecycle events for ${data.periodDays} days" style="width:100%;height:210px"><line x1="${left}" y1="${plotHeight}" x2="${width}" y2="${plotHeight}" stroke="#cbd5e1"/>${bars}</svg><p class="text-muted" style="font-size:.72rem;margin-top:6px">Source: persisted Postfix lifecycle events · Generated ${escapeHtml(new Date(data.generatedAt).toLocaleString())}</p>`;
+  const values = [
+    ["Accepted", data.summary.accepted, "#10b981"], ["Deferred", data.summary.deferred, "#f59e0b"],
+    ["Bounced", data.summary.bounced, "#ef4444"], ["Rejected", data.summary.rejected, "#64748b"],
+    ["Internal accepted", data.summary.internalAccepted, "#0ea5e9"], ["External accepted", data.summary.externalAccepted, "#8b5cf6"]
+  ];
+  const rate = data.summary.terminalDeliverySuccessRate;
+  summary.innerHTML = `<div class="stats-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">${values.map(([label, value, color]) => `<div class="stat-card" style="padding:12px"><div class="stat-content"><span class="stat-label">${label}</span><div class="stat-number" style="font-size:1.35rem;color:${color}">${Number(value || 0).toLocaleString()}</div></div></div>`).join("")}</div><div class="alert-box alert-info" style="margin-top:12px"><strong>Terminal delivery success rate:</strong> ${rate === null ? "Not enough terminal outcomes" : `${Number(rate).toFixed(2)}%`}<br><small>Accepted ÷ (accepted + bounced). Deferred messages are excluded until a terminal result exists.</small></div><h4 style="margin:16px 0 8px">Top recipient domains</h4>${Array.isArray(data.recipientDomains) && data.recipientDomains.length ? `<div class="table-responsive"><table class="data-table"><thead><tr><th>Domain</th><th>Delivery events</th></tr></thead><tbody>${data.recipientDomains.map((item) => `<tr><td>${escapeHtml(item.domain)}</td><td>${Number(item.deliveries || 0).toLocaleString()}</td></tr>`).join("")}</tbody></table></div>` : '<p class="text-muted">No recipient-domain events recorded in this period.</p>'}`;
+}
+
 function renderActivityTrendsChart(trends) {
   const container = $("chart-activity-container");
   if (!container) return;
@@ -4028,3 +4074,6 @@ document.addEventListener("submit", (event) => {
     showView("login");
   }
 })();
+
+const mailAnalyticsPeriodHandler = () => request(`/api/analytics/mail?days=${Number($("mail-analytics-period")?.value || 30)}`).then((data) => { state.mailAnalytics = data; renderMailFlowAnalytics(data); }).catch((error) => showToast("Analytics unavailable", error.message, "error"));
+$("mail-analytics-period")?.addEventListener("change", mailAnalyticsPeriodHandler);

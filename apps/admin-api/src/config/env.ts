@@ -52,6 +52,7 @@ export const env = {
   mailHostname: process.env.MAIL_HOSTNAME ?? "",
   mailPublicIp: process.env.MAIL_PUBLIC_IP ?? "",
   alertWebhookUrl: process.env.ALERT_WEBHOOK_URL ?? "",
+  prometheusScrapeToken: readSecret("PROMETHEUS_SCRAPE_TOKEN") ?? "",
   eventSyslogBind: process.env.MAILCORE_EVENT_SYSLOG_BIND ?? "",
   eventSyslogPort: Number(process.env.MAILCORE_EVENT_SYSLOG_PORT ?? 6514),
   dns: {
@@ -105,6 +106,9 @@ if (!Number.isInteger(env.adminMaxSessions) || env.adminMaxSessions < 1 || env.a
 }
 if (!env.databaseUrl && (!env.databaseHost || !env.databaseName || !env.databaseUser || !env.databasePassword)) {
   required("DATABASE_URL or PGHOST/PGDATABASE/PGUSER/PGPASSWORD");
+}
+if (env.nodeEnv === "production" && !env.migrationMode && env.prometheusScrapeToken.length < 32) {
+  throw new Error("PROMETHEUS_SCRAPE_TOKEN_FILE must contain at least 32 characters");
 }
 if (env.nodeEnv === "production" && !env.sessionCookieSecure) {
   throw new Error("SESSION_COOKIE_SECURE must remain true in production");

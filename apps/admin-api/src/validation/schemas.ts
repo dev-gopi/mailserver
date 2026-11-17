@@ -222,7 +222,7 @@ export const eventExportQuerySchema = z.object({
 });
 
 export const eventNotificationQuerySchema = z.object({
-  unreadOnly: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  unreadOnly: z.union([z.boolean(), z.enum(["true", "false"]).transform((value) => value === "true")]).default(false),
   limit: z.coerce.number().int().min(1).max(100).default(50)
 });
 
@@ -254,3 +254,5 @@ export const eventRetentionSettingsSchema = z.object({
 });
 
 export const eventOutboxIdParamSchema = z.object({ id: z.string().regex(/^\d{1,18}$/) });
+
+export const mailAnalyticsQuerySchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(30) });

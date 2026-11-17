@@ -19,6 +19,14 @@ test("event notification query converts URL strings into typed values", () => {
     unreadOnly: false,
     limit: 50
   });
+  assert.deepEqual(eventNotificationQuerySchema.parse({ unreadOnly: true }), {
+    unreadOnly: true,
+    limit: 50
+  });
+  assert.deepEqual(eventNotificationQuerySchema.parse({ unreadOnly: false }), {
+    unreadOnly: false,
+    limit: 50
+  });
   assert.deepEqual(eventNotificationQuerySchema.parse({}), {
     unreadOnly: false,
     limit: 50

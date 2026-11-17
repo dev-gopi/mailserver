@@ -437,11 +437,13 @@ services:
       MAILCORE_EVENT_SYSLOG_BIND: 172.31.1.3
       MAILCORE_EVENT_SYSLOG_PORT: 6514
       TZ: ${TZ:-UTC}
+      PROMETHEUS_SCRAPE_TOKEN_FILE: /run/mailcore-secrets/prometheus_scrape_token
     secrets:
       - api_db_password
       - auth_encryption_key
       - redis_password
     volumes:
+      - mailcore_monitoring_secrets:/run/mailcore-secrets:ro
       - maildata:/var/mail/vhosts
       - dkimkeys:/var/lib/opendkim
       - rspamdpolicydata:/var/lib/mailcore-rspamd-maps
@@ -457,12 +459,15 @@ services:
       # stable, non-conflicting address.
       postfixcontrolnet:
         ipv4_address: 172.31.1.3
+      monitoringnet: {}
     restart: unless-stopped
     logging: *service-logging
     depends_on:
       migrate:
         condition: service_completed_successfully
       rspamd-policy-map-init:
+        condition: service_completed_successfully
+      monitoring-secrets-init:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -490,6 +495,108 @@ services:
       app:
         condition: service_healthy
 
+  # Initialize monitoring credentials in a named Docker volume. This avoids
+  # file-backed bind mounts failing when a fresh host has no monitoring secret files.
+  monitoring-secrets-init:
+    image: alpine:3.21.3
+    entrypoint: ["/bin/sh", "/init-monitoring-secrets.sh"]
+    volumes:
+      - mailcore_monitoring_secrets:/run/mailcore-secrets
+      - ./secrets/runtime:/legacy-secrets:ro
+      - ./infrastructure/monitoring/init-monitoring-secrets.sh:/init-monitoring-secrets.sh:ro
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+    restart: "no"
+    logging: *service-logging
+
+  # Prometheus is an internal metrics backend. Grafana accesses it over the
+  # monitoring network; it is intentionally not published on the host.
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.wal-compression
+      - --web.listen-address=:9090
+    # ports:
+    #   - "${PROMETHEUS_BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - mailcore_monitoring_secrets:/run/mailcore-secrets:ro
+      - prometheusdata:/prometheus
+    networks:
+      - monitoringnet
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *service-logging
+    depends_on:
+      monitoring-secrets-init:
+        condition: service_completed_successfully
+      app:
+        condition: service_healthy
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|host|run)($|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host:ro,rslave
+    networks:
+      - monitoringnet
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *service-logging
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    ports:
+      - "${GRAFANA_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3001}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/mailcore-secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: http://localhost:${GRAFANA_PORT:-3001}/
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - mailcore_monitoring_secrets:/run/mailcore-secrets:ro
+      - grafanadata:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - monitoringnet
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *service-logging
+    depends_on:
+      monitoring-secrets-init:
+        condition: service_completed_successfully
+      prometheus:
+        condition: service_started
+
 volumes:
   maildata:
   mailspool:
@@ -501,6 +608,9 @@ volumes:
   rspamddata:
   rspamdpolicydata:
   postfixeventqueue:
+  prometheusdata:
+  grafanadata:
+  mailcore_monitoring_secrets:
 
 secrets:
   postgres_password:
@@ -559,3 +669,7 @@ networks:
     ipam:
       config:
         - subnet: 172.31.1.0/28
+
+  # Dedicated metrics plane. Grafana alone is published on host loopback.
+  monitoringnet:
+    driver: bridge

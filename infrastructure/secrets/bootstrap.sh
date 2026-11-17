@@ -87,6 +87,10 @@ for env_key, filename in (
         raise SystemExit("REDIS_PASSWORD must use at least 16 URL-safe letters, digits, underscores or hyphens.")
     persist(filename, value)
 
+# Prometheus scrape and Grafana admin credentials are initialized in the persistent
+# monitoring named volume by Compose. The initializer imports legacy host files when
+# present, preserving existing credentials without requiring new bind-mounted files.
+
 key = root.get("AUTH_ENCRYPTION_KEY", "") or api.get("AUTH_ENCRYPTION_KEY", "")
 key_path = secret_dir / "auth_encryption_key"
 if key_path.exists() and key_path.stat().st_size > 0:

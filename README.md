@@ -420,3 +420,18 @@ See [`docs/MILESTONE_06.md`](docs/MILESTONE_06.md) for sources, event semantics,
 retention, permissions, upgrade steps and operational caveats. Run
 `node scripts/check-milestone-06.mjs` for static checks and
 `infrastructure/tests/milestone-06-runtime.sh` against the running Docker stack.
+
+
+## Monitoring and analytics
+
+Milestone 07 adds Prometheus and Grafana. The API exposes aggregate event metrics at
+`/metrics` only to a bearer token stored in a private Docker named volume and
+reachable over the private monitoring network. A one-shot `monitoring-secrets-init`
+service creates the scrape token and Grafana admin password before the API,
+Prometheus and Grafana start; if legacy credentials exist in `secrets/runtime/`,
+they are imported to preserve existing access. Prometheus is available on loopback
+port 9090 and Grafana on loopback port 3001 by default. Run
+`./infrastructure/secrets/bootstrap.sh` for the database, Redis and encryption
+credentials. Read the Grafana administrator password with
+`docker compose exec -T grafana cat /run/mailcore-secrets/grafana_admin_password`.
+See [`docs/MILESTONE_07.md`](docs/MILESTONE_07.md) for deployment and validation.

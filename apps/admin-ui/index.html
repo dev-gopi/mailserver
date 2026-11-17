@@ -699,6 +699,37 @@
             </div>
           </div>
 
+          <!-- Mail lifecycle analytics from persisted Postfix events -->
+          <div class="dashboard-charts-grid mt-4" id="mail-flow-analytics-card">
+            <div class="card chart-card">
+              <div class="card-header flex-between">
+                <div>
+                  <h3 class="card-title">Mail Flow Analytics</h3>
+                  <p class="card-desc">Queued, accepted, deferred, bounced and rejected delivery events</p>
+                </div>
+                <select id="mail-analytics-period" class="form-control" style="max-width: 132px;" aria-label="Mail analytics period">
+                  <option value="7">Last 7 days</option>
+                  <option value="30" selected>Last 30 days</option>
+                  <option value="90">Last 90 days</option>
+                </select>
+              </div>
+              <div class="chart-body" id="chart-mail-flow-container" aria-live="polite">
+                <div class="table-empty">Loading persisted mail-flow events…</div>
+              </div>
+            </div>
+            <div class="card chart-card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Delivery Summary</h3>
+                  <p class="card-desc">Computed from recorded Postfix recipient outcomes</p>
+                </div>
+              </div>
+              <div class="chart-body" id="mail-flow-summary-container" aria-live="polite">
+                <div class="table-empty">Loading delivery summary…</div>
+              </div>
+            </div>
+          </div>
+
           <!-- Incidents & Failure Diagnostic Console -->
           <div class="card mt-4">
             <div class="card-header flex-between">
@@ -2572,6 +2603,6 @@
   </div>
 
   <!-- Script logic -->
-  <script src="/app.js?v=20261117-2"></script>
+  <script src="/app.js?v=20261117-m07"></script>
 </body>
 </html>

@@ -32,7 +32,8 @@ import {
   eventAlertRuleIdParamSchema,
   eventNotificationIdParamSchema,
   eventRetentionSettingsSchema,
-  eventOutboxIdParamSchema
+  eventOutboxIdParamSchema,
+  mailAnalyticsQuerySchema
 } from "../validation/schemas";
 import { companyController } from "../controllers/company.controller";
 import { domainController } from "../controllers/domain.controller";
@@ -44,6 +45,7 @@ import { backupController } from "../controllers/backup.controller";
 import { adminManagementController } from "../controllers/admin-management.controller";
 import { securityPolicyController } from "../controllers/security-policy.controller";
 import { eventController } from "../controllers/event.controller";
+import { analyticsController } from "../controllers/analytics.controller";
 
 export const adminRouter = Router();
 
@@ -85,6 +87,7 @@ adminRouter.patch("/admins/:id", requireRoles("owner"), validate({ params: admin
 adminRouter.delete("/admins/:id", requireRoles("owner"), validate({ params: administratorIdParamSchema }), (req, _res, next) => { req.body = { active: false }; next(); }, adminManagementController.update);
 
 // ── Dashboard ──────────────────────────────────────────────────────────────────
+adminRouter.get("/analytics/mail", requireRoles("admin"), validate({ query: mailAnalyticsQuerySchema }), analyticsController.mail);
 adminRouter.get("/dashboard", systemController.getDashboard);
 
 // ── Company Profile ────────────────────────────────────────────────────────────

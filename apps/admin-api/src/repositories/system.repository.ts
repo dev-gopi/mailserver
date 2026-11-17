@@ -408,6 +408,101 @@ export class SystemRepository {
     return this.postfixBridge(`HOLD_DELETE:${queueId}`);
   }
 
+  async getMailAnalytics(days: number) {
+    const safeDays = Math.min(90, Math.max(1, Math.trunc(days)));
+    const [daily, summary, domains] = await Promise.all([
+      db.query(
+        `WITH calendar AS (
+           SELECT generate_series(current_date - (($1::int - 1) * interval '1 day'), current_date, interval '1 day')::date AS day
+         )
+         SELECT to_char(calendar.day, 'YYYY-MM-DD') AS date,
+           count(event.id) FILTER (WHERE event.action = 'mail.message.queued')::int AS queued,
+           count(event.id) FILTER (WHERE event.action = 'mail.delivery.accepted')::int AS accepted,
+           count(event.id) FILTER (WHERE event.action = 'mail.delivery.deferred')::int AS deferred,
+           count(event.id) FILTER (WHERE event.action = 'mail.delivery.bounced')::int AS bounced,
+           count(event.id) FILTER (WHERE event.action = 'mail.smtp.rejected')::int AS rejected
+         FROM calendar
+         LEFT JOIN system_events event ON event.category = 'mail'
+           AND event.occurred_at >= calendar.day AND event.occurred_at < calendar.day + interval '1 day'
+           AND event.action IN ('mail.message.queued','mail.delivery.accepted','mail.delivery.deferred','mail.delivery.bounced','mail.smtp.rejected')
+         GROUP BY calendar.day ORDER BY calendar.day`, [safeDays]
+      ),
+      db.query(
+        `SELECT
+          count(*) FILTER (WHERE action = 'mail.message.queued')::int AS queued,
+          count(*) FILTER (WHERE action = 'mail.delivery.accepted')::int AS accepted,
+          count(*) FILTER (WHERE action = 'mail.delivery.deferred')::int AS deferred,
+          count(*) FILTER (WHERE action = 'mail.delivery.bounced')::int AS bounced,
+          count(*) FILTER (WHERE action = 'mail.smtp.rejected')::int AS rejected,
+          count(*) FILTER (WHERE action = 'mail.delivery.accepted' AND EXISTS (
+            SELECT 1 FROM domains d WHERE lower(d.name::text) = lower(split_part(system_events.details->>'recipient', '@', 2))
+          ))::int AS internal_accepted,
+          count(*) FILTER (WHERE action = 'mail.delivery.accepted' AND NOT EXISTS (
+            SELECT 1 FROM domains d WHERE lower(d.name::text) = lower(split_part(system_events.details->>'recipient', '@', 2))
+          ))::int AS external_accepted
+         FROM system_events
+         WHERE category = 'mail' AND occurred_at >= now() - ($1::int * interval '1 day')
+           AND action IN ('mail.message.queued','mail.delivery.accepted','mail.delivery.deferred','mail.delivery.bounced','mail.smtp.rejected')`, [safeDays]
+      ),
+      db.query(
+        `SELECT lower(split_part(details->>'recipient', '@', 2)) AS domain, count(*)::int AS deliveries
+         FROM system_events
+         WHERE category = 'mail' AND action IN ('mail.delivery.accepted','mail.delivery.deferred','mail.delivery.bounced')
+           AND occurred_at >= now() - ($1::int * interval '1 day')
+           AND position('@' in coalesce(details->>'recipient', '')) > 1
+         GROUP BY 1 ORDER BY count(*) DESC LIMIT 10`, [safeDays]
+      )
+    ]);
+    const row = summary.rows[0] ?? {};
+    const accepted = Number(row.accepted ?? 0); const bounced = Number(row.bounced ?? 0); const terminal = accepted + bounced;
+    return {
+      periodDays: safeDays,
+      summary: {
+        queued: Number(row.queued ?? 0), accepted, deferred: Number(row.deferred ?? 0), bounced,
+        rejected: Number(row.rejected ?? 0), internalAccepted: Number(row.internal_accepted ?? 0),
+        externalAccepted: Number(row.external_accepted ?? 0),
+        terminalDeliverySuccessRate: terminal > 0 ? Number(((accepted / terminal) * 100).toFixed(2)) : null
+      },
+      daily: daily.rows.map((item) => ({ date: item.date, queued: Number(item.queued ?? 0), accepted: Number(item.accepted ?? 0), deferred: Number(item.deferred ?? 0), bounced: Number(item.bounced ?? 0), rejected: Number(item.rejected ?? 0) })),
+      recipientDomains: domains.rows.map((item) => ({ domain: item.domain, deliveries: Number(item.deliveries ?? 0) })),
+      generatedAt: new Date().toISOString(), source: "persisted Postfix lifecycle events"
+    };
+  }
+
+  async getPrometheusMailMetrics(): Promise<string[]> {
+    const [actions, outbox] = await Promise.all([
+      db.query<{ action: string; count: string }>(
+        `SELECT action, count(*)::text AS count FROM system_events
+         WHERE category = 'mail' AND occurred_at >= now() - interval '24 hours'
+           AND action = ANY($1::text[]) GROUP BY action`,
+        [["mail.message.queued", "mail.delivery.accepted", "mail.delivery.deferred", "mail.delivery.bounced", "mail.smtp.rejected"]]
+      ),
+      db.query<{ pending: string; dead_lettered: string; oldest_pending_seconds: string | null }>(
+        `SELECT count(*) FILTER (WHERE published_at IS NULL AND dead_lettered_at IS NULL)::text AS pending,
+                count(*) FILTER (WHERE dead_lettered_at IS NOT NULL)::text AS dead_lettered,
+                EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE published_at IS NULL AND dead_lettered_at IS NULL)))::text AS oldest_pending_seconds
+         FROM event_outbox`
+      )
+    ]);
+    const allowed = ["mail.message.queued", "mail.delivery.accepted", "mail.delivery.deferred", "mail.delivery.bounced", "mail.smtp.rejected"];
+    const counts = new Map(actions.rows.map((row) => [row.action, Number(row.count)]));
+    const backlog = outbox.rows[0] ?? { pending: "0", dead_lettered: "0", oldest_pending_seconds: null };
+    return [
+      "# HELP mailcore_mail_events_24h Mail lifecycle events observed in the last 24 hours.",
+      "# TYPE mailcore_mail_events_24h gauge",
+      ...allowed.map((action) => `mailcore_mail_events_24h{action="${action}"} ${counts.get(action) ?? 0}`),
+      "# HELP mailcore_event_outbox_pending Current unpublished outbox items.",
+      "# TYPE mailcore_event_outbox_pending gauge",
+      `mailcore_event_outbox_pending ${Number(backlog.pending ?? 0)}`,
+      "# HELP mailcore_event_outbox_dead_lettered Current dead-lettered outbox items.",
+      "# TYPE mailcore_event_outbox_dead_lettered gauge",
+      `mailcore_event_outbox_dead_lettered ${Number(backlog.dead_lettered ?? 0)}`,
+      "# HELP mailcore_event_outbox_oldest_pending_seconds Age of the oldest unpublished event.",
+      "# TYPE mailcore_event_outbox_oldest_pending_seconds gauge",
+      `mailcore_event_outbox_oldest_pending_seconds ${Number(backlog.oldest_pending_seconds ?? 0)}`
+    ];
+  }
+
   private postfixBridge(
     command: "STATUS" | "DETAIL" | "FLUSH" | "HOLD_LIST" | `HOLD_FETCH:${string}` | `HOLD_RELEASE_IF_HASH:${string}:${string}` | `HOLD_RELEASE:${string}` | `HOLD_DELETE:${string}`,
     maxResponseBytes = 4 * 1024 * 1024,

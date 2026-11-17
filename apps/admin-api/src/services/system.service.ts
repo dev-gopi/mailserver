@@ -236,6 +236,10 @@ export class SystemService {
     };
   }
 
+  async getMailAnalytics(days: number) {
+    return systemRepository.getMailAnalytics(days);
+  }
+
   async checkServices() {
     return systemRepository.checkAllServices();
   }
