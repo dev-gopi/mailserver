@@ -338,8 +338,8 @@ treating it as a substitute for production deliverability testing.
 
 ~~~text
 apps/
-  admin-api/       Express/TypeScript API, authentication, backups
-  admin-ui/        Nginx-served administrator dashboard
+  admin-api/       Express/TypeScript API, authentication, backups, event pipeline
+  admin-ui/        Nginx-served administrator dashboard and event explorer
 services/
   postfix/         SMTP and delivery configuration
   dovecot/         IMAP, POP3, LMTP, Sieve, SQL authentication
@@ -392,3 +392,31 @@ mandatory ClamAV inspection remain active. See
 [`docs/MILESTONE_05.md`](docs/MILESTONE_05.md), then run
 `node scripts/check-milestone-05.mjs` and
 `infrastructure/tests/milestone-05-runtime.sh` before relying on policy changes.
+
+
+## Event management and audit (Milestone 06)
+
+Milestone 06 adds a PostgreSQL-backed `system_events` timeline and transactional
+`event_outbox`. Administrator audit actions persist the legacy audit row, event
+record, and outbox row in one transaction. A `SKIP LOCKED` dispatcher creates
+rule-matched administrator notifications and publishes committed event IDs over
+PostgreSQL `NOTIFY` for replayable SSE streams.
+
+Postfix queue lifecycle logs are forwarded by rsyslog over the dedicated
+internal `postfixcontrolnet` to the API's private event listener. The event
+collector stores selected queue metadata, not raw mail content. Delivery
+`status=sent` means the next SMTP/LMTP hop accepted the message; it does not
+prove Inbox placement. The outbox uses bounded exponential retries and a
+visible dead-letter state; owners can requeue a reviewed item. SSE reconnects
+resume from `Last-Event-ID`, and a database catch-up poll recovers temporary
+PostgreSQL listener gaps. Nginx disables buffering for the SSE endpoint and
+keeps the stream open with heartbeats; the API caps concurrent streams. Postfix
+syslog ingestion applies TCP backpressure, keeps idle rsyslog connections alive,
+and retries database writes while the API is alive. Event retention archives
+older rows in PostgreSQL by default. The legacy `audit_log` remains separate and is
+not deleted by event retention.
+
+See [`docs/MILESTONE_06.md`](docs/MILESTONE_06.md) for sources, event semantics,
+retention, permissions, upgrade steps and operational caveats. Run
+`node scripts/check-milestone-06.mjs` for static checks and
+`infrastructure/tests/milestone-06-runtime.sh` against the running Docker stack.

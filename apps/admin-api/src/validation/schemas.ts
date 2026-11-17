@@ -184,3 +184,73 @@ export const securityPolicyListEntrySchema = z.object({
 export const securityPolicyListEntryIdParamSchema = z.object({
   id: z.coerce.number().int().positive()
 });
+
+// Milestone 06: bounded event explorer and administrator notification controls.
+const eventCategorySchema = z.enum([
+  "authentication", "mailboxes", "domains", "security", "backup", "system", "administration", "mail", "audit"
+]);
+const eventSeveritySchema = z.enum(["info", "notice", "warning", "critical"]);
+const eventDateSchema = z.string().max(40).refine((value) => Number.isFinite(Date.parse(value)), "Invalid date/time filter");
+
+export const eventListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  afterId: z.string().regex(/^\d{1,18}$/, "Invalid event cursor").optional(),
+  category: eventCategorySchema.optional(),
+  severity: eventSeveritySchema.optional(),
+  source: z.string().trim().min(1).max(80).optional(),
+  action: z.string().trim().min(1).max(100).optional(),
+  from: eventDateSchema.optional(),
+  to: eventDateSchema.optional(),
+  q: z.string().trim().max(120).optional(),
+  includeArchived: z.enum(["true", "false"]).default("false").transform((value) => value === "true")
+}).refine((value) => !value.from || !value.to || Date.parse(value.from) <= Date.parse(value.to), {
+  message: "The from date must be earlier than or equal to the to date"
+});
+
+export const eventExportQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(5000).default(1000),
+  category: eventCategorySchema.optional(),
+  severity: eventSeveritySchema.optional(),
+  source: z.string().trim().min(1).max(80).optional(),
+  action: z.string().trim().min(1).max(100).optional(),
+  from: eventDateSchema.optional(),
+  to: eventDateSchema.optional(),
+  q: z.string().trim().max(120).optional(),
+  includeArchived: z.enum(["true", "false"]).default("false").transform((value) => value === "true")
+}).refine((value) => !value.from || !value.to || Date.parse(value.from) <= Date.parse(value.to), {
+  message: "The from date must be earlier than or equal to the to date"
+});
+
+export const eventNotificationQuerySchema = z.object({
+  unreadOnly: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  limit: z.coerce.number().int().min(1).max(100).default(50)
+});
+
+export const eventAlertRuleCreateSchema = z.object({
+  name: z.string().trim().min(3).max(80),
+  category: eventCategorySchema.nullable().optional(),
+  minSeverity: eventSeveritySchema,
+  actionPrefix: z.string().trim().min(2).max(100).regex(/^[a-z][a-z0-9._-]*$/i).nullable().optional(),
+  enabled: z.boolean().default(true)
+});
+
+export const eventAlertRuleUpdateSchema = z.object({
+  name: z.string().trim().min(3).max(80).optional(),
+  category: eventCategorySchema.nullable().optional(),
+  minSeverity: eventSeveritySchema.optional(),
+  actionPrefix: z.string().trim().min(2).max(100).regex(/^[a-z][a-z0-9._-]*$/i).nullable().optional(),
+  enabled: z.boolean().optional()
+}).refine((value) => Object.values(value).some((item) => item !== undefined), "At least one alert-rule field is required");
+
+export const eventAlertRuleIdParamSchema = z.object({ id: z.string().regex(/^\d{1,18}$/) });
+export const eventNotificationIdParamSchema = z.object({ id: z.string().regex(/^\d{1,18}$/) });
+
+export const eventRetentionSettingsSchema = z.object({
+  retentionDays: z.number().int().min(7).max(3650),
+  archiveRetentionDays: z.number().int().min(30).max(3650),
+  archiveBeforeDelete: z.boolean()
+}).refine((value) => value.archiveRetentionDays >= value.retentionDays, {
+  message: "Archive retention must be greater than or equal to active event retention"
+});
+
+export const eventOutboxIdParamSchema = z.object({ id: z.string().regex(/^\d{1,18}$/) });

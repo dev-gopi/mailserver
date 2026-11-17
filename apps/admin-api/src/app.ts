@@ -3,6 +3,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import swaggerUi from "swagger-ui-express";
 import { db } from "./db/pool";
+import { randomUUID } from "node:crypto";
 import { authRouter } from "./routes/auth";
 import { adminRouter } from "./routes/admin";
 import { openapi } from "./openapi";
@@ -10,6 +11,12 @@ import { openapi } from "./openapi";
 export const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
+app.use((req, res, next) => {
+  const correlationId = randomUUID();
+  req.correlationId = correlationId;
+  res.setHeader("X-Request-ID", correlationId);
+  next();
+});
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {

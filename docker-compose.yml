@@ -7,29 +7,7 @@ x-service-logging: &service-logging
 services:
   rspamd-policy-map-init:
     image: alpine:3.21
-    command:
-      - /bin/sh
-      - -ec
-      - |
-        mkdir -p /maps
-        for file in allow_senders.map block_senders.map allow_domains.map block_domains.map block_extensions.map; do
-          [ -e "/maps/$$file" ] || : > "/maps/$$file"
-          chmod 0644 "/maps/$$file"
-        done
-        if [ ! -s /maps/settings.map ]; then
-          cat > /maps/settings.map <<'EOF'
-        settings {
-          mailcore_bootstrap_default {
-            priority = 1;
-            rcpt = "/.*/";
-            apply { actions { "add header" = 6.0; reject = 15.0; greylist = 4.0; } }
-          }
-        }
-        EOF
-        fi
-        chmod 0644 /maps/settings.map
-        chmod 0755 /maps
-        chown -R 1000:1000 /maps
+    command: ["/bin/sh", "/usr/local/bin/map-init.sh"]
     network_mode: none
     read_only: true
     tmpfs:
@@ -40,7 +18,11 @@ services:
       - ALL
     cap_add:
       - CHOWN
+      # Existing policy-map files are owned by UID 1000 after initialization.
+      # FOWNER permits chmod on those files on subsequent container starts.
+      - FOWNER
     volumes:
+      - ./services/rspamd/map-init.sh:/usr/local/bin/map-init.sh:ro
       - rspamdpolicydata:/maps
     restart: "no"
     logging: *service-logging
@@ -193,6 +175,7 @@ services:
       - ./secrets/tls/cert.pem:/etc/mailcore/tls/cert.pem:ro
       - ./secrets/tls/privkey.key:/etc/mailcore/tls/privkey.key:ro
       - mailspool:/var/spool/postfix
+      - postfixeventqueue:/var/spool/rsyslog
     ports:
       - "${SMTP_PORT:?set SMTP_PORT in .env}:25"
       - "${SUBMISSION_PORT:?set SUBMISSION_PORT in .env}:587"
@@ -451,6 +434,8 @@ services:
       WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}
       WEBAUTHN_RP_NAME: ${WEBAUTHN_RP_NAME:-MailCore Admin Console}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      MAILCORE_EVENT_SYSLOG_BIND: 172.31.1.3
+      MAILCORE_EVENT_SYSLOG_PORT: 6514
       TZ: ${TZ:-UTC}
     secrets:
       - api_db_password
@@ -515,6 +500,7 @@ volumes:
   redisdata:
   rspamddata:
   rspamdpolicydata:
+  postfixeventqueue:
 
 secrets:
   postgres_password:

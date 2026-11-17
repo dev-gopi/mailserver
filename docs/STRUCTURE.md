@@ -95,3 +95,15 @@ The API also mounts the host `./backups` directory.
 - `secrets/tls/cert.pem` and `secrets/tls/privkey.key` contain private TLS
   material and must be supplied by the operator.
 - Docker volumes and `backups/` are runtime data, not source-controlled config.
+
+
+## Event subsystem (Milestone 06)
+
+- `apps/admin-api/src/utils/event.utils.ts`: event classification, details sanitization, Postfix log parsing and CSV-safe cells.
+- `apps/admin-api/src/repositories/event.repository.ts`: event persistence, search, metrics, alert rules, notification reads, retention, and outbox operations.
+- `apps/admin-api/src/services/event.service.ts`: transactional event facade, outbox dispatcher, PostgreSQL LISTEN/NOTIFY relay, SSE fan-out and private Postfix syslog collection.
+- `apps/admin-api/src/controllers/event.controller.ts`: authenticated event/search/export/stream/notification/retention endpoints.
+- `services/postfix/rsyslog-container.conf`: persistent private TCP forwarding of the `mail.*` facility.
+- `apps/admin-ui/index.html` and `app.js`: Event Explorer, alert rules, notifications, retention and outbox recovery.
+
+`system_events` and `event_outbox` are durable PostgreSQL records. The in-process EventEmitter and SSE streams are only delivery mechanisms.

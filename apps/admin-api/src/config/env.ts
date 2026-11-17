@@ -52,6 +52,8 @@ export const env = {
   mailHostname: process.env.MAIL_HOSTNAME ?? "",
   mailPublicIp: process.env.MAIL_PUBLIC_IP ?? "",
   alertWebhookUrl: process.env.ALERT_WEBHOOK_URL ?? "",
+  eventSyslogBind: process.env.MAILCORE_EVENT_SYSLOG_BIND ?? "",
+  eventSyslogPort: Number(process.env.MAILCORE_EVENT_SYSLOG_PORT ?? 6514),
   dns: {
     mxPriority: Number(process.env.MX_PRIORITY ?? 10),
     spfRecord: process.env.SPF_RECORD ?? "v=spf1 mx ~all",
@@ -137,6 +139,7 @@ for (const [name, value] of Object.entries({
   RSPAMD_PORT: env.services.rspamdPort,
   CLAMAV_PORT: env.services.clamavPort,
   REDIS_PORT: env.services.redisPort,
+  MAILCORE_EVENT_SYSLOG_PORT: env.eventSyslogPort,
   IMAPS_PORT: env.client.imapPort,
   IMAP_STARTTLS_PORT: env.client.imapAlternativePort,
   POP3S_PORT: env.client.pop3Port,

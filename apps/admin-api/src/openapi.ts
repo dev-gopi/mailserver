@@ -62,6 +62,15 @@ export const openapi = {
     },
 
     "/api/audit-log": { get: { security: [{ bearerAuth: [] }], summary: "Read administrator audit history" } },
+    "/api/events": { get: { security: [{ bearerAuth: [] }], summary: "Search and paginate the durable system event timeline" } },
+    "/api/events/metrics": { get: { security: [{ bearerAuth: [] }], summary: "Read event and outbox health metrics" } },
+    "/api/events/export": { get: { security: [{ bearerAuth: [] }], summary: "Export filtered event history as spreadsheet-safe CSV" } },
+    "/api/events/stream": { get: { security: [{ bearerAuth: [] }], summary: "Subscribe to replayable server-sent event notifications" } },
+    "/api/events/notifications": { get: { security: [{ bearerAuth: [] }], summary: "List administrator event notifications" } },
+    "/api/events/outbox": { get: { security: [{ bearerAuth: [] }], summary: "Inspect pending and dead-lettered event outbox entries" } },
+    "/api/events/outbox/{id}/retry": { post: { security: [{ bearerAuth: [] }], summary: "Requeue a dead-lettered event outbox entry (owner only)" } },
+    "/api/events/alert-rules": { get: { security: [{ bearerAuth: [] }], summary: "List event notification rules" }, post: { security: [{ bearerAuth: [] }], summary: "Create an event notification rule (owner only)" } },
+    "/api/events/retention": { get: { security: [{ bearerAuth: [] }], summary: "Read event retention and archive policy" }, put: { security: [{ bearerAuth: [] }], summary: "Update event retention and archive policy (owner only)" } },
 
     "/api/system/services": { get: { security: [{ bearerAuth: [] }], summary: "Real-time health probes of Postfix, Dovecot, ClamAV, SpamAssassin, Postgres, and Redis" } },
     "/api/system/queue": { get: { security: [{ bearerAuth: [] }], summary: "Inspect Postfix mail spool & queue status" } },

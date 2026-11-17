@@ -3151,3 +3151,54 @@ input:focus, select:focus, textarea:focus {
 @media (max-width: 520px) {
   .policy-form-grid { grid-template-columns: 1fr; }
 }
+
+
+/* Milestone 06: event explorer and outbox controls */
+.form-control {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 9px 12px;
+  font: inherit;
+  color: var(--text-main);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+}
+input[type="search"], input[type="datetime-local"] {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 12px;
+  margin: 0;
+  font: inherit;
+  color: var(--text-main);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+}
+.event-metrics-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.event-notification-item { align-items: flex-start; gap: 12px; padding: 12px 14px; }
+.event-notification-item.is-unread { background: var(--primary-subtle); }
+.event-notification-item .recent-activity-content { min-width: 0; flex: 1; }
+.event-notification-item p { overflow-wrap: anywhere; }
+.card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-subtle);
+}
+@media (max-width: 720px) {
+  .card-footer { align-items: flex-start; flex-direction: column; }
+  .event-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+
+/* Milestone 06 event/alert forms */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 12px;
+  align-items: end;
+}

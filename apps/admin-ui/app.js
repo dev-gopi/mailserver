@@ -12,6 +12,12 @@ const state = {
   aliases: [],
   clientConfig: null,
   auditLogs: [],
+  events: [],
+  eventNextCursor: null,
+  eventMetrics: null,
+  eventNotifications: [],
+  eventAlertRules: [],
+  eventRetention: null,
   dashboardData: null,
   company: null,
   activeDnsDomain: null,
@@ -35,6 +41,10 @@ const state = {
   securityPolicies: null,
   securityPolicyHistory: []
 };
+
+let eventStream = null;
+let eventUiRefreshTimer = null;
+let eventLoadInProgress = false;
 
 // DOM Helper
 const $ = (id) => document.getElementById(id);
@@ -278,6 +288,9 @@ function showView(name) {
 
   if (name === "app") {
     updateUserInfo();
+    startEventStream();
+  } else {
+    stopEventStream();
   }
 }
 
@@ -307,6 +320,7 @@ function switchTab(tabId) {
     quarantine: "Security Quarantine",
     "security-policies": "Security Policies",
     audit: "Audit Log & Security Trail",
+    events: "Event Explorer & Alerts",
     backups: "Mail Backups & Disaster Recovery",
     administrators: "Administrator Accounts",
     settings: "Settings & Company Profile"
@@ -321,6 +335,9 @@ function switchTab(tabId) {
   }
   if (tabId === "audit" && state.auditLogs.length === 0) {
     loadAuditLogs();
+  }
+  if (tabId === "events") {
+    loadEvents();
   }
   if (tabId === "services") {
     runDiagnosticsNow();
@@ -349,6 +366,12 @@ function updateUserInfo() {
   if (quarantineNav) quarantineNav.classList.toggle("hidden", !["owner", "admin"].includes(user.role));
   const policyNav = $("nav-security-policies");
   if (policyNav) policyNav.classList.toggle("hidden", !["owner", "admin"].includes(user.role));
+  const eventsNav = $("nav-events");
+  if (eventsNav) eventsNav.classList.toggle("hidden", !["owner", "admin"].includes(user.role));
+  const eventNotificationsButton = $("btn-event-notifications");
+  if (eventNotificationsButton) eventNotificationsButton.classList.toggle("hidden", !["owner", "admin"].includes(user.role));
+  const ownerControls = ["event-alert-rule-owner-controls", "event-retention-owner-controls"];
+  ownerControls.forEach((id) => $(id)?.classList.toggle("hidden", user.role !== "owner"));
 }
 
 // Modal Handlers
@@ -1659,7 +1682,321 @@ async function deleteAlias(id, source) {
   }
 }
 
-// 5. Audit Log Renderer
+// 5. Event Management, Search, Notifications & Live Stream
+function buildEventQuery(includeCursor = false) {
+  const params = new URLSearchParams();
+  params.set("limit", "50");
+  const values = {
+    q: $("event-search")?.value.trim(),
+    category: $("event-category-filter")?.value,
+    severity: $("event-severity-filter")?.value,
+    includeArchived: $("event-include-archive")?.checked ? "true" : "false"
+  };
+  Object.entries(values).forEach(([key, value]) => { if (value) params.set(key, value); });
+  const from = $("event-from-filter")?.value;
+  const to = $("event-to-filter")?.value;
+  if (from) params.set("from", new Date(from).toISOString());
+  if (to) params.set("to", new Date(to).toISOString());
+  if (includeCursor && state.eventNextCursor) params.set("afterId", state.eventNextCursor);
+  return params;
+}
+
+async function loadEvents(options = {}) {
+  if (eventLoadInProgress) return;
+  eventLoadInProgress = true;
+  const append = options.append === true;
+  const tbody = $("events-tbody");
+  if (!append && tbody && !options.silent) tbody.innerHTML = '<tr><td colspan="6" class="text-muted">Loading event timeline…</td></tr>';
+  try {
+    const params = buildEventQuery(append);
+    const result = await request(`/api/events?${params.toString()}`);
+    state.events = append ? [...state.events, ...(result.items || [])] : (result.items || []);
+    state.eventNextCursor = result.nextCursor || null;
+    renderEvents();
+    if (!append) {
+      await Promise.allSettled([loadEventMetrics(), loadEventNotifications(), loadEventRules(), loadEventRetention(), loadEventOutbox()]);
+    }
+  } catch (err) {
+    if (!options.silent) showToast("Event Explorer Error", err.message, "error");
+    if (tbody && !state.events.length) tbody.innerHTML = `<tr><td colspan="6" class="text-danger">${escapeHtml(err.message)}</td></tr>`;
+  } finally {
+    eventLoadInProgress = false;
+  }
+}
+
+function renderEvents() {
+  const tbody = $("events-tbody");
+  if (!tbody) return;
+  if (!state.events.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-muted text-center" style="padding:30px">No events match these filters.</td></tr>';
+  } else {
+    tbody.innerHTML = state.events.map((event) => {
+      const severityClass = event.severity === "critical" ? "badge-danger" : event.severity === "warning" ? "badge-warning" : event.severity === "notice" ? "badge-primary" : "badge-secondary";
+      const details = event.details && Object.keys(event.details).length ? JSON.stringify(event.details) : "—";
+      return `<tr>
+        <td style="white-space:nowrap"><strong>${formatDate(event.occurred_at)}</strong><div class="text-muted" style="font-size:.75rem">${formatRelativeTime(event.occurred_at)}</div></td>
+        <td><span class="badge ${severityClass}">${escapeHtml(event.severity)}</span></td>
+        <td><strong>${escapeHtml(event.category)}</strong><div class="text-muted" style="font-size:.75rem">${escapeHtml(event.action)}</div></td>
+        <td><code>${escapeHtml(event.source)}</code></td>
+        <td><strong>${escapeHtml(event.summary)}</strong><div class="text-muted" style="font-size:.75rem">${escapeHtml(event.entity_type || "")}${event.entity_id ? ` · #${escapeHtml(event.entity_id)}` : ""}</div><details><summary class="text-muted">Details</summary><code class="break-all">${escapeHtml(details)}</code></details></td>
+        <td><code>${escapeHtml(event.correlation_id || "—")}</code></td>
+      </tr>`;
+    }).join("");
+  }
+  const status = $("event-page-status");
+  if (status) status.textContent = `${state.events.length} loaded`;
+  const summary = $("event-result-summary");
+  if (summary) summary.textContent = `Searchable events from administrator actions and Postfix delivery lifecycle logs.`;
+  const cursor = $("events-cursor-label");
+  if (cursor) cursor.textContent = state.eventNextCursor ? "More historical events are available" : "End of matching event history";
+  const older = $("btn-events-older");
+  if (older) older.disabled = !state.eventNextCursor;
+}
+
+async function loadOlderEvents() {
+  if (state.eventNextCursor) await loadEvents({ append: true });
+}
+
+function resetEventFilters() {
+  ["event-search", "event-category-filter", "event-severity-filter", "event-from-filter", "event-to-filter"].forEach((id) => { if ($(id)) $(id).value = ""; });
+  if ($("event-include-archive")) $("event-include-archive").checked = false;
+  state.eventNextCursor = null;
+  loadEvents();
+}
+
+async function loadEventMetrics() {
+  const data = await request("/api/events/metrics");
+  state.eventMetrics = data;
+  if ($("event-metric-day")) $("event-metric-day").textContent = Number(data.lastDay || 0).toLocaleString();
+  if ($("event-metric-hour")) $("event-metric-hour").textContent = Number(data.lastHour || 0).toLocaleString();
+  if ($("event-metric-archived")) $("event-metric-archived").textContent = Number(data.archived || 0).toLocaleString();
+  if ($("event-metric-outbox-pending")) $("event-metric-outbox-pending").textContent = Number(data.outboxPending || 0).toLocaleString();
+  if ($("event-metric-outbox-dead")) $("event-metric-outbox-dead").textContent = Number(data.outboxDeadLettered || 0).toLocaleString();
+}
+
+
+async function loadEventOutbox() {
+  const result = await request("/api/events/outbox?limit=50");
+  const rows = result.items || [];
+  const tbody = $("event-outbox-tbody");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-muted text-center">No pending or dead-lettered outbox items.</td></tr>';
+    return;
+  }
+  const owner = state.adminUser?.role === "owner";
+  tbody.innerHTML = rows.map((item) => {
+    const dead = Boolean(item.dead_lettered_at);
+    const status = dead
+      ? '<span class="badge badge-danger">Dead-lettered</span>'
+      : `<span class="badge badge-warning">Retry scheduled · ${formatRelativeTime(item.available_at)}</span>`;
+    return `<tr>
+      <td><code>${escapeHtml(item.id)}</code></td>
+      <td><strong>${escapeHtml(item.action)}</strong><div class="text-muted" style="font-size:.75rem">${escapeHtml(item.summary || "")}</div></td>
+      <td>${Number(item.attempt_count || 0).toLocaleString()}</td>
+      <td>${status}</td>
+      <td><span class="text-muted">${escapeHtml(item.last_error || "—")}</span></td>
+      <td>${dead && owner ? `<button class="btn btn-secondary btn-xs" onclick="retryEventOutbox('${encodeURIComponent(item.id)}')">Retry</button>` : "—"}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function retryEventOutbox(id) {
+  if (!confirm("Retry publishing this dead-lettered event? The event and its original audit record will remain unchanged.")) return;
+  try {
+    await request(`/api/events/outbox/${id}/retry`, { method: "POST" });
+    showToast("Event Queued for Retry", "The dispatcher will retry this event with a fresh attempt counter.", "success");
+    await Promise.allSettled([loadEventOutbox(), loadEventMetrics()]);
+  } catch (err) { showToast("Outbox Retry Failed", err.message, "error"); }
+}
+
+async function loadEventNotifications() {
+  const result = await request("/api/events/notifications?limit=30");
+  state.eventNotifications = result.items || [];
+  const unread = Number(result.unreadCount || 0);
+  ["badge-nav-events", "badge-topbar-events"].forEach((id) => {
+    const badge = $(id);
+    if (!badge) return;
+    badge.textContent = unread > 99 ? "99+" : String(unread);
+    badge.classList.toggle("hidden", unread === 0);
+  });
+  if ($("event-metric-unread")) $("event-metric-unread").textContent = unread.toLocaleString();
+  renderEventNotifications();
+}
+
+function renderEventNotifications() {
+  const container = $("event-notifications-list");
+  if (!container) return;
+  if (!state.eventNotifications.length) {
+    container.innerHTML = '<p class="text-muted" style="padding:12px">No notifications. Enabled alert rules will create notifications for matching events.</p>';
+    return;
+  }
+  container.innerHTML = state.eventNotifications.map((notification) => {
+    const sev = notification.severity === "critical" ? "badge-danger" : notification.severity === "warning" ? "badge-warning" : "badge-secondary";
+    return `<div class="recent-activity-item event-notification-item ${notification.read_at ? "is-read" : "is-unread"}">
+      <div class="recent-activity-icon"><span class="badge ${sev}">${escapeHtml(notification.severity)}</span></div>
+      <div class="recent-activity-content"><strong>${escapeHtml(notification.title)}</strong><p>${escapeHtml(notification.message)}</p><small class="text-muted">${formatRelativeTime(notification.created_at)}</small></div>
+      ${notification.read_at ? '<span class="text-muted">Read</span>' : `<button class="btn btn-secondary btn-xs" onclick="markEventNotificationRead('${encodeURIComponent(notification.id)}')">Mark read</button>`}
+    </div>`;
+  }).join("");
+}
+
+async function markEventNotificationRead(id) {
+  try {
+    await request(`/api/events/notifications/${id}/read`, { method: "PATCH" });
+    await loadEventNotifications();
+  } catch (err) { showToast("Notification Update Failed", err.message, "error"); }
+}
+
+async function markAllEventNotificationsRead() {
+  try {
+    await request("/api/events/notifications/read-all", { method: "POST" });
+    await loadEventNotifications();
+    showToast("Notifications Updated", "All notifications marked as read.", "success");
+  } catch (err) { showToast("Notification Update Failed", err.message, "error"); }
+}
+
+async function loadEventRules() {
+  const result = await request("/api/events/alert-rules");
+  state.eventAlertRules = result.items || [];
+  const tbody = $("event-alert-rules-tbody");
+  if (!tbody) return;
+  if (!state.eventAlertRules.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-muted">No alert rules configured.</td></tr>';
+    return;
+  }
+  const owner = state.adminUser?.role === "owner";
+  tbody.innerHTML = state.eventAlertRules.map((rule) => `<tr>
+    <td><strong>${escapeHtml(rule.name)}</strong></td>
+    <td>${escapeHtml(rule.category || "All categories")} · ${escapeHtml(rule.min_severity)}${rule.action_prefix ? `<div class="text-muted">${escapeHtml(rule.action_prefix)}*</div>` : ""}</td>
+    <td><span class="badge ${rule.enabled ? "badge-success" : "badge-secondary"}">${rule.enabled ? "Enabled" : "Disabled"}</span></td>
+    <td>${owner ? `<button class="btn btn-secondary btn-xs" onclick="toggleEventAlertRule('${rule.id}', ${!rule.enabled})">${rule.enabled ? "Disable" : "Enable"}</button> <button class="btn btn-danger btn-xs" onclick="deleteEventAlertRule('${rule.id}')">Delete</button>` : "—"}</td>
+  </tr>`).join("");
+}
+
+async function createEventAlertRule() {
+  const body = {
+    name: $("event-rule-name")?.value.trim(),
+    category: $("event-rule-category")?.value || null,
+    minSeverity: $("event-rule-severity")?.value || "warning",
+    actionPrefix: $("event-rule-prefix")?.value.trim() || null,
+    enabled: true
+  };
+  try {
+    await request("/api/events/alert-rules", { method: "POST", body: JSON.stringify(body) });
+    $("event-rule-name").value = "";
+    $("event-rule-prefix").value = "";
+    await loadEventRules();
+    showToast("Alert Rule Created", "Matching events will create administrator notifications.", "success");
+  } catch (err) { showToast("Could Not Create Rule", err.message, "error"); }
+}
+
+async function toggleEventAlertRule(id, enabled) {
+  try {
+    await request(`/api/events/alert-rules/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ enabled }) });
+    await loadEventRules();
+  } catch (err) { showToast("Rule Update Failed", err.message, "error"); }
+}
+
+async function deleteEventAlertRule(id) {
+  if (!confirm("Delete this event alert rule? Existing notifications will remain.")) return;
+  try {
+    await request(`/api/events/alert-rules/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await loadEventRules();
+  } catch (err) { showToast("Rule Delete Failed", err.message, "error"); }
+}
+
+async function loadEventRetention() {
+  const settings = await request("/api/events/retention");
+  state.eventRetention = settings;
+  if ($("event-retention-days")) $("event-retention-days").value = settings.retention_days;
+  if ($("event-archive-days")) $("event-archive-days").value = settings.archive_retention_days;
+  if ($("event-archive-enabled")) $("event-archive-enabled").checked = settings.archive_before_delete;
+  if ($("event-retention-status")) $("event-retention-status").textContent = `Updated ${formatRelativeTime(settings.updated_at)}. Audit log records are retained separately.`;
+}
+
+async function saveEventRetention() {
+  const body = {
+    retentionDays: Number($("event-retention-days")?.value),
+    archiveRetentionDays: Number($("event-archive-days")?.value),
+    archiveBeforeDelete: Boolean($("event-archive-enabled")?.checked)
+  };
+  try {
+    await request("/api/events/retention", { method: "PUT", body: JSON.stringify(body) });
+    await loadEventRetention();
+    showToast("Retention Saved", "Event retention settings were updated.", "success");
+  } catch (err) { showToast("Retention Update Failed", err.message, "error"); }
+}
+
+async function runEventRetention() {
+  if (!confirm("Run event retention now? Old active events may be archived and removed from the active event store.")) return;
+  try {
+    const result = await request("/api/events/retention/run", { method: "POST" });
+    showToast("Retention Completed", `${result.archived} archived, ${result.deletedEvents} active events removed.`, "success");
+    await loadEvents();
+  } catch (err) { showToast("Retention Failed", err.message, "error"); }
+}
+
+async function exportEventsCsv() {
+  try {
+    const params = buildEventQuery(false);
+    params.set("limit", "5000");
+    const response = await fetch(`/api/events/export?${params.toString()}`, { credentials: "same-origin", headers: getHeaders() });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "Event export failed");
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `mailcore-events-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+    showToast("Export Ready", "Filtered event history exported.", "success");
+  } catch (err) { showToast("Event Export Failed", err.message, "error"); }
+}
+
+function scheduleEventUiRefresh() {
+  // Coalesce bursts of Postfix lifecycle events so high-volume mail traffic
+  // does not trigger one REST refresh per recipient delivery log line.
+  if (eventUiRefreshTimer) return;
+  eventUiRefreshTimer = setTimeout(() => {
+    eventUiRefreshTimer = null;
+    void loadEventNotifications();
+    if (state.currentTab === "events") void loadEvents({ silent: true });
+  }, 600);
+}
+
+function startEventStream() {
+  if (!state.adminUser || !["owner", "admin"].includes(state.adminUser.role) || eventStream) return;
+  try {
+    eventStream = new EventSource("/api/events/stream");
+    eventStream.addEventListener("ready", () => {
+      if ($("events-live-status")) { $("events-live-status").textContent = "Live stream connected"; $("events-live-status").className = "badge badge-success"; }
+    });
+    eventStream.addEventListener("mailcore.event", (message) => {
+      let event;
+      try { event = JSON.parse(message.data); } catch { return; }
+      scheduleEventUiRefresh();
+      if (event.severity === "critical" || (event.category === "security" && event.severity === "warning") || (event.category === "authentication" && event.severity === "warning")) {
+        showToast(event.severity === "critical" ? "Critical Event" : "Security Alert", event.summary || event.action, event.severity === "critical" ? "error" : "warning", 7000);
+      }
+    });
+    eventStream.onerror = () => {
+      if ($("events-live-status")) { $("events-live-status").textContent = "Reconnecting…"; $("events-live-status").className = "badge badge-warning"; }
+    };
+  } catch (err) {
+    if ($("events-live-status")) $("events-live-status").textContent = "Live stream unavailable";
+  }
+}
+
+function stopEventStream() {
+  if (eventStream) eventStream.close();
+  eventStream = null;
+  if ($("events-live-status")) { $("events-live-status").textContent = "Live stream disconnected"; $("events-live-status").className = "badge badge-secondary"; }
+}
+
+// 5b. Audit Log Renderer
 async function loadAuditLogs() {
   try {
     const logs = await request("/api/audit-log");

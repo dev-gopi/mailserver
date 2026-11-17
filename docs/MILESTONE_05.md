@@ -183,11 +183,13 @@ policy. Do not narrow this to `Partial<SecurityPolicyValues>`: that type rejects
 The service exports `ScopedPolicyInput` as the same shared type to keep the
 controller/service/repository contract aligned.
 
-The `rspamd-policy-map-init` Compose command uses `$$file` in its shell script.
-The doubled dollar is required because Docker Compose converts `$$` to a literal
-`$` for the container shell; a raw `$file` is interpolated by Compose first and
-produces repeated `The "file" variable is not set` warnings and an incorrect
-initializer command.
+The `rspamd-policy-map-init` service runs `services/rspamd/map-init.sh` as a
+read-only bind-mounted script. Keeping its shell loop outside the Compose YAML
+prevents Compose from interpreting shell variables such as `$file` and emitting
+`The "file" variable is not set` warnings. The one-shot initializer retains only
+`CHOWN` and `FOWNER` capabilities: `FOWNER` is required on later starts because
+the persistent map files have already been chowned to UID 1000.
 
-Run `node scripts/check-milestone-05.mjs` to guard both regressions. A full
-`docker compose build app migrate` remains the final host-side compiler check.
+Run `node scripts/check-milestone-05.mjs` to guard the initializer and policy
+map wiring. A full `docker compose build app migrate` remains the final host-side
+compiler check.

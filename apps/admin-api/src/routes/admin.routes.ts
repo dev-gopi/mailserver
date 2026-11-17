@@ -23,7 +23,16 @@ import {
   globalSecurityPolicySchema,
   scopedSecurityPolicySchema,
   securityPolicyListEntrySchema,
-  securityPolicyListEntryIdParamSchema
+  securityPolicyListEntryIdParamSchema,
+  eventListQuerySchema,
+  eventExportQuerySchema,
+  eventNotificationQuerySchema,
+  eventAlertRuleCreateSchema,
+  eventAlertRuleUpdateSchema,
+  eventAlertRuleIdParamSchema,
+  eventNotificationIdParamSchema,
+  eventRetentionSettingsSchema,
+  eventOutboxIdParamSchema
 } from "../validation/schemas";
 import { companyController } from "../controllers/company.controller";
 import { domainController } from "../controllers/domain.controller";
@@ -34,6 +43,7 @@ import { systemController } from "../controllers/system.controller";
 import { backupController } from "../controllers/backup.controller";
 import { adminManagementController } from "../controllers/admin-management.controller";
 import { securityPolicyController } from "../controllers/security-policy.controller";
+import { eventController } from "../controllers/event.controller";
 
 export const adminRouter = Router();
 
@@ -115,6 +125,24 @@ adminRouter.delete("/aliases/:id", requireRoles("owner"), aliasController.delete
 // ── Audit Log ──────────────────────────────────────────────────────────────────
 adminRouter.get("/audit-log", requireRoles("admin"), auditController.list);
 adminRouter.get("/audit-log/export", requireRoles("admin"), auditController.exportCsv);
+
+// ── Events, notifications, alerts and retention ────────────────────────────────
+adminRouter.get("/events", requireRoles("admin"), validate({ query: eventListQuerySchema }), eventController.list);
+adminRouter.get("/events/metrics", requireRoles("admin"), eventController.metrics);
+adminRouter.get("/events/outbox", requireRoles("admin"), eventController.outboxStatus);
+adminRouter.post("/events/outbox/:id/retry", requireRoles("owner"), validate({ params: eventOutboxIdParamSchema }), eventController.retryOutbox);
+adminRouter.get("/events/export", requireRoles("admin"), validate({ query: eventExportQuerySchema }), eventController.exportCsv);
+adminRouter.get("/events/stream", requireRoles("admin"), eventController.stream);
+adminRouter.get("/events/notifications", requireRoles("admin"), validate({ query: eventNotificationQuerySchema }), eventController.notifications);
+adminRouter.patch("/events/notifications/:id/read", requireRoles("admin"), validate({ params: eventNotificationIdParamSchema }), eventController.markNotificationRead);
+adminRouter.post("/events/notifications/read-all", requireRoles("admin"), eventController.markAllNotificationsRead);
+adminRouter.get("/events/alert-rules", requireRoles("admin"), eventController.listAlertRules);
+adminRouter.post("/events/alert-rules", requireRoles("owner"), validate({ body: eventAlertRuleCreateSchema }), eventController.createAlertRule);
+adminRouter.patch("/events/alert-rules/:id", requireRoles("owner"), validate({ params: eventAlertRuleIdParamSchema, body: eventAlertRuleUpdateSchema }), eventController.updateAlertRule);
+adminRouter.delete("/events/alert-rules/:id", requireRoles("owner"), validate({ params: eventAlertRuleIdParamSchema }), eventController.deleteAlertRule);
+adminRouter.get("/events/retention", requireRoles("admin"), eventController.getRetention);
+adminRouter.put("/events/retention", requireRoles("owner"), validate({ body: eventRetentionSettingsSchema }), eventController.updateRetention);
+adminRouter.post("/events/retention/run", requireRoles("owner"), eventController.runRetention);
 
 // ── System Services & Diagnostics ─────────────────────────────────────────────
 adminRouter.get("/system/services", systemController.checkServices);

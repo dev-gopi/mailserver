@@ -14,6 +14,7 @@ const controller = read("apps/admin-api/src/controllers/security-policy.controll
 const service = read("apps/admin-api/src/services/security-policy.service.ts");
 const repository = read("apps/admin-api/src/repositories/security-policy.repository.ts");
 const composePolicyInit = compose.match(/rspamd-policy-map-init:[\s\S]*?(?=^  [A-Za-z0-9_-]+:|^volumes:|^secrets:|^networks:)/m)?.[0] ?? "";
+const policyMapInitScript = read("services/rspamd/map-init.sh");
 const auditRepository = read("apps/admin-api/src/repositories/audit.repository.ts");
 const auditService = read("apps/admin-api/src/services/audit.ts");
 const utils = read("apps/admin-api/src/utils/security-policy.utils.ts");
@@ -28,9 +29,16 @@ const docs = read("docs/MILESTONE_05.md");
 const readme = read("README.md");
 const policyTests = read("apps/admin-api/test/security-policy.test.js");
 
-// Docker Compose must preserve the shell loop variable for the map initializer.
-assert.match(composePolicyInit, /\$\$file/, "Compose must escape the shell $file variable to prevent unset-variable warnings and command corruption");
-assert.doesNotMatch(composePolicyInit, /\/maps\/\$file/, "raw $file must not be left for Compose interpolation");
+// Keep map initialization in a mounted script, not a Compose-interpolated
+// shell block. This avoids `$file` warnings and makes persistent-volume logic testable.
+assert.match(composePolicyInit, /command: \[\"\/bin\/sh\", \"\/usr\/local\/bin\/map-init\.sh\"\]/);
+assert.ok(composePolicyInit.includes("./services/rspamd/map-init.sh:/usr/local/bin/map-init.sh:ro"));
+assert.match(composePolicyInit, /- CHOWN[\s\S]*?- FOWNER/, "map initializer needs CHOWN and FOWNER for persistent volume permission normalization");
+assert.match(policyMapInitScript, /chmod 0644/);
+assert.ok(policyMapInitScript.includes('chown -R "$MAP_UID:$MAP_GID"'));
+assert.match(policyMapInitScript, /cannot set mode 0644/);
+assert.match(policyMapInitScript, /initialized %s/);
+assert.doesNotMatch(composePolicyInit, /\$file/, "Compose must not interpolate the script's shell loop variable");
 
 // Persistent policy schema and constraints.
 const schema = read("infrastructure/database/init/00-schema.sql");

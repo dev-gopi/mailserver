@@ -293,6 +293,12 @@
           <span>Audit Log</span>
         </button>
 
+        <button type="button" class="nav-item" data-tab="events" id="nav-events">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/><circle cx="18" cy="18" r="4" fill="currentColor" stroke="none"/></svg>
+          <span>Events & Alerts</span>
+          <span id="badge-nav-events" class="nav-pill hidden">0</span>
+        </button>
+
         <button type="button" class="nav-item" data-tab="administrators" id="nav-administrators">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
           <span>Administrators</span>
@@ -339,6 +345,10 @@
           <button id="topbar-alerts-pill" type="button" class="failed-alert-pill hidden" onclick="toggleFailedAlertsPanel()" title="Click to view failure details">
             <span class="alert-pulse"></span>
             <span id="topbar-alerts-text">0 Issues</span>
+          </button>
+          <button id="btn-event-notifications" type="button" class="btn btn-secondary btn-sm" onclick="switchTab('events')" title="View event notifications">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
+            <span>Alerts</span><span id="badge-topbar-events" class="nav-pill hidden">0</span>
           </button>
           <!-- Admin Security & 2FA Modal Button -->
           <button id="btn-topbar-security" type="button" class="btn btn-secondary btn-sm" onclick="openAdminSecurityModal()" title="Admin Security, 2FA & Passkeys">
@@ -1421,6 +1431,100 @@
                 </tbody>
               </table>
             </div>
+          </div>
+        </section>
+
+        <!-- TAB: EVENT MANAGEMENT -->
+        <section id="tab-events" class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2>Event Explorer & Notifications</h2>
+              <p class="section-desc">Searchable administrator, security and Postfix delivery events. Mail delivery acceptance means the next SMTP/LMTP hop accepted the message; it does not guarantee inbox placement.</p>
+            </div>
+            <div class="flex-row gap-2">
+              <span id="events-live-status" class="badge badge-secondary">Live stream disconnected</span>
+              <button class="btn btn-secondary btn-sm" onclick="loadEvents()">Refresh</button>
+              <button class="btn btn-secondary btn-sm" onclick="exportEventsCsv()">Export CSV</button>
+            </div>
+          </div>
+
+          <div class="stats-grid mb-4 event-metrics-grid">
+            <div class="stat-card"><div class="stat-content"><span class="stat-label">Events · 24 hours</span><strong class="stat-value" id="event-metric-day">—</strong><span class="stat-hint">Current event store</span></div></div>
+            <div class="stat-card"><div class="stat-content"><span class="stat-label">Last hour</span><strong class="stat-value" id="event-metric-hour">—</strong><span class="stat-hint">New activity</span></div></div>
+            <div class="stat-card"><div class="stat-content"><span class="stat-label">Unread alerts</span><strong class="stat-value" id="event-metric-unread">—</strong><span class="stat-hint">Owner/admin notifications</span></div></div>
+            <div class="stat-card"><div class="stat-content"><span class="stat-label">Archived events</span><strong class="stat-value" id="event-metric-archived">—</strong><span class="stat-hint">Retention archive</span></div></div>
+            <div class="stat-card"><div class="stat-content"><span class="stat-label">Outbox pending</span><strong class="stat-value" id="event-metric-outbox-pending">—</strong><span class="stat-hint">Awaiting dispatch</span></div></div>
+            <div class="stat-card"><div class="stat-content"><span class="stat-label">Outbox dead-lettered</span><strong class="stat-value" id="event-metric-outbox-dead">—</strong><span class="stat-hint">Owner review required</span></div></div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header flex-between">
+              <div><h3 class="card-title">Event Filters</h3><p class="card-desc">Filter by category, severity, time, source or event text.</p></div>
+              <label class="flex-row gap-2" style="font-size:0.85rem;"><input id="event-include-archive" type="checkbox" onchange="loadEvents()"> Include archived</label>
+            </div>
+            <div class="filter-bar" style="padding: 0; border: 0;">
+              <input id="event-search" class="form-control" type="search" maxlength="120" placeholder="Search event, action or entity" onkeydown="if(event.key==='Enter')loadEvents()">
+              <select id="event-category-filter" class="form-control" onchange="loadEvents()">
+                <option value="">All categories</option><option>authentication</option><option>mail</option><option>mailboxes</option><option>domains</option><option>security</option><option>backup</option><option>system</option><option>administration</option>
+              </select>
+              <select id="event-severity-filter" class="form-control" onchange="loadEvents()">
+                <option value="">All severities</option><option value="info">Info</option><option value="notice">Notice</option><option value="warning">Warning</option><option value="critical">Critical</option>
+              </select>
+              <input id="event-from-filter" class="form-control" type="datetime-local" title="From" onchange="loadEvents()">
+              <input id="event-to-filter" class="form-control" type="datetime-local" title="To" onchange="loadEvents()">
+              <button class="btn btn-secondary btn-sm" onclick="resetEventFilters()">Reset</button>
+            </div>
+          </div>
+
+          <div class="card table-card mb-4">
+            <div class="card-header flex-between"><div><h3 class="card-title">Event Timeline</h3><p class="card-desc" id="event-result-summary">Latest operational and security events.</p></div><span id="event-page-status" class="text-muted">Loading…</span></div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead><tr><th>Time</th><th>Severity</th><th>Category / Action</th><th>Source</th><th>Summary / Entity</th><th>Correlation</th></tr></thead>
+                <tbody id="events-tbody"><tr><td colspan="6" class="text-muted">Open Events & Alerts to load events.</td></tr></tbody>
+              </table>
+            </div>
+            <div class="card-footer flex-between"><span class="text-muted" id="events-cursor-label">Showing latest events</span><button id="btn-events-older" class="btn btn-secondary btn-sm" onclick="loadOlderEvents()" disabled>Load older events</button></div>
+          </div>
+
+          <div class="card table-card mb-4">
+            <div class="card-header flex-between">
+              <div><h3 class="card-title">Event Outbox Delivery</h3><p class="card-desc">Reliable event publication status. Failed items retry with backoff and move to dead-letter after twelve attempts.</p></div>
+              <button class="btn btn-secondary btn-sm" onclick="loadEventOutbox()">Refresh Outbox</button>
+            </div>
+            <div class="table-responsive"><table class="data-table">
+              <thead><tr><th>Outbox ID</th><th>Event</th><th>Attempts</th><th>Next retry / status</th><th>Last error</th><th>Action</th></tr></thead>
+              <tbody id="event-outbox-tbody"><tr><td colspan="6" class="text-muted">Loading outbox…</td></tr></tbody>
+            </table></div>
+          </div>
+
+          <div class="overview-grid mb-4">
+            <div class="card">
+              <div class="card-header flex-between"><div><h3 class="card-title">Administrator Notifications</h3><p class="card-desc">Persistent alerts generated from enabled alert rules.</p></div><button class="btn btn-secondary btn-xs" onclick="markAllEventNotificationsRead()">Mark all read</button></div>
+              <div id="event-notifications-list" class="recent-activity-list"><p class="text-muted">Loading notifications…</p></div>
+            </div>
+            <div class="card">
+              <div class="card-header"><div><h3 class="card-title">Alert Rules</h3><p class="card-desc">Owners define which event severities generate in-app notifications for active owners and administrators.</p></div></div>
+              <div id="event-alert-rule-owner-controls" class="form-grid" style="margin-bottom:16px;">
+                <div class="form-group"><label for="event-rule-name">Rule name</label><input id="event-rule-name" class="form-control" maxlength="80" placeholder="Example: Outbound delivery warnings"></div>
+                <div class="form-group"><label for="event-rule-category">Category</label><select id="event-rule-category" class="form-control"><option value="">All categories</option><option>authentication</option><option>mail</option><option>mailboxes</option><option>domains</option><option>security</option><option>backup</option><option>system</option><option>administration</option></select></div>
+                <div class="form-group"><label for="event-rule-severity">Minimum severity</label><select id="event-rule-severity" class="form-control"><option value="critical">Critical</option><option value="warning" selected>Warning</option><option value="notice">Notice</option><option value="info">Info</option></select></div>
+                <div class="form-group"><label for="event-rule-prefix">Action prefix (optional)</label><input id="event-rule-prefix" class="form-control" maxlength="100" placeholder="mail.delivery."></div>
+                <button class="btn btn-primary btn-sm" onclick="createEventAlertRule()">Add Alert Rule</button>
+              </div>
+              <div class="table-responsive"><table class="data-table"><thead><tr><th>Rule</th><th>Match</th><th>Enabled</th><th>Action</th></tr></thead><tbody id="event-alert-rules-tbody"><tr><td colspan="4" class="text-muted">Loading rules…</td></tr></tbody></table></div>
+            </div>
+          </div>
+
+          <div class="card" id="event-retention-owner-controls">
+            <div class="card-header"><div><h3 class="card-title">Event Retention & Archive</h3><p class="card-desc">Older events are moved to the archive before deletion when enabled. Existing administrator audit_log records are retained separately.</p></div></div>
+            <div class="form-grid">
+              <div class="form-group"><label for="event-retention-days">Active event retention (days)</label><input id="event-retention-days" class="form-control" type="number" min="7" max="3650"></div>
+              <div class="form-group"><label for="event-archive-days">Archive retention (days)</label><input id="event-archive-days" class="form-control" type="number" min="30" max="3650"></div>
+              <div class="form-group"><label class="flex-row gap-2"><input id="event-archive-enabled" type="checkbox"> Archive before deleting</label></div>
+              <div class="form-group flex-row gap-2"><button class="btn btn-primary btn-sm" onclick="saveEventRetention()">Save Retention</button><button class="btn btn-secondary btn-sm" onclick="runEventRetention()">Run Retention Now</button></div>
+            </div>
+            <p id="event-retention-status" class="text-muted" style="margin-top:10px;"></p>
           </div>
         </section>
 
