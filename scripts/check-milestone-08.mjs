@@ -22,6 +22,18 @@ const pool = read('apps/admin-api/src/db/pool.ts');
 assert.match(pool, /connectionTimeoutMillis: 5_000/);
 assert.match(pool, /PG_POOL_MAX/);
 for (const p of [
+  'infrastructure/backup/offsite-common.sh',
+  'infrastructure/backup/setup-offsite-backup.sh',
+  'infrastructure/backup/offsite-init.sh',
+  'infrastructure/backup/offsite-sync.sh',
+  'infrastructure/backup/offsite-restore-drill.sh',
+  'infrastructure/backup/install-offsite-backup-timer.sh',
+  'infrastructure/backup/safe_archive.py',
+  'infrastructure/tests/milestone-08-acceptance.sh',
+  'infrastructure/tests/queue-recovery-drill.sh',
+  'infrastructure/performance/run-mail-performance-suite.sh',
+  'infrastructure/tests/milestone-08-offsite-test.py',
+  'infrastructure/performance/postgres-diagnostics.sh',
   'infrastructure/performance/smtp_load.py',
   'infrastructure/performance/imap_load.py',
   'infrastructure/performance/load_test_config.py',
@@ -49,4 +61,34 @@ assert.doesNotMatch(queueSnapshot, /command -v qshape|File::Find/);
 const smtp = read('infrastructure/performance/smtp_load.py');
 assert.match(smtp, /--env-file/);
 assert.match(smtp, /--check-config/);
+const offsite = read('infrastructure/backup/offsite-sync.sh');
+assert.match(offsite, /restic backup/);
+assert.match(offsite, /sha256-/);
+assert.match(offsite, /restic forget/);
+const restore = read('infrastructure/disaster-recovery/restore-drill.sh');
+assert.match(restore, /safe_archive.py/);
+assert.match(restore, /template=template0/);
+assert.match(restore, /RESTORE_DB_MODE/);
+const failureSimulation = read('infrastructure/disaster-recovery/failure-simulation.sh');
+assert.match(failureSimulation, /M08_ENVIRONMENT/);
+assert.match(failureSimulation, /opendkim/);
+const queueDrill = read('infrastructure/tests/queue-recovery-drill.sh');
+assert.match(queueDrill, /ALLOW_QUEUE_RECOVERY_DRILL/);
+assert.match(queueDrill, /processing/);
+const performanceSuite = read('infrastructure/performance/run-mail-performance-suite.sh');
+assert.match(performanceSuite, /ALLOW_STRESS_PROFILE/);
+assert.match(performanceSuite, /--json-report/);
+const queueCode = read('apps/admin-api/src/queue/task-queue.ts');
+assert.match(queueCode, /refusing non-durable task/);
+assert.match(queueCode, /allowMemoryFallback/);
+const queueSource = read("apps/admin-api/src/queue/task-queue.ts");
+const backupSource = read("apps/admin-api/src/services/backup.service.ts");
+assert.match(queueSource, /export const taskQueue = new TaskQueue\(false, \{ allowMemoryFallback: false \}\)/,
+  "production queue singleton must defer worker startup and reject memory-only jobs");
+const handlerRegistration = backupSource.indexOf('taskQueue.registerHandler("backup.create"');
+const queueStart = backupSource.indexOf("taskQueue.start()", handlerRegistration);
+assert.ok(handlerRegistration >= 0 && queueStart > handlerRegistration,
+  "backup queue handler must register before Redis worker starts");
+console.log("[PASS] Queue startup waits for handler registration; no early dead-letter race");
+
 console.log('[PASS] Backup integrity, restore isolation, storage capacity, queue diagnostics, load-test configuration and DB-pool guards');

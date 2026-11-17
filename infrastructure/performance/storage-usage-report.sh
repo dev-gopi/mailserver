@@ -3,12 +3,12 @@
 set -Eeuo pipefail
 report() {
   local service="$1" path="$2"
-  printf '\n--- %s:%s (largest immediate children) ---\n' "$service" "$path"
+  printf '\n--- %s:%s (largest immediate children (KiB)) ---\n' "$service" "$path"
   if ! docker compose exec -T "$service" sh -lc 'command -v du >/dev/null 2>&1 && command -v sort >/dev/null 2>&1' >/dev/null 2>&1; then
     echo '[WARN] du/sort is not available in this service container'
     return 0
   fi
-  docker compose exec -T "$service" sh -lc "du -x -h --max-depth=1 '$path' 2>/dev/null | sort -h | tail -n 20" || {
+  docker compose exec -T "$service" sh -lc "du -x -k -d 1 '$path' 2>/dev/null | sort -n | tail -n 20" || {
     echo "[WARN] could not inspect $service:$path"
     return 0
   }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import imaplib
 import os
 import ssl
@@ -11,7 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from load_test_config import can_prompt, load_env_file, missing_or_placeholder, prompt_secret, prompt_text
+from load_test_config import can_prompt, load_env_file, missing_or_placeholder, percentile, prompt_secret, prompt_text, write_json_report
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--username')
     parser.add_argument('--password')
     parser.add_argument('--ca-file', help='optional CA PEM for private/self-signed test TLS')
+    parser.add_argument('--json-report', help='write a private JSON benchmark report to this path')
     parser.add_argument('--check-config', action='store_true', help='validate settings without connecting')
     return parser.parse_args()
 
@@ -85,6 +87,7 @@ def main() -> int:
                 except Exception:
                     pass
 
+    started_at = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
     results = []
     with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
@@ -94,11 +97,35 @@ def main() -> int:
     elapsed = time.perf_counter() - started
     succeeded = sum(result[0] for result in results)
     latencies = sorted(result[1] for result in results)
-    percentile = lambda q: latencies[min(len(latencies) - 1, int((len(latencies) - 1) * q))] if latencies else 0.0
+    error_counts: dict[str, int] = {}
+    for result in results:
+        if result[2]:
+            error_counts[result[2]] = error_counts.get(result[2], 0) + 1
+    report = {
+        'tool': 'imap_load', 'started_at': started_at, 'host': host, 'port': port,
+        'count': len(results), 'concurrency': args.concurrency,
+        'success': succeeded, 'failed': len(results) - succeeded,
+        'error_rate': (len(results) - succeeded) / len(results) if results else 0.0,
+        'elapsed_seconds': round(elapsed, 6),
+        'throughput_sessions_per_second': round(succeeded / elapsed, 6) if elapsed else 0.0,
+        'latency_seconds': {
+            'min': min(latencies) if latencies else 0.0,
+            'mean': sum(latencies) / len(latencies) if latencies else 0.0,
+            'p50': percentile(latencies, .50), 'p95': percentile(latencies, .95),
+            'p99': percentile(latencies, .99), 'max': max(latencies) if latencies else 0.0,
+        },
+        'tls_verification': 'enabled', 'mailbox_select': 'read_only', 'error_counts': error_counts,
+    }
     print(f'total={len(results)} success={succeeded} failed={len(results)-succeeded} elapsed_s={elapsed:.2f} '
-          f'throughput_sessions_s={succeeded/elapsed:.2f} p50_s={percentile(.50):.3f} p95_s={percentile(.95):.3f}')
-    for error in sorted({result[2] for result in results if result[2]}):
-        print('ERROR:', error)
+          f'throughput_sessions_s={report["throughput_sessions_per_second"]:.2f} '
+          f'p50_s={report["latency_seconds"]["p50"]:.3f} '
+          f'p95_s={report["latency_seconds"]["p95"]:.3f} '
+          f'p99_s={report["latency_seconds"]["p99"]:.3f}')
+    for error, count in sorted(error_counts.items()):
+        print(f'ERROR ({count}):', error)
+    if args.json_report:
+        write_json_report(args.json_report, report)
+        print(f'[PASS] Private JSON benchmark report: {args.json_report}')
     return 0 if succeeded == len(results) else 1
 
 

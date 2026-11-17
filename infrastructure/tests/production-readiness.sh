@@ -6,6 +6,8 @@ set -Eeuo pipefail
 failed=0
 required_services=(db redis postfix dovecot rspamd clamav opendkim app admin-ui monitor prometheus node-exporter grafana)
 
+docker compose config -q || { echo "[FAIL] Docker Compose configuration invalid" >&2; exit 1; }
+
 compose_services="$(docker compose config --services 2>/dev/null)" || {
   echo '[FAIL] docker compose config could not be evaluated; check .env and compose syntax' >&2
   exit 1
@@ -91,6 +93,37 @@ else
   echo '[SKIP] redis ping: redis container is not running'
 fi
 
+
+if is_running rspamd; then
+  docker compose exec -T rspamd rspamadm configtest || failed=1
+fi
+if is_running app; then
+  docker compose exec -T app node -e 'fetch("http://127.0.0.1:" + process.env.PORT + "/health").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))' || failed=1
+fi
+
+printf '%s\n' '--- Local backup integrity and freshness ---'
+if is_running app; then
+  bash infrastructure/backup/backup-integrity.sh || failed=1
+else
+  echo '[SKIP] backup integrity: API container is not running'
+fi
+
+printf '%s\n' '--- Storage capacity ---'
+if is_running dovecot && is_running postfix && is_running app; then
+  bash infrastructure/performance/storage-capacity.sh || failed=1
+else
+  echo '[SKIP] storage capacity: one or more storage services are unavailable'
+  failed=1
+fi
+
+printf '%s\n' '--- Mail and Redis task queue snapshot ---'
+if is_running postfix && is_running redis && is_running app; then
+  bash infrastructure/performance/mail-queue-snapshot.sh || failed=1
+else
+  echo '[SKIP] queue snapshot: Postfix, Redis or API is unavailable'
+  failed=1
+fi
+
 if [[ -n "${SMTP_TLS_HOST:-}" ]]; then
   timeout 10 openssl s_client -starttls smtp -connect "${SMTP_TLS_HOST}:${SMTP_TLS_PORT:-587}" -servername "$SMTP_TLS_HOST" -verify_return_error </dev/null >/dev/null 2>&1 || { echo '[FAIL] SMTP STARTTLS certificate validation'; failed=1; }
 fi
@@ -99,7 +132,7 @@ if [[ -n "${IMAPS_TLS_HOST:-}" ]]; then
 fi
 
 if (( failed == 0 )); then
-  echo '[PASS] Production readiness preflight'
+  echo '[PASS] Production readiness preflight (all required checks passed)'
 else
   echo '[FAIL] Production readiness preflight' >&2
   exit 1

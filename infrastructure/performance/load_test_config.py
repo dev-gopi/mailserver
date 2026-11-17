@@ -7,6 +7,8 @@ execution is performed.
 from __future__ import annotations
 
 import getpass
+import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -56,3 +58,32 @@ def prompt_secret(label: str) -> str:
 
 def can_prompt() -> bool:
     return sys.stdin.isatty() and sys.stderr.isatty()
+
+
+def percentile(values: list[float], quantile: float) -> float:
+    ordered = sorted(values)
+    if not ordered:
+        return 0.0
+    index = max(0, min(len(ordered) - 1, math.ceil(quantile * len(ordered)) - 1))
+    return ordered[index]
+
+
+def write_json_report(path: str | Path, payload: dict) -> None:
+    """Write a private, atomic benchmark result; caller must omit credentials."""
+    target = Path(path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f"{target.name}.tmp.{os.getpid()}")
+    data = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+        os.chmod(target, 0o600)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass

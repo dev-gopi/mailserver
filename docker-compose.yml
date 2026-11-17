@@ -296,7 +296,7 @@ services:
       - ALL
     restart: unless-stopped
     logging: *service-logging
-    command: ["/bin/sh", "-ec", "umask 077; printf 'requirepass %s\n' \"$$(cat /run/secrets/redis_password)\" > /tmp/redis-secret.conf; exec redis-server /tmp/redis-secret.conf --appendonly yes"]
+    command: ["/bin/sh", "-ec", "umask 077; printf 'requirepass %s\n' \"$$(cat /run/secrets/redis_password)\" > /tmp/redis-secret.conf; exec redis-server /tmp/redis-secret.conf --appendonly yes --appendfsync everysec --maxmemory-policy noeviction"]
     secrets:
       - redis_password
     volumes:
@@ -673,3 +673,4 @@ networks:
   # Dedicated metrics plane. Grafana alone is published on host loopback.
   monitoringnet:
     driver: bridge
+    internal: true

@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PERF = ROOT / 'infrastructure' / 'performance'
 sys.path.insert(0, str(PERF))
-from load_test_config import load_env_file, missing_or_placeholder  # noqa: E402
+from load_test_config import load_env_file, missing_or_placeholder, percentile, write_json_report  # noqa: E402
 
 
 class Milestone08ToolsTest(unittest.TestCase):
@@ -35,6 +35,19 @@ class Milestone08ToolsTest(unittest.TestCase):
         self.assertTrue(missing_or_placeholder('replace-with-a-secret'))
         self.assertTrue(missing_or_placeholder(''))
         self.assertFalse(missing_or_placeholder('a-real-test-secret'))
+
+    def test_percentiles_use_nearest_rank(self) -> None:
+        self.assertEqual(percentile([4.0, 1.0, 3.0, 2.0], 0.50), 2.0)
+        self.assertEqual(percentile([4.0, 1.0, 3.0, 2.0], 0.95), 4.0)
+        self.assertEqual(percentile([], 0.95), 0.0)
+
+    def test_json_report_is_atomic_private_and_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / 'report.json'
+            write_json_report(report, {'count': 3, 'latency_seconds': {'p95': 0.42}})
+            self.assertEqual(report.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(report.read_text(encoding='utf-8'))['count'], 3)
+            self.assertEqual(list(Path(tmp).glob('*.tmp.*')), [])
 
     def test_postqueue_jsonl_summary(self) -> None:
         now = int(time.time())

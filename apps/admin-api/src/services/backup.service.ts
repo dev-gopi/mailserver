@@ -25,8 +25,15 @@ export class BackupService {
 
     for (const d of candidateDirs) {
       if (fs.existsSync(d) && fs.statSync(d).isDirectory()) {
-        fs.accessSync(d, fs.constants.W_OK);
-        return d;
+        try {
+          fs.accessSync(d, fs.constants.W_OK);
+          return d;
+        } catch {
+          // A host-owned archive directory may be readable by local tools but
+          // not writable by this process. Try the next safe candidate instead
+          // of making backup listing/tests fail before a usable directory is
+          // found.
+        }
       }
     }
 
@@ -44,6 +51,26 @@ export class BackupService {
     if (mb < 1024) return `${mb.toFixed(1)} MB`;
     const gb = mb / 1024;
     return `${gb.toFixed(2)} GB`;
+  }
+
+  private getStorageCapacity(directory: string): {
+    totalBytes: number;
+    availableBytes: number;
+    usedPercent: number;
+  } | null {
+    try {
+      const stats = fs.statfsSync(directory);
+      const totalBytes = stats.blocks * stats.bsize;
+      const availableBytes = stats.bavail * stats.bsize;
+      if (!Number.isFinite(totalBytes) || !Number.isFinite(availableBytes) || totalBytes <= 0) return null;
+      return {
+        totalBytes,
+        availableBytes,
+        usedPercent: Math.round(((totalBytes - availableBytes) / totalBytes) * 100)
+      };
+    } catch {
+      return null;
+    }
   }
 
   async getSettings(): Promise<BackupSettingsEntity> {
@@ -120,6 +147,12 @@ export class BackupService {
       formattedTotalSize: string;
       lastBackupAt: string | null;
       storageDirectory: string;
+      storageCapacity: {
+        totalBytes: number;
+        availableBytes: number;
+        formattedAvailableBytes: string;
+        usedPercent: number;
+      } | null;
     };
     settings: BackupSettingsEntity;
   }> {
@@ -163,6 +196,7 @@ export class BackupService {
     backups.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     const totalSizeBytes = backups.reduce((sum, b) => sum + b.sizeBytes, 0);
+    const storageCapacity = this.getStorageCapacity(dir);
 
     return {
       backups,
@@ -171,7 +205,11 @@ export class BackupService {
         totalSizeBytes,
         formattedTotalSize: this.formatBytes(totalSizeBytes),
         lastBackupAt: backups[0]?.createdAt || (settings.last_backup_at ? new Date(settings.last_backup_at).toISOString() : null),
-        storageDirectory: dir
+        storageDirectory: dir,
+        storageCapacity: storageCapacity && {
+          ...storageCapacity,
+          formattedAvailableBytes: this.formatBytes(storageCapacity.availableBytes)
+        }
       },
       settings
     };
@@ -423,6 +461,9 @@ export class BackupService {
       console.log("[TaskQueue] Executing scheduled backup task...");
       return await this.createBackup();
     });
+
+    // Register all current job handlers before Redis claims pending or recovered jobs.
+    taskQueue.start();
 
     if (this.schedulerTimer) clearInterval(this.schedulerTimer);
 

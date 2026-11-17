@@ -8,20 +8,30 @@ This milestone adds repeatable, opt-in SMTP/IMAPS load probes, PostgreSQL diagno
 
 - `infrastructure/performance/smtp_load.py`: authenticated SMTP submission benchmark. Requires a dedicated test mailbox and sends only to the configured test recipient. STARTTLS and SMTPS are supported; TLS verification remains enabled.
 - `infrastructure/performance/imap_load.py`: authenticated IMAPS login + read-only INBOX select benchmark; no mailbox mutation.
+- Both benchmark programs support private JSON output with min/mean/max and nearest-rank p50/p95/p99 latency, throughput, failure rate and error counts. Reports contain no credential fields and are written atomically with mode 0600.
+- `infrastructure/performance/run-mail-performance-suite.sh`: staging-only smoke (20), standard (100) and explicitly armed stress (500) profiles.
 - `infrastructure/performance/setup-load-test-env.sh`: interactive setup for private test credentials. Uses a hidden password prompt, writes a mode-0600 file, and backs up an existing settings file before replacing it.
 - `infrastructure/performance/load_test_config.py`: reads the private `KEY=VALUE` file without executing it as shell code. Process environment variables override file values. Placeholder values are rejected.
 - `infrastructure/performance/load-test.env.example`: example only; copy and fill through the setup helper rather than committing real credentials.
-- `infrastructure/sql/milestone-08-diagnostics.sql`: read-only DB size, connection, relation, scan, index-hit and active-query diagnostics.
+- `infrastructure/sql/milestone-08-diagnostics.sql`: read-only DB size, connection, relation, sequential scan, index-hit, vacuum, transaction, lock-wait and (when preloaded and installed) `pg_stat_statements` diagnostics. No speculative index is applied automatically.
+- `infrastructure/performance/postgres-diagnostics.sh`: stores diagnostics in a private mode-0600 report file.
 - `apps/admin-api/src/db/pool.ts`: bounded `PG_POOL_MAX` (2–40), finite connection timeout, keepalive, application name and idle-client error logging.
 - `infrastructure/performance/storage-capacity.sh`: checks block and inode utilization for Dovecot mail, Postfix spool and API backups. Reports filesystem source/type and detects when multiple paths share one backing filesystem. Critical thresholds produce a non-zero exit.
 - `infrastructure/performance/storage-usage-report.sh`: read-only top-level size report for mail, queue and backup paths plus `docker system df -v`; it never deletes data.
 - `infrastructure/performance/mail-queue-snapshot.sh`: read-only Postfix queue summary using `postqueue -j` JSON Lines; no qshape or Perl dependency. Falls back to a basic text queue count when JSON output is unsupported.
 - `infrastructure/performance/postfix-queue-age.py`: queue-class and age buckets (`under_1h`, `1h_to_6h`, `6h_to_24h`, `over_24h`) with oldest age and queued bytes.
-- `apps/admin-api/src/queue/task-queue.ts`: Redis jobs are atomically claimed into a processing list, acknowledged after completion, retried durably, moved to a dead-letter list after final failure, and recovered after an unclean worker restart. The fallback is explicitly reported as non-durable.
-- `infrastructure/backup/backup.sh`: single-run lock, private temp workspace, fail-closed mailbox archive, pg_restore validation, atomic archive/checksum publication and paired retention cleanup.
+- `apps/admin-api/src/queue/task-queue.ts`: Redis jobs are atomically claimed into a processing list, acknowledged after completion, retried durably with bounded exponential backoff, moved to a dead-letter list after final failure, and recovered after an unclean worker restart. Production rejects enqueues while Redis is unavailable; memory fallback is only allowed for explicitly local/test queues. Delivery is at-least-once, so job handlers must be idempotent. The production worker starts only after handlers are registered during API boot, preventing recovered jobs from racing handler registration.
+- `infrastructure/tests/queue-recovery-drill.sh`: staging-only proof that a stranded processing-list job is recovered after an API restart and moved to dead-letter when its intentionally unknown handler is encountered; the probe is removed afterward.
+- `infrastructure/backup/backup.sh`: single-run lock, private temp workspace, fail-closed mailbox archive, `pg_restore` validation, atomic archive/checksum publication and paired retention cleanup.
+- `infrastructure/backup/backup-integrity.sh`: verifies the newest local archive, checksum sidecar, outer/nested archive member paths, PostgreSQL custom-dump readability in the API container, and backup freshness.
+- `infrastructure/backup/safe_archive.py`: rejects absolute/traversal paths, links, special files, and archives exceeding bounded member/expanded-byte limits before extracting regular files only.
+- `infrastructure/backup/setup-offsite-backup.sh`: interactive mode-0600 Restic setup for S3, Backblaze B2, SFTP, REST server or rclone-backed remote repositories. Backend credentials and the repository encryption password stay under ignored `secrets/runtime/`.
+- `infrastructure/backup/offsite-init.sh` and `offsite-sync.sh`: explicitly initialize a remote repository, verify the local backup and sidecar, replicate the archive and checksum as an encrypted Restic snapshot, verify the snapshot's digest tag, periodically check repository integrity, and apply configured snapshot retention.
+- `infrastructure/backup/install-offsite-backup-timer.sh`: installs a hardened hourly systemd timer/service for offsite replication. It only reads the local backup; Restic cache/state is written under `/var/lib/mailcore-restic`.
+- `infrastructure/backup/offsite-restore-drill.sh`: validates the selected snapshot's configured host/tag/path, downloads its archive and checksum, then invokes the isolated restore drill.
 - `BackupService`: refuses to substitute a fake empty mailbox payload when tar fails; creates a temporary archive, validates it, publishes it atomically and writes SHA-256 sidecar.
-- `infrastructure/disaster-recovery/restore-drill.sh`: checksum + archive validation, extraction into a staging directory, restore into a uniquely named isolated DB, and a post-restore query. It refuses to use the live DB name.
-- `infrastructure/disaster-recovery/failure-simulation.sh`: opt-in stop/start test for one allow-listed service. It has an explicit arm variable and always attempts restart on exit.
+- `infrastructure/disaster-recovery/restore-drill.sh`: checksum + archive validation, safe extraction into a staging directory, restore into a uniquely named isolated DB, and a post-restore mailbox query. By default it uses `docker compose exec db` and the existing Docker secret, so no host-published PostgreSQL port or clear-text CLI password is required. `RESTORE_DB_MODE=direct` is available for a separately managed database. It never drops or overwrites the live DB; failed drill DBs created by the script are cleaned up, successful ones are retained for inspection.
+- `infrastructure/disaster-recovery/failure-simulation.sh`: opt-in stop/start test for one allow-listed service. Requires both `M08_ENVIRONMENT=staging` and `ALLOW_FAILURE_SIMULATION=YES`; it always attempts to restart the selected container on exit.
 - `infrastructure/tests/production-readiness.sh`: non-destructive preflight that distinguishes missing, stopped, exited, unhealthy and healthy containers, prints targeted recent logs, and only runs daemon checks against running containers.
 
 ## First response to a failed preflight
@@ -49,14 +59,19 @@ If Rspamd exits again, inspect its logs before restarting Postfix or changing th
 
 ## Runbook
 
-### 1. Static and runtime readiness checks
+### 1. One-command acceptance entry point
 
 ```sh
-bash infrastructure/tests/milestone-08-static.sh
-bash infrastructure/tests/production-readiness.sh
+bash infrastructure/tests/milestone-08-acceptance.sh
 ```
 
-The readiness script is a diagnostic preflight, not an availability repair tool. If Rspamd is not running, use the state/log/recovery details it prints and then rerun the preflight.
+This runs the Milestone 08 unit/static checks and the Milestone 03–08/Compose/security source checkers. It also runs the Admin API build/tests when `apps/admin-api/node_modules` is present and renders Compose when Docker and `.env` are available. It clearly reports environment-dependent work it skipped. To run the read-only/live preflight and PostgreSQL diagnostics on the deployment host:
+
+```sh
+M08_RUN_LIVE=YES bash infrastructure/tests/milestone-08-acceptance.sh
+```
+
+The readiness script is a diagnostic preflight, not an availability repair tool. It checks all required containers, mail-daemon syntax, PostgreSQL/Redis health, local backup integrity/freshness, storage and queue metrics. If Rspamd is not running, use the state/log/recovery details it prints and then rerun the preflight.
 
 ### 2. Prepare a dedicated load-test mailbox
 
@@ -80,8 +95,16 @@ python3 infrastructure/performance/imap_load.py --check-config
 Then run a small benchmark:
 
 ```sh
-python3 infrastructure/performance/smtp_load.py --count 20 --concurrency 2
-python3 infrastructure/performance/imap_load.py --count 20 --concurrency 2
+python3 infrastructure/performance/smtp_load.py --count 20 --concurrency 2 --json-report infrastructure/reports/smtp-smoke.json
+python3 infrastructure/performance/imap_load.py --count 20 --concurrency 2 --json-report infrastructure/reports/imap-smoke.json
+```
+
+Or use the guarded suite (only run on staging with the dedicated test mailbox):
+
+```sh
+M08_ENVIRONMENT=staging ALLOW_MAIL_LOAD_TEST=YES \
+  bash infrastructure/performance/run-mail-performance-suite.sh smoke
+# Higher profiles require more connections/messages; stress needs ALLOW_STRESS_PROFILE=YES.
 ```
 
 The SMTP test sends messages to the configured recipient; the IMAP test only logs in and selects INBOX read-only. The scripts can also accept `--env-file /path/to/private.env`. Environment variables override entries in the file. The scripts never print the password.
@@ -89,6 +112,9 @@ The SMTP test sends messages to the configured recipient; the IMAP test only log
 ### 3. PostgreSQL diagnostics
 
 ```sh
+bash infrastructure/performance/postgres-diagnostics.sh
+
+# Optional direct connection (when DATABASE_URL is configured):
 psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f infrastructure/sql/milestone-08-diagnostics.sql
 ```
 
@@ -106,27 +132,62 @@ The storage report checks both blocks and inodes. When several paths show the sa
 
 The queue snapshot uses Postfix's JSON queue output and does not depend on `qshape` or Perl's `File::Find` module.
 
-### 5. Restore drill
+### 5. Local restore drill
 
-Run from an environment with PostgreSQL client tools and access to the backup. Supply a separate drill DB name and empty staging directory:
+Run on the Compose host with a verified backup and an unused drill database name. The default `RESTORE_DB_MODE=auto` uses the running `db` container and its Docker secret; it does not require publishing PostgreSQL on the host:
 
 ```sh
-export BACKUP_FILE=/backups/mail-YYYYMMDDTHHMMSSZ.tar.gz
-export PGHOST=db PGPORT=5432 PGUSER=postgres PGPASSWORD='...' PGDATABASE=mailserver
+export BACKUP_FILE="$PWD/backups/mail-YYYYMMDDTHHMMSSZ.tar.gz"
 export DRILL_DATABASE=mailserver_restore_drill_20261117
 export RESTORE_STAGING_DIR=/var/tmp/mail-restore-drill-20261117
 bash infrastructure/disaster-recovery/restore-drill.sh
 ```
 
-The script intentionally leaves the isolated drill database for inspection; after evidence capture, remove it manually with `dropdb --if-exists "$DRILL_DATABASE"`.
+It retains the successful drill DB and staged Maildir for inspection. It reports mailbox-row count, staged file count/bytes, an approximate RPO (age of the timestamped backup) and restore-drill RTO (archive extraction plus DB restoration/verification; not full service RTO). After evidence capture, manually remove only the named drill DB (`docker compose exec db dropdb --if-exists --username="$POSTGRES_USER" "$DRILL_DATABASE"`) and the staging directory.
 
-### 6. Failure simulation
+For a direct PostgreSQL connection instead, set `RESTORE_DB_MODE=direct` and `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, and `PGDATABASE` explicitly.
+
+### 6. Encrypted offsite backup
+
+Install Restic on the host, then configure a destination independent of the server's local disk/volumes:
 
 ```sh
-ALLOW_FAILURE_SIMULATION=YES bash infrastructure/disaster-recovery/failure-simulation.sh redis
+bash infrastructure/backup/setup-offsite-backup.sh
+RESTIC_INIT_CONFIRM=YES bash infrastructure/backup/offsite-init.sh
+sudo bash infrastructure/backup/install-offsite-backup-timer.sh
+sudo systemctl start mailcore-offsite-backup.service
+sudo journalctl -u mailcore-offsite-backup.service --no-pager -n 100
 ```
 
-Run one service at a time. Confirm application recovery, queue continuity, SMTP/IMAPS health and alert delivery before testing another service.
+The timer replicates the newest verified archive and its `.sha256` sidecar, checks the remote repository on the configured interval, and applies the Restic retention policy. For a provider with Object Lock/immutable retention, configure that policy on the remote storage before use and set `RESTIC_PRUNE_ENABLED=false` in `secrets/runtime/offsite-backup.env`; manage immutable expiration through the provider's lifecycle policy. Keep the Restic password safe outside the machine as well: losing it makes encrypted backups unrecoverable. Do not set a local filesystem path as the Restic repository.
+
+To restore from a known Restic snapshot, obtain the exact snapshot ID and the absolute path of the archive as stored in that snapshot, then run:
+
+```sh
+RESTIC_SNAPSHOT_ID=<snapshot-id> \
+RESTIC_BACKUP_PATH="$PWD/backups/mail-YYYYMMDDTHHMMSSZ.tar.gz" \
+DRILL_DATABASE=mailserver_offsite_drill_20261117 \
+RESTORE_STAGING_DIR=/var/tmp/mail-offsite-drill-20261117 \
+bash infrastructure/backup/offsite-restore-drill.sh
+```
+
+### 7. Queue recovery and failure simulation
+
+First verify durable Redis processing-list recovery (this restarts the API, so staging only):
+
+```sh
+M08_ENVIRONMENT=staging ALLOW_QUEUE_RECOVERY_DRILL=YES \
+  bash infrastructure/tests/queue-recovery-drill.sh
+```
+
+Then run one service failure simulation at a time:
+
+```sh
+M08_ENVIRONMENT=staging ALLOW_FAILURE_SIMULATION=YES \
+  bash infrastructure/disaster-recovery/failure-simulation.sh redis
+```
+
+Supported services: `redis`, `db`, `postfix`, `dovecot`, `rspamd`, `clamav`, and `app`. Some failures interrupt message delivery, mail filtering or API availability. Confirm recovery, queue continuity, SMTP/IMAPS health and alert delivery before testing another service.
 
 ## Acceptance evidence
 
@@ -134,7 +195,9 @@ Record before/after values for SMTP and IMAPS throughput, p50/p95 latency, error
 
 ## Not yet certified
 
-- No live SMTP/IMAP load test has been run from the build environment.
-- No production database restore or mailbox-volume restore has been performed.
-- No service failure simulation has been run; these require the operator's staging host and explicit arming.
-- Offsite backup replication and immutable retention require a separately configured remote destination and credentials; they are not silently assumed.
+- No live SMTP/IMAP load test has been run from the build environment; tests require a real dedicated mailbox and controlled staging service.
+- No restore has been executed against the operator's PostgreSQL instance or mail volume; the isolated restore tooling and automated safety tests are implemented, but host-side recovery evidence is still required.
+- No service failure simulation or live Redis queue recovery drill has been run here; both require the operator's staging host and explicit arming.
+- Offsite encryption, replication, repository checks and restore tooling are implemented, but a provider, credentials, repository initialization and successful upload/restore must be configured by the operator.
+- No index changes are applied speculatively. Use the PostgreSQL diagnostics and real `EXPLAIN (ANALYZE, BUFFERS)` plans to decide which indexes or query rewrites are justified.
+- A 90%+ block or inode threshold is intentionally a production-readiness failure. Increase capacity or execute a verified retention plan; never bypass the storage check or manually delete Maildir/Postfix queue data.

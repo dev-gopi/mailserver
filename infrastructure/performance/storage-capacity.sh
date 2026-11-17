@@ -21,19 +21,23 @@ check() {
   fi
   IFS='|' read -r source fstype size used avail percent mount <<< "$blocks"
   pct="${percent%%%}"
-  inode_total='-'; inode_used='-'; inode_avail='-'; inode_percent='-'; inode_mount='-'; ipct=0
+  inode_total='-'; inode_used='-'; inode_avail='-'; inode_percent='unknown'; inode_mount='-'; ipct=0; inode_unknown=0
   if inodes="$(docker compose exec -T "$service" df -Pi "$path" 2>/dev/null | awk 'NR==2 {print $2 "|" $3 "|" $4 "|" $5 "|" $6}')" && [[ -n "$inodes" ]]; then
     IFS='|' read -r inode_total inode_used inode_avail inode_percent inode_mount <<< "$inodes"
     ipct="${inode_percent%%%}"
-    [[ "$ipct" =~ ^[0-9]+$ ]] || ipct=0
+    [[ "$ipct" =~ ^[0-9]+$ ]] || { ipct=0; inode_unknown=1; }
+  else
+    inode_unknown=1
   fi
   [[ "$pct" =~ ^[0-9]+$ ]] || { printf '%s UNAVAILABLE (unparseable df output)\n' "$service:$path"; warning=1; return; }
   status=OK
   if (( pct >= CRIT_PERCENT || ipct >= CRIT_PERCENT )); then status=CRITICAL; critical=1
-  elif (( pct >= WARN_PERCENT || ipct >= WARN_PERCENT )); then status=WARN; warning=1
+  elif (( pct >= WARN_PERCENT || ipct >= WARN_PERCENT || inode_unknown )); then status=WARN; warning=1
   fi
-  printf '%-28s %-8s blocks=%s%% (%s KiB free) inodes=%s%% (%s free) fs=%s type=%s mount=%s\n' \
-    "$service:$path" "$status" "$pct" "$avail" "$ipct" "$inode_avail" "$source" "$fstype" "$mount"
+  local inode_display="$ipct%"
+  (( inode_unknown )) && inode_display="unknown"
+  printf '%-28s %-8s blocks=%s%% (%s KiB free) inodes=%s (%s free) fs=%s type=%s mount=%s\n' \
+    "$service:$path" "$status" "$pct" "$avail" "$inode_display" "$inode_avail" "$source" "$fstype" "$mount"
   local key="${source}|${fstype}|${size}"
   filesystem_paths["$key"]="${filesystem_paths[$key]:+${filesystem_paths[$key]}; }${service}:${path}"
 }

@@ -36,23 +36,37 @@ export class TaskQueue extends EventEmitter {
     password: env.services.redisPassword || undefined
   });
   private worker: any = null;
+  private startRequested = false;
   private redisConnected = false;
   private processing = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private readonly allowMemoryFallback: boolean;
+  private readonly retryBaseDelayMs: number;
 
-  constructor(start = true) {
+  constructor(start = true, options: { allowMemoryFallback?: boolean; retryBaseDelayMs?: number } = {}) {
     super();
+    // Memory fallback is permitted only for explicitly local/test queues. The
+    // production singleton rejects durable jobs whenever Redis is unavailable.
+    this.allowMemoryFallback = options.allowMemoryFallback ?? !start;
+    this.retryBaseDelayMs = Math.max(0, Math.min(10_000, options.retryBaseDelayMs ?? 250));
     this.redis.on("ready", () => { this.redisConnected = true; this.emit("connected", { backend: "redis" }); });
     this.redis.on("end", () => { this.redisConnected = false; });
     this.redis.on("error", () => { this.redisConnected = false; });
-    void this.connect(start);
+    if (start) this.start();
+  }
+
+  /** Start Redis consumption only after all job handlers have been registered. */
+  start(): void {
+    if (this.startRequested) return;
+    this.startRequested = true;
+    void this.connect(true);
   }
 
   private scheduleReconnect(start: boolean): void {
     if (this.reconnectTimer) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      void this.connect(start);
+      if (start) void this.connect(true);
     }, 15_000);
     this.reconnectTimer.unref();
   }
@@ -111,14 +125,24 @@ export class TaskQueue extends EventEmitter {
     };
     const payload = JSON.stringify(job);
     if (this.redisConnected) {
-      try { await this.redis.lPush(QUEUE, payload); }
-      catch {
+      try {
+        await this.redis.lPush(QUEUE, payload);
+      } catch {
         this.redisConnected = false;
+        if (!this.allowMemoryFallback) {
+          this.emit("unavailable", { name, id: job.id });
+          throw new Error(`Redis unavailable; refusing non-durable task ${name}`);
+        }
         this.memoryQueue.push(job);
       }
-    } else this.memoryQueue.push(job);
+    } else if (this.allowMemoryFallback) {
+      this.memoryQueue.push(job);
+    } else {
+      this.emit("unavailable", { name, id: job.id });
+      throw new Error(`Redis unavailable; refusing non-durable task ${name}`);
+    }
     this.emit("enqueued", job);
-    if (!this.redisConnected) void this.processMemory();
+    if (!this.redisConnected && this.allowMemoryFallback) void this.processMemory();
     return job;
   }
 
@@ -160,8 +184,11 @@ export class TaskQueue extends EventEmitter {
       if (job.attempts < job.maxAttempts) {
         job.status = "pending";
         if (redisPayload) {
-          // Enqueue retry before acking the processing copy: crash => duplicate,
-          // never silent loss. The queue contract is at-least-once.
+          // Bounded exponential backoff prevents a failing downstream service
+          // from causing a tight retry loop. Keep the processing copy until the
+          // retry is durably enqueued: crash => recoverable duplicate, not loss.
+          const delayMs = Math.min(30_000, this.retryBaseDelayMs * (2 ** Math.max(0, job.attempts - 1)));
+          if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
           await this.redis.lPush(QUEUE, JSON.stringify(job));
           await this.redis.lRem(PROCESSING_QUEUE, 1, redisPayload);
         } else if (!this.memoryQueue.includes(job)) {
@@ -202,7 +229,7 @@ export class TaskQueue extends EventEmitter {
       } catch { /* connection state is reported below */ }
     }
     return {
-      backend: this.redisConnected ? "redis_at_least_once" : "memory_degraded_non_durable",
+      backend: this.redisConnected ? "redis_at_least_once" : (this.allowMemoryFallback ? "memory_degraded_non_durable_test_mode" : "unavailable_rejecting_non_durable_jobs"),
       redisHost: env.services.redisHost,
       redisPort: env.services.redisPort,
       pendingCount: this.memoryQueue.filter((j) => j.status === "pending").length + redisPending,
@@ -216,4 +243,4 @@ export class TaskQueue extends EventEmitter {
   }
 }
 
-export const taskQueue = new TaskQueue();
+export const taskQueue = new TaskQueue(false, { allowMemoryFallback: false });

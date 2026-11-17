@@ -2075,6 +2075,15 @@ function renderBackupsView() {
   // Update counters
   if ($("stat-backup-count")) $("stat-backup-count").textContent = metrics.totalCount ?? backups.length;
   if ($("stat-backup-size")) $("stat-backup-size").textContent = metrics.formattedTotalSize || "0 B";
+  const capacity = metrics.storageCapacity;
+  if ($("stat-backup-space-available")) {
+    $("stat-backup-space-available").textContent = capacity ? capacity.formattedAvailableBytes : "Unavailable";
+  }
+  if ($("stat-backup-space-detail")) {
+    $("stat-backup-space-detail").textContent = capacity
+      ? `${capacity.usedPercent}% used of backup volume`
+      : "Backup volume capacity unavailable";
+  }
 
   if ($("stat-backup-last-time")) {
     if (metrics.lastBackupAt) {

@@ -1,0 +1,31 @@
+[Unit]
+Description=MailCore encrypted offsite backup
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=@PROJECT_ROOT@
+RuntimeDirectory=mailcore-offsite-backup
+RuntimeDirectoryMode=0700
+EnvironmentFile=/etc/mailcore/offsite-backup.env
+Environment=BACKUP_DIR=@PROJECT_ROOT@/backups
+Environment=RESTIC_CACHE_DIR=/var/cache/mailcore-restic
+Environment=OFFSITE_LOCK_FILE=/run/mailcore-offsite-backup/lock
+UMask=0077
+ExecStart=@PROJECT_ROOT@/infrastructure/backup/offsite-backup.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadOnlyPaths=@PROJECT_ROOT@/backups
+ReadWritePaths=/var/cache/mailcore-restic /run/mailcore-offsite-backup
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
