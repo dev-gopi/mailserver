@@ -3121,3 +3121,33 @@ input:focus, select:focus, textarea:focus {
 [data-theme="dark"] .pw-strength-bar {
   background-color: #334155;
 }
+
+
+/* MailCore milestone 05 — centralized security policy editor */
+.security-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: 20px;
+  align-items: start;
+}
+.policy-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.policy-score-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.policy-score-grid .form-hint {
+  min-height: 34px;
+  display: block;
+}
+@media (max-width: 760px) {
+  .policy-score-grid { grid-template-columns: 1fr; }
+  .policy-score-grid .form-hint { min-height: 0; }
+}
+@media (max-width: 520px) {
+  .policy-form-grid { grid-template-columns: 1fr; }
+}

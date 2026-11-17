@@ -157,3 +157,30 @@ export const administratorIdParamSchema = z.object({ id: z.coerce.number().int()
 export const quarantineQueueIdParamSchema = z.object({
   queueId: z.string().min(5).max(64).regex(/^[A-Za-z0-9]+$/, "Invalid Postfix queue ID")
 });
+
+
+export const globalSecurityPolicySchema = z.object({
+  spamTagScore: z.number().min(2).max(20),
+  spamRejectScore: z.number().min(5).max(50),
+  greylistScore: z.number().min(1).max(10)
+}).refine((value) => value.spamRejectScore > value.spamTagScore, {
+  message: "Spam reject threshold must be greater than the spam tag threshold"
+});
+
+export const scopedSecurityPolicySchema = z.object({
+  spamTagScore: z.number().min(2).max(20).nullable(),
+  spamRejectScore: z.number().min(5).max(50).nullable(),
+  greylistScore: z.number().min(1).max(10).nullable()
+}).refine((value) => value.spamTagScore === null || value.spamRejectScore === null || value.spamRejectScore > value.spamTagScore, {
+  message: "Spam reject threshold must be greater than the spam tag threshold when both are overridden"
+});
+
+export const securityPolicyListEntrySchema = z.object({
+  listType: z.enum(["allow_sender", "block_sender", "allow_domain", "block_domain", "block_extension"]),
+  value: z.string().trim().min(1).max(254),
+  note: z.string().trim().max(240).optional().nullable()
+});
+
+export const securityPolicyListEntryIdParamSchema = z.object({
+  id: z.coerce.number().int().positive()
+});

@@ -19,7 +19,11 @@ import {
   administratorCreateSchema,
   administratorUpdateSchema,
   administratorIdParamSchema,
-  quarantineQueueIdParamSchema
+  quarantineQueueIdParamSchema,
+  globalSecurityPolicySchema,
+  scopedSecurityPolicySchema,
+  securityPolicyListEntrySchema,
+  securityPolicyListEntryIdParamSchema
 } from "../validation/schemas";
 import { companyController } from "../controllers/company.controller";
 import { domainController } from "../controllers/domain.controller";
@@ -29,6 +33,7 @@ import { auditController } from "../controllers/audit.controller";
 import { systemController } from "../controllers/system.controller";
 import { backupController } from "../controllers/backup.controller";
 import { adminManagementController } from "../controllers/admin-management.controller";
+import { securityPolicyController } from "../controllers/security-policy.controller";
 
 export const adminRouter = Router();
 
@@ -40,6 +45,22 @@ const scannerDiagnosticLimit = rateLimit({
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Scanner diagnostics are limited to 10 requests per minute" }
+});
+
+const securityPolicyMutationLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Security policy changes are limited to 30 operations per 15 minutes" }
+});
+
+const quarantineRescanLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 4,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Quarantine rescans are limited to 4 requests per 15 minutes" }
 });
 
 // All routes behind authentication + forced password-change gate
@@ -103,8 +124,19 @@ adminRouter.post("/system/queue/flush", requireRoles("admin"), systemController.
 adminRouter.post("/system/test-smtp", requireRoles("admin"), validate({ body: testSmtpSchema }), systemController.testSmtp);
 adminRouter.post("/system/test-spam", requireRoles("owner", "admin"), scannerDiagnosticLimit, validate({ body: testSpamSchema }), systemController.testSpam);
 adminRouter.get("/quarantine", requireRoles("owner", "admin"), systemController.getQuarantine);
-adminRouter.post("/quarantine/:queueId/release", requireRoles("owner", "admin"), validate({ params: quarantineQueueIdParamSchema }), systemController.releaseQuarantine);
+adminRouter.post("/quarantine/:queueId/rescan-release", requireRoles("owner", "admin"), quarantineRescanLimit, validate({ params: quarantineQueueIdParamSchema }), systemController.rescanReleaseQuarantine);
 adminRouter.delete("/quarantine/:queueId", requireRoles("owner"), validate({ params: quarantineQueueIdParamSchema }), systemController.deleteQuarantine);
+
+// ── Organization security policies ───────────────────────────────────────────
+adminRouter.get("/security-policies", requireRoles("owner", "admin"), securityPolicyController.overview);
+adminRouter.get("/security-policies/history", requireRoles("owner", "admin"), securityPolicyController.history);
+adminRouter.put("/security-policies/global", requireRoles("owner"), securityPolicyMutationLimit, validate({ body: globalSecurityPolicySchema }), securityPolicyController.updateGlobal);
+adminRouter.put("/security-policies/domains/:id", requireRoles("owner", "admin"), securityPolicyMutationLimit, validate({ params: administratorIdParamSchema, body: scopedSecurityPolicySchema }), securityPolicyController.updateDomain);
+adminRouter.delete("/security-policies/domains/:id/reset", requireRoles("owner", "admin"), securityPolicyMutationLimit, validate({ params: administratorIdParamSchema }), securityPolicyController.resetDomain);
+adminRouter.put("/security-policies/mailboxes/:id", requireRoles("owner", "admin"), securityPolicyMutationLimit, validate({ params: administratorIdParamSchema, body: scopedSecurityPolicySchema }), securityPolicyController.updateMailbox);
+adminRouter.delete("/security-policies/mailboxes/:id/reset", requireRoles("owner", "admin"), securityPolicyMutationLimit, validate({ params: administratorIdParamSchema }), securityPolicyController.resetMailbox);
+adminRouter.post("/security-policies/entries", requireRoles("owner", "admin"), securityPolicyMutationLimit, validate({ body: securityPolicyListEntrySchema }), securityPolicyController.addListEntry);
+adminRouter.delete("/security-policies/entries/:id", requireRoles("owner", "admin"), securityPolicyMutationLimit, validate({ params: securityPolicyListEntryIdParamSchema }), securityPolicyController.deleteListEntry);
 adminRouter.get("/system/task-queue", requireRoles("admin"), systemController.getTaskQueueStats);
 adminRouter.get("/system/deliverability", validate({ query: deliverabilityQuerySchema }), systemController.checkDeliverability);
 

@@ -42,3 +42,45 @@ CREATE TABLE IF NOT EXISTS backup_settings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 INSERT INTO backup_settings (id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS mail_security_policies (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  scope_type TEXT NOT NULL CHECK (scope_type IN ('global', 'domain', 'mailbox')),
+  domain_id BIGINT REFERENCES domains(id) ON DELETE CASCADE,
+  mailbox_id BIGINT REFERENCES mailboxes(id) ON DELETE CASCADE,
+  spam_tag_score NUMERIC(5,2),
+  spam_reject_score NUMERIC(5,2),
+  greylist_score NUMERIC(5,2),
+  created_by BIGINT REFERENCES admins(id) ON DELETE SET NULL,
+  updated_by BIGINT REFERENCES admins(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT mail_security_policy_scope_check CHECK (
+    (scope_type = 'global' AND domain_id IS NULL AND mailbox_id IS NULL
+      AND spam_tag_score IS NOT NULL AND spam_reject_score IS NOT NULL AND greylist_score IS NOT NULL)
+    OR (scope_type = 'domain' AND domain_id IS NOT NULL AND mailbox_id IS NULL)
+    OR (scope_type = 'mailbox' AND mailbox_id IS NOT NULL AND domain_id IS NULL)
+  ),
+  CONSTRAINT mail_security_policy_tag_check CHECK (spam_tag_score IS NULL OR spam_tag_score BETWEEN 2 AND 20),
+  CONSTRAINT mail_security_policy_reject_check CHECK (spam_reject_score IS NULL OR spam_reject_score BETWEEN 5 AND 50),
+  CONSTRAINT mail_security_policy_greylist_check CHECK (greylist_score IS NULL OR greylist_score BETWEEN 1 AND 10),
+  CONSTRAINT mail_security_policy_order_check CHECK (spam_tag_score IS NULL OR spam_reject_score IS NULL OR spam_reject_score > spam_tag_score)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mail_security_policy_global ON mail_security_policies (scope_type) WHERE scope_type = 'global';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mail_security_policy_domain ON mail_security_policies (domain_id) WHERE domain_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mail_security_policy_mailbox ON mail_security_policies (mailbox_id) WHERE mailbox_id IS NOT NULL;
+DROP TRIGGER IF EXISTS mail_security_policies_touch ON mail_security_policies;
+CREATE TRIGGER mail_security_policies_touch BEFORE UPDATE ON mail_security_policies FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+INSERT INTO mail_security_policies (scope_type, spam_tag_score, spam_reject_score, greylist_score) VALUES ('global', 6, 15, 4) ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS mail_security_list_entries (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  list_type TEXT NOT NULL CHECK (list_type IN ('allow_sender', 'block_sender', 'allow_domain', 'block_domain', 'block_extension')),
+  value TEXT NOT NULL,
+  note TEXT,
+  created_by BIGINT REFERENCES admins(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT mail_security_list_value_nonempty CHECK (length(value) BETWEEN 1 AND 254),
+  CONSTRAINT mail_security_list_entry_unique UNIQUE (list_type, value)
+);
+CREATE INDEX IF NOT EXISTS idx_mail_security_list_type_value ON mail_security_list_entries (list_type, value);

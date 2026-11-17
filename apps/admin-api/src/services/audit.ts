@@ -29,6 +29,10 @@ export class AuditService {
     });
   }
 
+  async getSecurityPolicyHistory(limit = 100) {
+    return auditRepository.findSecurityPolicyHistory(limit);
+  }
+
   async getRecentLogs(limit = 100) {
     return auditRepository.findRecent(limit);
   }

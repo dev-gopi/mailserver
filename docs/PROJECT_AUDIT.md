@@ -67,6 +67,8 @@ deliberately does not delete your existing local files.
 The active scan path is Postfix Milter (filternet) → Rspamd → ClamAV INSTREAM
 (clamavnet) → Postfix policy → Dovecot LMTP. Rspamd and clamd listeners bind
 to dedicated interface IPs, not all interfaces. SpamAssassin remains optional for comparison only.
-The queue-based quarantine holds rejected messages in Postfix HOLD; it does
-not automatically expire and release does not re-run the filter. Operators
-must use the Milestone 04 retention and release procedure.
+The queue-based quarantine holds rejected messages in Postfix HOLD. Held items
+do not automatically expire. The current admin release path re-scans the exact
+message through Rspamd and ClamAV and verifies the queue-content SHA-256 before
+release; direct HOLD release is disabled. Operators must still operate a
+retention and review procedure.

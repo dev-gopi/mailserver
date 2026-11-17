@@ -251,9 +251,9 @@ patching, or deliverability monitoring.
 - The optional SpamAssassin profile is not active by default and must not be
   enabled as a second production filter without a reviewed A/B plan.
 - The admin Quarantine page exposes held-message metadata only, not message
-  bodies or attachments. Owners and admins can inspect/release held queue IDs;
-  only the owner can delete them. Release from Postfix HOLD does **not** run a
-  second scan. Review the original security signals out-of-band before release.
+  bodies or attachments. Owners and admins can inspect and re-scan held queue
+  IDs before release; only the owner can delete them. The API and private Postfix
+  bridge verify the scanned content hash before releasing a held message.
   Postfix HOLD items do not automatically expire, so define and operate a
   manual retention/review process; the UI lists at most 500 entries per view.
 - Dovecot stores Maildir data in `maildata` and reads virtual mailbox/alias
@@ -375,5 +375,20 @@ scanning, fail-closed scanner behavior, Bayesian state in authenticated Redis,
 MIME attachment risk scoring, an admin spam-diagnostic endpoint, and an
 audited Postfix HOLD quarantine view. Run `node scripts/check-milestone-04.mjs`
 for static checks and `infrastructure/tests/milestone-04-runtime.sh` against the
-started Docker stack. Held mail requires manual retention and release review;
-Postfix HOLD release is not a re-scan operation.
+started Docker stack. Held mail requires a documented retention/review policy. The admin release path re-scans the exact held message through Rspamd and ClamAV and verifies the queue content hash before releasing it; the legacy direct-release command is disabled.
+
+
+## Enterprise security policies (Milestone 05)
+
+Milestone 05 completes the database-backed security-policy console for organization,
+domain, and mailbox spam thresholds; sender/domain allowlists and blocklists;
+blocked attachment extensions; policy-change history; and scanner-verified
+quarantine release. The PostgreSQL policy tables remain the source of truth. The
+API writes generated Rspamd map files to the shared named volume, and Rspamd
+monitors those files for reload. A successful API update confirms map-file
+publication, not an end-to-end scanner reload acknowledgement. Allowlisted senders
+and domains receive only a spam-score reduction: SPF, DKIM, DMARC, phishing and
+mandatory ClamAV inspection remain active. See
+[`docs/MILESTONE_05.md`](docs/MILESTONE_05.md), then run
+`node scripts/check-milestone-05.mjs` and
+`infrastructure/tests/milestone-05-runtime.sh` before relying on policy changes.

@@ -31,7 +31,9 @@ const state = {
   mfaMode: "totp",
   pendingTotpSetup: null,
   adminSessions: [],
-  administrators: []
+  administrators: [],
+  securityPolicies: null,
+  securityPolicyHistory: []
 };
 
 // DOM Helper
@@ -303,6 +305,7 @@ function switchTab(tabId) {
     aliases: "Email Aliases & Forwarding",
     services: "Services, Mail Queue & Diagnostics",
     quarantine: "Security Quarantine",
+    "security-policies": "Security Policies",
     audit: "Audit Log & Security Trail",
     backups: "Mail Backups & Disaster Recovery",
     administrators: "Administrator Accounts",
@@ -325,6 +328,9 @@ function switchTab(tabId) {
   if (tabId === "quarantine") {
     loadQuarantine();
   }
+  if (tabId === "security-policies") {
+    loadSecurityPolicies();
+  }
   if (tabId === "administrators") {
     loadAdministrators();
   }
@@ -341,6 +347,8 @@ function updateUserInfo() {
   if (adminNav) adminNav.classList.toggle("hidden", user.role !== "owner");
   const quarantineNav = $("nav-quarantine");
   if (quarantineNav) quarantineNav.classList.toggle("hidden", !["owner", "admin"].includes(user.role));
+  const policyNav = $("nav-security-policies");
+  if (policyNav) policyNav.classList.toggle("hidden", !["owner", "admin"].includes(user.role));
 }
 
 // Modal Handlers
@@ -2200,7 +2208,7 @@ async function loadQuarantine() {
         <td>${escapeHtml(recipients || "No recipient metadata")}</td>
         <td>${escapeHtml(size)}</td>
         <td class="table-actions">
-          <button class="btn btn-secondary btn-xs" onclick="releaseQuarantinedMessage('${escapeHtml(queueId)}')">Release</button>
+          <button class="btn btn-primary btn-xs" onclick="rescanAndReleaseQuarantinedMessage('${escapeHtml(queueId)}')">Rescan &amp; Release</button>
           ${owner ? `<button class="btn btn-danger btn-xs" onclick="deleteQuarantinedMessage('${escapeHtml(queueId)}')">Delete</button>` : ""}
         </td>
       </tr>`;
@@ -2211,15 +2219,16 @@ async function loadQuarantine() {
   }
 }
 
-async function releaseQuarantinedMessage(queueId) {
+async function rescanAndReleaseQuarantinedMessage(queueId) {
   if (!/^[A-Za-z0-9]{5,64}$/.test(queueId)) return showToast("Invalid Queue ID", "The queue ID format is not valid.", "error");
-  if (!confirm(`Release held message ${queueId}? Only do this after verifying it is safe.`)) return;
+  if (!confirm(`Rescan message ${queueId} with Rspamd and ClamAV, then release only if the current policy returns a clean verdict?`)) return;
   try {
-    await request(`/api/quarantine/${encodeURIComponent(queueId)}/release`, { method: "POST" });
-    showToast("Message Released", `Postfix release requested for ${queueId}.`, "success");
+    const result = await request(`/api/quarantine/${encodeURIComponent(queueId)}/rescan-release`, { method: "POST" });
+    const symbols = Array.isArray(result.symbols) && result.symbols.length ? ` Symbols: ${result.symbols.slice(0, 6).join(", ")}.` : "";
+    showToast("Message Rescanned & Released", `Score ${result.score}; recipient tag threshold ${result.threshold}.${symbols}`, "success", 7000);
     await loadQuarantine();
   } catch (err) {
-    showToast("Release Failed", err.message, "error");
+    showToast("Message Remains Quarantined", err.message, "warning", 7000);
   }
 }
 
@@ -2233,6 +2242,283 @@ async function deleteQuarantinedMessage(queueId) {
     await loadQuarantine();
   } catch (err) {
     showToast("Delete Failed", err.message, "error");
+  }
+}
+
+const SECURITY_LIST_LABELS = {
+  allow_sender: "Allowed sender",
+  block_sender: "Blocked sender",
+  allow_domain: "Allowed domain",
+  block_domain: "Blocked domain",
+  block_extension: "Blocked attachment extension"
+};
+
+async function loadSecurityPolicies() {
+  const status = $("security-policy-map-status");
+  const tbody = $("security-policy-list-tbody");
+  if (status) status.textContent = "Loading organization security policies...";
+  if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="text-muted">Loading policy lists...</td></tr>';
+  try {
+    const [policyResult, historyResult] = await Promise.allSettled([
+      request("/api/security-policies"),
+      request("/api/security-policies/history")
+    ]);
+    if (policyResult.status === "rejected") throw policyResult.reason;
+    state.securityPolicies = policyResult.value;
+    renderSecurityPolicies();
+
+    // Policy controls must remain usable if the separate audit-history query
+    // is temporarily unavailable. Show the history error locally, not as a
+    // failure of the entire security-policy page.
+    if (historyResult.status === "fulfilled") {
+      state.securityPolicyHistory = historyResult.value;
+      renderSecurityPolicyHistory(historyResult.value);
+    } else {
+      state.securityPolicyHistory = [];
+      if ($("security-policy-history-tbody")) {
+        $("security-policy-history-tbody").innerHTML = `<tr><td colspan="5" class="text-danger">History unavailable: ${escapeHtml(historyResult.reason?.message || "Request failed")}</td></tr>`;
+      }
+    }
+  } catch (err) {
+    if (status) {
+      status.className = "alert-box alert-danger mb-4";
+      status.textContent = `Unable to load security policies: ${err.message}`;
+    }
+    if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="text-danger">${escapeHtml(err.message)}</td></tr>`;
+    showToast("Security Policies Load Failed", err.message, "error");
+  }
+}
+
+function renderSecurityPolicies() {
+  const data = state.securityPolicies;
+  if (!data) return;
+  const sync = data.mapSync || {};
+  const status = $("security-policy-map-status");
+  if (status) {
+    const healthy = sync.status === "healthy";
+    status.className = `alert-box ${healthy ? "alert-success" : "alert-warning"} mb-4`;
+    status.textContent = healthy
+      ? `Policy files were written to the shared Rspamd map volume at ${sync.lastSyncedAt ? formatDate(sync.lastSyncedAt) : "startup"}. Rspamd monitors these files for updates.`
+      : `Policy map status: ${sync.status || "unavailable"}. ${sync.error || "Maps have not yet been confirmed written; verify the API and Rspamd map volume before relying on recent changes."}`;
+  }
+  const scopeControl = $("security-policy-scope");
+  if (scopeControl && state.adminUser?.role === "admin" && scopeControl.value === "global") {
+    if ((state.domains || []).length) scopeControl.value = "domain";
+    else if ((state.mailboxes || []).length) scopeControl.value = "mailbox";
+  }
+  populateSecurityPolicyTarget();
+  renderSecurityPolicyEditor();
+  renderSecurityPolicyEntries();
+}
+
+function populateSecurityPolicyTarget() {
+  const scope = $("security-policy-scope")?.value || "global";
+  const wrap = $("security-policy-target-wrap");
+  const target = $("security-policy-target");
+  if (!wrap || !target) return;
+  wrap.classList.toggle("hidden", scope === "global");
+  if (scope === "global") {
+    target.innerHTML = "";
+    return;
+  }
+  const previous = target.value;
+  const items = scope === "domain" ? (state.domains || []) : (state.mailboxes || []);
+  target.innerHTML = items.length ? items.map((item) => {
+    const label = scope === "domain" ? item.name : item.address;
+    return `<option value="${escapeHtml(item.id)}">${escapeHtml(label || `#${item.id}`)}</option>`;
+  }).join("") : `<option value="">No ${scope === "domain" ? "domains" : "mailboxes"} available</option>`;
+  target.disabled = items.length === 0;
+  if (items.some((item) => String(item.id) === previous)) target.value = previous;
+}
+
+function renderSecurityPolicyEditor() {
+  const data = state.securityPolicies;
+  if (!data) return;
+  const scope = $("security-policy-scope")?.value || "global";
+  const targetId = Number($("security-policy-target")?.value || 0);
+  const global = data.policies?.global || { spamTagScore: 6, spamRejectScore: 15, greylistScore: 4 };
+  let record = null;
+  let inherited = global;
+  let label = "Organization defaults";
+  if (scope === "domain") {
+    record = (data.policies?.domains || []).find((item) => Number(item.domainId) === targetId) || null;
+    label = record?.scopeName || state.domains.find((item) => Number(item.id) === targetId)?.name || "Selected domain";
+  } else if (scope === "mailbox") {
+    const mailbox = (state.mailboxes || []).find((item) => Number(item.id) === targetId);
+    record = (data.policies?.mailboxes || []).find((item) => Number(item.mailboxId) === targetId) || null;
+    const domainPolicy = (data.policies?.domains || []).find((item) => Number(item.domainId) === Number(mailbox?.domain_id));
+    inherited = {
+      spamTagScore: domainPolicy?.spamTagScore ?? global.spamTagScore,
+      spamRejectScore: domainPolicy?.spamRejectScore ?? global.spamRejectScore,
+      greylistScore: domainPolicy?.greylistScore ?? global.greylistScore
+    };
+    label = record?.scopeName || mailbox?.address || "Selected mailbox";
+  }
+
+  const values = scope === "global" ? global : record || {};
+  const inputs = [
+    ["security-policy-tag-score", "spamTagScore"],
+    ["security-policy-reject-score", "spamRejectScore"],
+    ["security-policy-greylist-score", "greylistScore"]
+  ];
+  inputs.forEach(([id, key]) => {
+    const input = $(id);
+    if (!input) return;
+    const value = values[key];
+    input.value = value === null || value === undefined ? "" : String(value);
+    input.placeholder = scope === "global" ? "Required" : `Inherit (${inherited[key]})`;
+    input.disabled = (scope === "global" && state.adminUser?.role !== "owner") || (scope !== "global" && targetId <= 0);
+  });
+
+  const owner = state.adminUser?.role === "owner";
+  const save = $("btn-save-security-policy");
+  if (save) save.disabled = scope === "global" ? !owner : targetId <= 0;
+  const reset = $("btn-reset-security-policy");
+  if (reset) {
+    reset.classList.toggle("hidden", scope === "global");
+    reset.disabled = targetId <= 0 || !record;
+  }
+  const hint = $("security-policy-inheritance");
+  if (hint) {
+    hint.textContent = scope === "global"
+      ? `Editing organization defaults. Current values: tag ${global.spamTagScore}, reject ${global.spamRejectScore}, greylist ${global.greylistScore}.`
+      : `${label}: blank values inherit tag ${inherited.spamTagScore}, reject ${inherited.spamRejectScore}, greylist ${inherited.greylistScore}.`;
+  }
+}
+
+async function saveSecurityPolicy() {
+  const scope = $("security-policy-scope")?.value || "global";
+  const targetId = Number($("security-policy-target")?.value || 0);
+  const valueOf = (id) => {
+    const raw = $(id)?.value?.trim() ?? "";
+    return raw === "" ? null : Number(raw);
+  };
+  const payload = {
+    spamTagScore: valueOf("security-policy-tag-score"),
+    spamRejectScore: valueOf("security-policy-reject-score"),
+    greylistScore: valueOf("security-policy-greylist-score")
+  };
+  if (scope === "global" || Object.values(payload).some((value) => value !== null)) {
+    if (Object.values(payload).some((value) => value !== null && !Number.isFinite(value))) {
+      return showToast("Invalid Policy", "Enter valid numeric thresholds.", "error");
+    }
+  }
+  if (scope === "global" && Object.values(payload).some((value) => value === null)) {
+    return showToast("Incomplete Policy", "All organization default thresholds are required.", "error");
+  }
+  if (scope !== "global" && targetId <= 0) return showToast("Select a Target", "Choose a domain or mailbox first.", "error");
+  if (payload.spamTagScore !== null && payload.spamRejectScore !== null && payload.spamRejectScore <= payload.spamTagScore) {
+    return showToast("Invalid Thresholds", "Reject score must be greater than tag score.", "error");
+  }
+  const path = scope === "global" ? "/api/security-policies/global" : `/api/security-policies/${scope === "domain" ? "domains" : "mailboxes"}/${targetId}`;
+  try {
+    await request(path, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    showToast("Security Policy Saved", "Policy is saved and the generated map files were published to the shared Rspamd volume. Rspamd monitors these files for reload.", "success");
+    await loadSecurityPolicies();
+  } catch (err) {
+    showToast("Policy Save Failed", err.message, "error", 7000);
+    await loadSecurityPolicies();
+  }
+}
+
+async function resetSecurityPolicy() {
+  const scope = $("security-policy-scope")?.value || "global";
+  const targetId = Number($("security-policy-target")?.value || 0);
+  if (scope === "global" || targetId <= 0) return;
+  if (!confirm(`Remove the ${scope} override and inherit its parent security policy?`)) return;
+  try {
+    await request(`/api/security-policies/${scope === "domain" ? "domains" : "mailboxes"}/${targetId}/reset`, { method: "DELETE" });
+    showToast("Policy Override Reset", "The selected scope now inherits its parent policy.", "success");
+    await loadSecurityPolicies();
+  } catch (err) {
+    showToast("Policy Reset Failed", err.message, "error");
+  }
+}
+
+function renderSecurityPolicyEntries() {
+  const tbody = $("security-policy-list-tbody");
+  if (!tbody) return;
+  const entries = state.securityPolicies?.entries || [];
+  if (!entries.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-muted">No organization allowlist or blocklist entries.</td></tr>';
+    return;
+  }
+  const canManage = ["owner", "admin"].includes(state.adminUser?.role);
+  tbody.innerHTML = entries.map((entry) => `
+    <tr>
+      <td>${escapeHtml(SECURITY_LIST_LABELS[entry.list_type] || entry.list_type)}</td>
+      <td><code>${escapeHtml(entry.value)}</code></td>
+      <td>${escapeHtml(entry.note || "—")}</td>
+      <td>${escapeHtml(entry.created_at ? formatDate(entry.created_at) : "—")}</td>
+      <td class="table-actions">${canManage ? `<button class="btn btn-danger btn-xs" onclick="deleteSecurityPolicyEntry(${Number(entry.id)})">Remove</button>` : "—"}</td>
+    </tr>`).join("");
+}
+
+async function loadSecurityPolicyHistory() {
+  const tbody = $("security-policy-history-tbody");
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="5" class="text-muted">Loading policy history...</td></tr>';
+  try {
+    renderSecurityPolicyHistory(await request("/api/security-policies/history"));
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-danger">${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+function renderSecurityPolicyHistory(data) {
+  const tbody = $("security-policy-history-tbody");
+  if (!tbody) return;
+  const items = Array.isArray(data?.items) ? data.items : [];
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-muted">No security policy changes have been recorded.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = items.map((item) => {
+    let details = "";
+    try { details = typeof item.details === "string" ? item.details : JSON.stringify(item.details || {}); } catch { details = "Details unavailable"; }
+    const shortDetails = details.length > 180 ? `${details.slice(0, 177)}...` : details;
+    const entity = [item.entity_type, item.entity_id].filter(Boolean).join(" # ") || "—";
+    return `<tr>
+      <td>${escapeHtml(item.occurred_at ? formatDate(item.occurred_at) : "—")}</td>
+      <td><code>${escapeHtml(item.action || "—")}</code></td>
+      <td>${item.admin_id ? `Admin #${escapeHtml(item.admin_id)}` : "System"}</td>
+      <td>${escapeHtml(entity)}</td>
+      <td><span title="${escapeHtml(details)}">${escapeHtml(shortDetails || "—")}</span></td>
+    </tr>`;
+  }).join("");
+}
+
+async function addSecurityPolicyEntry(event) {
+  event.preventDefault();
+  const listType = $("security-list-type")?.value;
+  const value = $("security-list-value")?.value?.trim();
+  const note = $("security-list-note")?.value?.trim() || null;
+  if (!listType || !value) return showToast("Missing Value", "Select a list type and enter a value.", "error");
+  try {
+    await request("/api/security-policies/entries", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ listType, value, note })
+    });
+    $("security-list-value").value = "";
+    $("security-list-note").value = "";
+    showToast("Security List Updated", "The entry is saved and the generated map files were published to the shared Rspamd volume.", "success");
+    await loadSecurityPolicies();
+  } catch (err) {
+    showToast("Unable to Add Entry", err.message, "error");
+    await loadSecurityPolicies();
+  }
+}
+
+async function deleteSecurityPolicyEntry(id) {
+  if (!Number.isSafeInteger(id) || id <= 0) return showToast("Invalid Entry", "The security list entry ID is invalid.", "error");
+  if (!confirm("Remove this security list entry? The generated Rspamd map files will be republished from PostgreSQL.")) return;
+  try {
+    await request(`/api/security-policies/entries/${id}`, { method: "DELETE" });
+    showToast("Security List Updated", "The entry was removed and the generated map files were published to the shared Rspamd volume.", "success");
+    await loadSecurityPolicies();
+  } catch (err) {
+    showToast("Unable to Remove Entry", err.message, "error");
   }
 }
 

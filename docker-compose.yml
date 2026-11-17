@@ -5,6 +5,46 @@ x-service-logging: &service-logging
     max-file: "5"
 
 services:
+  rspamd-policy-map-init:
+    image: alpine:3.21
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /maps
+        for file in allow_senders.map block_senders.map allow_domains.map block_domains.map block_extensions.map; do
+          [ -e "/maps/$$file" ] || : > "/maps/$$file"
+          chmod 0644 "/maps/$$file"
+        done
+        if [ ! -s /maps/settings.map ]; then
+          cat > /maps/settings.map <<'EOF'
+        settings {
+          mailcore_bootstrap_default {
+            priority = 1;
+            rcpt = "/.*/";
+            apply { actions { "add header" = 6.0; reject = 15.0; greylist = 4.0; } }
+          }
+        }
+        EOF
+        fi
+        chmod 0644 /maps/settings.map
+        chmod 0755 /maps
+        chown -R 1000:1000 /maps
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=4m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    volumes:
+      - rspamdpolicydata:/maps
+    restart: "no"
+    logging: *service-logging
+
   # Retained only for optional A/B comparison during migration. This service is
   # not in the active mail path; Rspamd is the production filtering engine.
   spamassassin:
@@ -37,7 +77,9 @@ services:
       - redis_password
     volumes:
       - ./services/rspamd/local.d:/etc/rspamd/local.d:ro
+      - ./services/rspamd/rspamd.conf.override:/etc/rspamd/rspamd.conf.override:ro
       - rspamddata:/var/lib/rspamd
+      - rspamdpolicydata:/var/lib/mailcore-rspamd-maps:ro
     networks:
       mailnet: {}     # outbound DNS and threat-feed access; no scanner listener binds here
       filternet:
@@ -52,6 +94,8 @@ services:
       clamavnet:
         ipv4_address: 172.33.0.3
     depends_on:
+      rspamd-policy-map-init:
+        condition: service_completed_successfully
       clamav:
         condition: service_healthy
       redis:
@@ -383,6 +427,7 @@ services:
       DOVECOT_PORT: ${DOVECOT_PORT:?set DOVECOT_PORT in .env}
       RSPAMD_HOST: rspamd-admin
       RSPAMD_PORT: 11333
+      RSPAMD_POLICY_MAP_DIR: /var/lib/mailcore-rspamd-maps
       CLAMAV_HOST: clamav-scanner
       CLAMAV_PORT: ${CLAMAV_PORT:?set CLAMAV_PORT in .env}
       DKIM_KEY_DIR: /var/lib/opendkim/keys
@@ -414,6 +459,7 @@ services:
     volumes:
       - maildata:/var/mail/vhosts
       - dkimkeys:/var/lib/opendkim
+      - rspamdpolicydata:/var/lib/mailcore-rspamd-maps
       - ./backups:/backups
     networks:
       mailnet: {}
@@ -430,6 +476,8 @@ services:
     logging: *service-logging
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      rspamd-policy-map-init:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -466,6 +514,7 @@ volumes:
   dkimkeys:
   redisdata:
   rspamddata:
+  rspamdpolicydata:
 
 secrets:
   postgres_password:

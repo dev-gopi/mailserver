@@ -11,6 +11,7 @@ import { resolve4, resolveMx, resolveTxt, reverse } from "dns/promises";
 import { randomUUID } from "crypto";
 import net from "net";
 import { env } from "../config/env";
+import { securityPolicyService } from "./security-policy.service";
 
 export class SystemService {
   /**
@@ -395,9 +396,9 @@ export class SystemService {
       : [];
     const scanBlocked = normalizedAction === "soft reject" || symbols.includes("CLAM_VIRUS_FAIL");
     const isMalware = symbols.some((symbol) => symbol === "CLAM_VIRUS" || (symbol.startsWith("CLAM_VIRUS_") && symbol !== "CLAM_VIRUS_FAIL"));
-    // The HTTP API's required_score is the reject threshold (15), while this
-    // installation tags spam at 6. Report the configured tag threshold here.
-    const threshold = 6;
+    // The interactive diagnostic is organization-scoped, so use the live
+    // database policy instead of hard-coding the initial deployment default.
+    const threshold = (await securityPolicyService.getEffectiveGlobalPolicy()).spamTagScore;
     const isSpam = !scanBlocked && (isMalware || score >= threshold || ["add header", "greylist", "reject"].includes(normalizedAction));
     const result = { score, threshold, isSpam, isMalware, scanBlocked, action, engine: "Rspamd", symbols, inputNormalized };
     await auditService.log(req, "system.test.rspamd", "system", "rspamd", result);
@@ -408,10 +409,97 @@ export class SystemService {
     return systemRepository.getQuarantineMessages();
   }
 
-  async releaseQuarantinedMessage(req: Request, queueId: string) {
-    const result = await systemRepository.releaseQuarantinedMessage(queueId);
-    await auditService.log(req, "security.quarantine.release", "email_quarantine", queueId, { result: result.trim() });
-    return { success: true, queueId, result: result.trim() };
+  async rescanAndReleaseQuarantinedMessage(req: Request, queueId: string) {
+    const held = await systemRepository.getQuarantineMessages();
+    const item = held.find((entry) => entry.queueId === queueId);
+    if (!item) {
+      const error = new Error("Quarantine item was not found or is no longer held") as Error & { statusCode?: number };
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const { message, sha256 } = await systemRepository.getHeldMessageForRescan(queueId);
+    const threshold = await securityPolicyService.getStrictestTagThreshold(item.recipients);
+    let response: Response;
+    try {
+      response = await fetch(`http://${env.services.rspamdHost}:${env.services.rspamdPort}/checkv2`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "message/rfc822",
+          "User-Agent": "MailCore-Quarantine-Rescan/1.0",
+          // Disable greylisting for this one-off scan only. Do not use Pass:
+          // all, which would bypass the scanners and security rules.
+          "Settings": '{groups_disabled = ["greylist"];}'
+        },
+        body: message,
+        signal: AbortSignal.timeout(20_000)
+      });
+    } catch (error) {
+      const failure = new Error(`Mandatory rescan service is unavailable; message remains held: ${error instanceof Error ? error.message : "scanner request failed"}`) as Error & { statusCode?: number };
+      failure.statusCode = 503;
+      throw failure;
+    }
+    if (!response.ok) {
+      const failure = new Error(`Rspamd returned HTTP ${response.status}; message remains held`) as Error & { statusCode?: number };
+      failure.statusCode = 503;
+      throw failure;
+    }
+
+    let payload: Record<string, unknown>;
+    try {
+      payload = await response.json() as Record<string, unknown>;
+    } catch {
+      const failure = new Error("Rspamd returned an invalid scan response; message remains held") as Error & { statusCode?: number };
+      failure.statusCode = 503;
+      throw failure;
+    }
+    const symbols = payload.symbols && typeof payload.symbols === "object"
+      ? Object.keys(payload.symbols as Record<string, unknown>).slice(0, 40)
+      : [];
+    const action = typeof payload.action === "string" ? payload.action.toLowerCase() : "unknown";
+    const score = Number(payload.score);
+    const scannerFailed = payload.is_skipped === true || !Number.isFinite(score) ||
+      symbols.includes("CLAM_VIRUS_FAIL") || action === "soft reject";
+    const malwareDetected = symbols.some((symbol) =>
+      symbol === "CLAM_VIRUS" || (symbol.startsWith("CLAM_VIRUS_") && symbol !== "CLAM_VIRUS_FAIL")
+    );
+    const deniedReason = scannerFailed
+      ? "Mandatory antivirus/spam scanning did not return a clean verdict"
+      : malwareDetected
+        ? "ClamAV detected malware"
+        : score >= threshold
+          ? `Spam score ${score} meets or exceeds the strictest recipient tag threshold ${threshold}`
+          : action !== "no action"
+            ? `Rspamd returned action '${action}', not a clean verdict`
+            : null;
+
+    if (deniedReason) {
+      await auditService.log(req, "security.quarantine.rescan.denied", "email_quarantine", queueId, {
+        sha256, score: Number.isFinite(score) ? score : null, threshold, action, symbols, reason: deniedReason
+      });
+      const error = new Error(`${deniedReason}; message remains quarantined`) as Error & { statusCode?: number };
+      error.statusCode = scannerFailed ? 503 : 422;
+      throw error;
+    }
+
+    // Persist the approval before changing queue state, then ask the bridge to
+    // re-hash the exact queue content before it is allowed out of HOLD.
+    await auditService.log(req, "security.quarantine.rescan.approved", "email_quarantine", queueId, {
+      sha256, score, threshold, action, symbols
+    });
+    let releaseResult: string;
+    try {
+      releaseResult = await systemRepository.releaseHeldMessageIfUnchanged(queueId, sha256);
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : "Queue release failed";
+      const failure = new Error(`Rescan was clean but the held message was not released: ${messageText}`) as Error & { statusCode?: number };
+      failure.statusCode = messageText.includes("changed") || messageText.includes("not currently held") ? 409 : 503;
+      throw failure;
+    }
+    await auditService.log(req, "security.quarantine.rescan.released", "email_quarantine", queueId, {
+      sha256, score, threshold, action, symbols, result: releaseResult.trim()
+    });
+    return { success: true, queueId, rescanned: true, score, threshold, action, symbols, sha256 };
   }
 
   async deleteQuarantinedMessage(req: Request, queueId: string) {

@@ -1,5 +1,6 @@
 import net from "net";
 import tls from "tls";
+import { createHash } from "node:crypto";
 import { db } from "../db/pool";
 import { ServiceHealthStatus, MailQueueStatus, CertificateHealthStatus } from "../models/entities";
 import { env } from "../config/env";
@@ -382,9 +383,24 @@ export class SystemRepository {
     return held.sort((a, b) => (b.arrivalTime || "").localeCompare(a.arrivalTime || ""));
   }
 
-  async releaseQuarantinedMessage(queueId: string): Promise<string> {
+  async getHeldMessageForRescan(queueId: string): Promise<{ message: Buffer; sha256: string }> {
     if (!/^[A-Za-z0-9]{5,64}$/.test(queueId)) throw new Error("Invalid Postfix queue ID");
-    return this.postfixBridge(`HOLD_RELEASE:${queueId}`);
+    const output = await this.postfixBridge(`HOLD_FETCH:${queueId}`, 12 * 1024 * 1024, 10_000);
+    const encoded = output.trim().replace(/^MESSAGE_BASE64:/, "");
+    if (!output.trim().startsWith("MESSAGE_BASE64:") || !encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+      throw new Error(output.trim() || "Postfix bridge returned an invalid held message payload");
+    }
+    const message = Buffer.from(encoded, "base64");
+    if (!message.length || message.length > 8 * 1024 * 1024 || message.toString("base64") !== encoded) {
+      throw new Error("Held message is invalid or exceeds the 8 MiB rescan limit");
+    }
+    return { message, sha256: createHash("sha256").update(message).digest("hex") };
+  }
+
+  async releaseHeldMessageIfUnchanged(queueId: string, sha256: string): Promise<string> {
+    if (!/^[A-Za-z0-9]{5,64}$/.test(queueId)) throw new Error("Invalid Postfix queue ID");
+    if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error("Invalid held message hash");
+    return this.postfixBridge(`HOLD_RELEASE_IF_HASH:${queueId}:${sha256}`, 1024 * 1024, 10_000);
   }
 
   async deleteQuarantinedMessage(queueId: string): Promise<string> {
@@ -392,24 +408,39 @@ export class SystemRepository {
     return this.postfixBridge(`HOLD_DELETE:${queueId}`);
   }
 
-  private postfixBridge(command: "STATUS" | "DETAIL" | "FLUSH" | "HOLD_LIST" | `HOLD_RELEASE:${string}` | `HOLD_DELETE:${string}`): Promise<string> {
+  private postfixBridge(
+    command: "STATUS" | "DETAIL" | "FLUSH" | "HOLD_LIST" | `HOLD_FETCH:${string}` | `HOLD_RELEASE_IF_HASH:${string}:${string}` | `HOLD_RELEASE:${string}` | `HOLD_DELETE:${string}`,
+    maxResponseBytes = 4 * 1024 * 1024,
+    timeoutMs = 3000
+  ): Promise<string> {
     const host = env.services.postfixBridgeHost;
     const port = env.services.postfixBridgePort;
     return new Promise((resolve, reject) => {
       const socket = new net.Socket();
       let output = "";
-      socket.setTimeout(3000);
+      let settled = false;
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        reject(error);
+      };
+      socket.setTimeout(timeoutMs);
       socket.connect(port, host, () => socket.write(`${command}\n`));
       socket.on("data", (chunk) => {
-        output += chunk.toString();
-        if (Buffer.byteLength(output, "utf8") > 4 * 1024 * 1024) {
-          socket.destroy();
-          reject(new Error("Postfix queue response exceeded the 4 MiB safety limit"));
+        if (settled) return;
+        output += chunk.toString("utf8");
+        if (Buffer.byteLength(output, "utf8") > maxResponseBytes) {
+          fail(new Error(`Postfix queue response exceeded the ${maxResponseBytes} byte safety limit`));
         }
       });
-      socket.on("end", () => resolve(output));
-      socket.on("timeout", () => { socket.destroy(); reject(new Error("Postfix queue bridge timed out")); });
-      socket.on("error", (error) => reject(new Error(`Postfix queue bridge unavailable: ${error.message}`)));
+      socket.on("end", () => {
+        if (settled) return;
+        settled = true;
+        resolve(output);
+      });
+      socket.on("timeout", () => fail(new Error("Postfix queue bridge timed out")));
+      socket.on("error", (error) => fail(new Error(`Postfix queue bridge unavailable: ${error.message}`)));
     });
   }
 }

@@ -108,14 +108,15 @@ bridge output, and exposes the view only to owner/admin roles. Release is
 owner/admin; permanent deletion is owner-only. Operations are written to the
 administrator audit log.
 
-**A Postfix HOLD release is not a re-scan.** The UI and API use
-`postsuper -H`, which releases a held item to the deferred queue. Postfix's
-`postsuper -r` requeue operation also does not apply SMTP/non-SMTP Milters to
-messages that are requeued. Do not treat either operation as a way to re-run
-Rspamd/ClamAV. If a message needs fresh analysis, perform a separate controlled
-scan of a copy with the current scanner policy before deciding whether to
-release it. Do not manually edit the queue spool.
-
+**Quarantine release is scanner-verified.** The API fetches the exact held RFC822
+message through the restricted Postfix bridge, submits it to Rspamd/ClamAV again,
+checks the strictest effective recipient spam-tag threshold, and releases only
+when the scan result is clean. Before releasing, the bridge reads the queue item
+again and verifies its SHA-256 hash still matches the scanned bytes. The bridge
+denies the legacy direct-release command. Scanner errors, malware, a non-clean
+Rspamd action, a policy threshold match, a queue-state change, or a hash mismatch
+leave the message held. A held message must not be released manually around this
+workflow.
 Postfix HOLD messages do not automatically expire. Establish a documented
 review and retention schedule, alert on the number/age of held items, and
 record owner-approved deletion. The UI displays at most 500 queue metadata
@@ -211,8 +212,9 @@ recipient.
   delivery. Postfix must defer with a temporary failure due to
   `milter_default_action = tempfail`; restore Rspamd and verify retry.
 - Quarantine: confirm the hold item appears in the admin page, metadata only
-  is returned, owner/admin can release, owner alone can delete, and audit
-  records are created. Verify the UI warns that release is not a re-scan.
+  is returned, owner/admin can request scanner-verified release, owner alone
+  can delete, and audit records are created. Verify the UI requires a fresh
+  Rspamd/ClamAV scan and hash check before release and reports the scan result.
 
 ### Limits of this milestone
 

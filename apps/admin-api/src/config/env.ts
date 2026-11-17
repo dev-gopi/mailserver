@@ -42,6 +42,7 @@ export const env = {
   dkimKeyDir: process.env.DKIM_KEY_DIR ?? "/var/lib/opendkim/keys",
   mailStoragePath: process.env.MAIL_STORAGE_PATH ?? "/var/mail/vhosts",
   backupDir: process.env.BACKUP_DIR ?? "/backups",
+  securityPolicyMapDir: process.env.RSPAMD_POLICY_MAP_DIR ?? "/var/lib/mailcore-rspamd-maps",
   webauthnRpId: process.env.WEBAUTHN_RP_ID ?? "",
   webauthnRpName: process.env.WEBAUTHN_RP_NAME ?? "MailCore Admin Console",
   authEncryptionKey: readSecret("AUTH_ENCRYPTION_KEY") ?? "",

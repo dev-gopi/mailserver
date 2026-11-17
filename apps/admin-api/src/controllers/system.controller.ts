@@ -87,13 +87,13 @@ export class SystemController {
     }
   }
 
-  async releaseQuarantine(req: Request, res: Response) {
+  async rescanReleaseQuarantine(req: Request, res: Response) {
     if (!canWrite(req)) return res.status(403).json({ error: "Read-only administrator" });
     try {
-      return res.json(await systemService.releaseQuarantinedMessage(req, req.params.queueId));
+      return res.json(await systemService.rescanAndReleaseQuarantinedMessage(req, req.params.queueId));
     } catch (err: any) {
-      const status = err.message?.includes("Invalid Postfix queue ID") ? 400 : 500;
-      return res.status(status).json({ error: err.message || "Failed to release quarantined message" });
+      const status = err.statusCode || (err.message?.includes("Invalid Postfix queue ID") ? 400 : 500);
+      return res.status(status).json({ error: err.message || "Failed to rescan and release quarantined message" });
     }
   }
 

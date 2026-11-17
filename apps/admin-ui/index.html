@@ -283,6 +283,11 @@
           <span id="badge-nav-quarantine" class="nav-pill">0</span>
         </button>
 
+        <button type="button" class="nav-item" data-tab="security-policies" id="nav-security-policies">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 3 7v5c0 5 4 8 9 9 5-1 9-4 9-9V7l-9-4z"/><path d="m9 12 2 2 4-4"/></svg>
+          <span>Security Policies</span>
+        </button>
+
         <button type="button" class="nav-item" data-tab="audit">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           <span>Audit Log</span>
@@ -1237,7 +1242,7 @@
             </div>
           </div>
           <div class="alert-box alert-warning mb-4">
-            <strong>Release safety:</strong> Held items may contain malware or high-confidence spam. Review the corresponding security event and message headers through a trusted incident-response process before releasing. Releasing a Postfix HOLD item does not automatically run the message through the scanner again.
+            <strong>Release safety:</strong> Messages remain held until the API retrieves the exact queue content, scans it again through Rspamd and ClamAV, checks the strictest recipient policy, and confirms the queue content has not changed. A scanner outage, malware detection, spam verdict or hash mismatch prevents release.
           </div>
           <div class="card">
             <div class="card-header flex-between">
@@ -1256,6 +1261,127 @@
               </table>
             </div>
             <div class="card-footer text-muted" style="font-size:0.8rem;">Only owners and administrators can view/release items. Permanent deletion is restricted to the owner role and is recorded in the audit log.</div>
+          </div>
+        </section>
+
+        <!-- TAB: CENTRALIZED SECURITY POLICIES -->
+        <section id="tab-security-policies" class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2>Security Policies</h2>
+              <p class="section-desc">Manage organization-wide, domain-level and mailbox-level spam thresholds plus trusted and blocked sender, domain and attachment lists.</p>
+            </div>
+            <div class="header-actions">
+              <button class="btn btn-secondary btn-sm" onclick="loadSecurityPolicies()">Refresh Policies</button>
+            </div>
+          </div>
+
+          <div class="alert-box alert-warning mb-4">
+            <strong>Security behavior:</strong> Allowlisted senders/domains only receive a spam-score reduction. They never bypass SPF, DKIM, DMARC, phishing analysis or mandatory ClamAV scanning. Blocked senders, domains and attachment extensions are rejected by Rspamd and handled by the Postfix quarantine policy.
+          </div>
+
+          <div id="security-policy-map-status" class="alert-box alert-info mb-4" role="status">Loading policy map publication status...</div>
+
+          <div class="security-policy-grid">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Spam Threshold Policy</h3>
+                  <p class="card-desc">Lower thresholds are stricter. Empty domain/mailbox values inherit from their parent scope.</p>
+                </div>
+              </div>
+              <div class="settings-form">
+                <div class="policy-form-grid">
+                  <div class="form-group">
+                    <label for="security-policy-scope">Policy Scope</label>
+                    <select id="security-policy-scope" onchange="populateSecurityPolicyTarget(); renderSecurityPolicyEditor();">
+                      <option value="global">Organization default</option>
+                      <option value="domain">Domain override</option>
+                      <option value="mailbox">Mailbox override</option>
+                    </select>
+                  </div>
+                  <div class="form-group" id="security-policy-target-wrap">
+                    <label for="security-policy-target">Target</label>
+                    <select id="security-policy-target" onchange="renderSecurityPolicyEditor()"></select>
+                  </div>
+                </div>
+
+                <div class="policy-score-grid">
+                  <div class="form-group">
+                    <label for="security-policy-tag-score">Tag as spam score</label>
+                    <input id="security-policy-tag-score" type="number" min="2" max="20" step="0.1" inputmode="decimal" placeholder="Inherit parent policy">
+                    <small class="form-hint">Adds spam headers / routes to Junk.</small>
+                  </div>
+                  <div class="form-group">
+                    <label for="security-policy-reject-score">Reject score</label>
+                    <input id="security-policy-reject-score" type="number" min="5" max="50" step="0.1" inputmode="decimal" placeholder="Inherit parent policy">
+                    <small class="form-hint">High-confidence spam; Postfix holds Milter rejects.</small>
+                  </div>
+                  <div class="form-group">
+                    <label for="security-policy-greylist-score">Greylist score</label>
+                    <input id="security-policy-greylist-score" type="number" min="1" max="10" step="0.1" inputmode="decimal" placeholder="Inherit parent policy">
+                    <small class="form-hint">Temporary defer threshold.</small>
+                  </div>
+                </div>
+                <div id="security-policy-inheritance" class="form-hint">Organization defaults are currently 6 / 15 / 4.</div>
+                <div class="flex-row gap-2">
+                  <button id="btn-save-security-policy" class="btn btn-primary" onclick="saveSecurityPolicy()">Save Policy</button>
+                  <button id="btn-reset-security-policy" class="btn btn-secondary" onclick="resetSecurityPolicy()">Reset Override</button>
+                </div>
+                <div class="form-hint">Organization defaults can only be changed by the owner. Domain and mailbox overrides can be managed by owners and administrators.</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Sender, Domain & Attachment Lists</h3>
+                  <p class="card-desc">Manage organization-wide allowlists and blocklists. Entries are normalized and validated by the API.</p>
+                </div>
+              </div>
+              <form class="settings-form" onsubmit="addSecurityPolicyEntry(event)">
+                <div class="form-group">
+                  <label for="security-list-type">List Type</label>
+                  <select id="security-list-type" required>
+                    <option value="allow_sender">Allow sender address</option>
+                    <option value="block_sender">Block sender address</option>
+                    <option value="allow_domain">Allow sender domain</option>
+                    <option value="block_domain">Block sender domain</option>
+                    <option value="block_extension">Block attachment extension</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="security-list-value">Value</label>
+                  <input id="security-list-value" type="text" maxlength="254" required placeholder="sender@example.com / example.com / exe" autocomplete="off">
+                </div>
+                <div class="form-group">
+                  <label for="security-list-note">Administrative note (optional)</label>
+                  <input id="security-list-note" type="text" maxlength="240" placeholder="Reason / ticket reference">
+                </div>
+                <button class="btn btn-primary" type="submit">Add List Entry</button>
+              </form>
+              <div class="table-container mt-4">
+                <table class="data-table">
+                  <thead><tr><th>Type</th><th>Value</th><th>Note</th><th>Added</th><th>Action</th></tr></thead>
+                  <tbody id="security-policy-list-tbody"><tr><td colspan="5" class="text-muted">Open this page to load policy entries.</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="card mt-4">
+            <div class="card-header flex-between">
+              <div>
+                <h3 class="card-title">Recent Security Policy Changes</h3>
+                <p class="card-desc">Persisted policy, allow/block list and quarantine re-scan decisions from the audit log.</p>
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="loadSecurityPolicyHistory()">Refresh History</button>
+            </div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead><tr><th>Time</th><th>Action</th><th>Administrator</th><th>Entity</th><th>Details</th></tr></thead>
+                <tbody id="security-policy-history-tbody"><tr><td colspan="5" class="text-muted">Open this page to load policy history.</td></tr></tbody>
+              </table>
+            </div>
           </div>
         </section>
 
