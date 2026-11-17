@@ -37,6 +37,14 @@ const state = {
 // DOM Helper
 const $ = (id) => document.getElementById(id);
 
+function clearSubmittedPasswordFields(form) {
+  // A visibility toggle can temporarily change a password input to text, so
+  // include password-named fields as well as inputs currently typed password.
+  form.querySelectorAll('input[type="password"], input[id*="password" i], input[name*="password" i]').forEach((input) => {
+    input.value = "";
+  });
+}
+
 // Auth Header helper
 function readCookieValue(name) {
   const prefix = `${name}=`;
@@ -3280,6 +3288,15 @@ document.addEventListener("keydown", (e) => {
     focusSearch();
   }
 });
+
+// Never leave submitted credentials in the page after an action completes.
+// This runs after the form's own submit handler has read the values to build
+// its request, and applies equally to success and error paths.
+document.addEventListener("submit", (event) => {
+  const form = event.target;
+  if (!(form instanceof HTMLFormElement)) return;
+  window.setTimeout(() => clearSubmittedPasswordFields(form), 0);
+}, true);
 
 // App Boot
 (async function init() {
