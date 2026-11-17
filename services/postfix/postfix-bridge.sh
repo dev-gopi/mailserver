@@ -23,7 +23,7 @@ case "$command" in
     valid_queue_id "$queue_id" || { printf '%s\n' 'Invalid queue ID' >&2; exit 64; }
     # Lowercase -h releases a message from Postfix's HOLD queue; uppercase
     # -H places it on HOLD and would leave the quarantine item in place.
-    exec postsuper -h "$queue_id"
+    exec postsuper -H "$queue_id"
     ;;
   HOLD_DELETE:*)
     queue_id=${command#HOLD_DELETE:}
