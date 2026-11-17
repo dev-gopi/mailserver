@@ -1,98 +1,97 @@
 # Repository structure
 
-The repository is organized by deployable component. Every directory under
-`services/` and `apps/` is a self-contained Docker build context. When moving
-files between them, update the component Dockerfile and `docker-compose.yml`.
+The repository is a single-host Docker Compose deployment. The control plane is
+an Express/TypeScript modular monolith; Postfix, Dovecot, Rspamd, ClamAV,
+OpenDKIM, PostgreSQL, and Redis remain dedicated infrastructure services.
 
-~~~text
+```text
 apps/
-  admin-api/                 Express/TypeScript administration API
+  admin-api/                 Express/TypeScript admin API
     src/
       controllers/           HTTP handlers
-      services/              Mail, backup, DNS, auth, and system logic
-      repositories/          PostgreSQL access
-      routes/                Authenticated and public routes
-      middleware/            Bearer-token authorization
+      services/              Auth, mail, backup, DNS, security and system logic
+      repositories/          PostgreSQL and mail-service integrations
+      routes/                Authenticated and public API routes
+      middleware/            Session, CSRF and role authorization
       validation/            Zod request schemas
-      db/                    Pool and runtime migrations
-    test/                    Node test suite
-  admin-ui/                  Nginx-served administrator dashboard
-    nginx.conf               Proxies /auth, /api, /docs, and health to the API
+      db/                    Pool and migrations
+  admin-ui/                  Nginx-served HTTPS administrator dashboard
 
 services/
-  postfix/                   SMTP, submission, SMTPS, and LMTP handoff
-    config/                  PostgreSQL lookup maps
-    main.cf, master.cf       SMTP and filtering route configuration
-  dovecot/                   IMAP, POP3, LMTP, SQL auth, quota, and Sieve
-    config/spam.sieve        Files tagged mail into Junk
-  clamav/                    ClamAV daemon and ClamSMTP filter
-  spamassassin/              spamd configuration and Bayes-learning job
-  opendkim/                  DKIM milter and per-domain key support
-  amavis/                    Dormant future-only configuration; not enabled
-  rspamd/                    Dormant reference configuration; not enabled
+  postfix/                   SMTP, submission, SMTPS, LMTP and queue bridge
+  dovecot/                   IMAP, POP3, LMTP, SQL auth, quota and Sieve
+  rspamd/local.d/            Active milter, spam, Bayesian and scanner policy
+  clamav/                    ClamAV daemon and FreshClam signature updater
+  spamassassin/              Optional legacy comparison profile only
+  opendkim/                  DKIM signing milter and per-domain keys
+  amavis/                    Inactive reference configuration
 
 infrastructure/
   database/init/             PostgreSQL schema and initial owner seed
+  secrets/                   Secret bootstrap helper
   monitor/                   API-health polling script
+  backup/                    Backup helper script
   tls/                       Development certificate and Certbot helpers
-  backup/                    Standalone backup helper script
-
-docs/
-  PROJECT_AUDIT.md           Security and deployment review
-  STRUCTURE.md               This guide
-  INTEGRATION_TEST_REPORT_*  Local end-to-end test evidence, when retained
-
-secrets/
-  tls/                       Mounted certificate/key location; private files ignored
-
-backups/                     Host-mounted API backup destination; ignored
-docker-compose.yml           Service graph, networks, volumes, and host ports
-.env.example                 Root Compose environment template
-~~~
+  tests/                     Runtime validation scripts
+scripts/                     Static Compose and milestone checks
+docs/                        Architecture, audit and milestone runbooks
+```
 
 ## Runtime topology
 
-~~~text
-Admin browser
-  └─ admin-ui (published HTTP port)
-       └─ admin-api ── PostgreSQL
-             ├────── Redis
-             ├────── Postfix command bridge
-             ├────── Dovecot / SpamAssassin / ClamAV health probes
-             ├────── OpenDKIM key storage
-             └────── ./backups
+```text
+Mail clients / remote MTAs
+  └─ Postfix (SMTP 25 / submission 587 / SMTPS 465)
+       ├─ Rspamd Milter :11332 (filternet) ── ClamAV INSTREAM :3310 (clamavnet)
+       ├─ OpenDKIM Milter :8891
+       └─ LMTP ── Dovecot ── Maildir
 
-SMTP sender or mail client
-  └─ Postfix ── OpenDKIM milter
-       └─ ClamSMTP + ClamAV ── Postfix reinjection ── SpamAssassin
-            └─ Postfix LMTP ── Dovecot ── Maildir mailbox
-~~~
+Admin browser ── HTTPS admin-ui ── admin-api
+                                  ├─ PostgreSQL (restricted runtime role)
+                                  ├─ Redis (password protected)
+                                  ├─ Rspamd HTTP scan worker :11333 (scanadminnet)
+                                  ├─ Postfix queue-control bridge :2526
+                                  └─ backup directory
+```
 
-Postfix, ClamSMTP, and SpamAssassin form the active filtering path. Dovecot
-uses Sieve to file messages with `X-Spam-Flag: YES` into `Junk`. Amavis and
-Rspamd are not started or referenced by the active Postfix route.
+Rspamd is active and is the only production spam-scoring Milter. ClamAV is
+called by Rspamd directly; there is no ClamSMTP reinjection path or port 10025
+listener. SpamAssassin is available only through the non-default
+`legacy-comparison` profile. Amavis remains inactive.
 
-## Networks and persistence
+## Network boundaries
 
-Compose creates two bridge networks:
-
-| Network | Purpose |
+| Network | Members / purpose |
 | --- | --- |
-| `mailnet` | Internal service communication for the mail and admin stack |
-| `filternet` | Internal-only filtering path between Postfix, ClamAV, and SpamAssassin |
+| `mailnet` | Mail and admin services requiring outbound DNS/feed access and service discovery |
+| `dbnet` | Internal-only PostgreSQL/Redis access and authorized DB clients |
+| `filternet` | Internal-only Postfix ↔ Rspamd Milter path; ClamAV is not attached |
+| `scanadminnet` | Internal Rspamd HTTP scan worker ↔ admin API; no host-published Rspamd port |
+| `clamavnet` | Internal Rspamd/API ↔ ClamAV scanner path; Postfix is not attached |
+| `postfixcontrolnet` | Dedicated internal queue-control link between Postfix and admin API only |
 
-Persistent named volumes are `dbdata` (PostgreSQL), `maildata` (Maildir),
-`mailspool` (shared Postfix/Dovecot spool state), `spamdata`, `clamavdata`,
-`dkimkeys`, and `redisdata`. The API mounts the host `./backups` directory for
-backup archives.
+The Postfix queue bridge binds to its static address on `postfixcontrolnet`.
+Rspamd and ClamAV are not members of that network and cannot issue queue
+flush, release, or delete commands. The unused Rspamd controller/WebUI worker is disabled. Both TCP scan workers
+disable caller-supplied file/shared-memory message inputs.
+
+## Persistent data
+
+Named volumes include `dbdata` (PostgreSQL), `maildata` (Maildir), `mailspool`
+(Postfix/Dovecot spool state), `clamavdata` (virus signatures), `dkimkeys`
+(DKIM keys), `redisdata` (Redis persistence), and `rspamddata` (Rspamd state).
+`spamdata` is used only when the optional legacy comparison profile is run.
+The API also mounts the host `./backups` directory.
 
 ## Configuration boundaries
 
-- The root `.env` supplies Docker Compose interpolation, mail host/domain
-  values, port mappings, service host names, and the initial database owner.
-- `apps/admin-api/.env` supplies API-local defaults when the API runs outside
-  Compose. Compose also injects root service values explicitly.
-- `secrets/tls/cert.pem` and `secrets/tls/privkey.key` are mounted read-only
-  into Postfix and Dovecot. They must be trusted certificates for production.
-- Docker volumes and `backups/` are runtime data, not source-controlled
-  configuration.
+- The root `.env` supplies Compose interpolation, domain/hostname, port and
+  service configuration. Keep it out of source distributions.
+- `apps/admin-api/.env` is for API-local development; Compose injects explicit
+  service configuration and Docker secret paths for production.
+- `secrets/runtime/` contains persistent database, Redis and auth-encryption
+  secret files. Preserve them across upgrades; they are not generated project
+  source and are excluded from release ZIPs.
+- `secrets/tls/cert.pem` and `secrets/tls/privkey.key` contain private TLS
+  material and must be supplied by the operator.
+- Docker volumes and `backups/` are runtime data, not source-controlled config.

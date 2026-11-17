@@ -8,6 +8,8 @@ apps/admin-api/.env
 # TLS and DKIM private material
 secrets/tls/*.key
 secrets/tls/*.pem
+secrets/runtime/*
+!secrets/runtime/.gitkeep
 opendkim/keys/
 
 # Node build and dependency output

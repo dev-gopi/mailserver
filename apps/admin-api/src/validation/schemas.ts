@@ -71,7 +71,7 @@ export const testSmtpSchema = z.object({
 });
 
 export const testSpamSchema = z.object({
-  content: z.string().min(1, "Email message content is required")
+  content: z.string().min(1, "Email message content is required").max(256 * 1024, "Message is too large for an interactive scan")
 });
 
 export const deliverabilityQuerySchema = z.object({
@@ -153,3 +153,7 @@ export const administratorUpdateSchema = z.object({
 }).refine((value) => value.role !== undefined || value.active !== undefined, "At least one administrator attribute must be provided");
 
 export const administratorIdParamSchema = z.object({ id: z.coerce.number().int().positive() });
+
+export const quarantineQueueIdParamSchema = z.object({
+  queueId: z.string().min(5).max(64).regex(/^[A-Za-z0-9]+$/, "Invalid Postfix queue ID")
+});

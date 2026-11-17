@@ -1,4 +1,7 @@
-# Milestone 01 — Core infrastructure hardening and mail-flow verification
+# Milestone 01
+
+> Historical note: the original ClamSMTP/SpamAssassin reinjection path described in this milestone was superseded by Milestone 04. The current production filter is Rspamd with ClamAV INSTREAM. Run `infrastructure/tests/milestone-04-runtime.sh` and follow `docs/MILESTONE_04.md` for current scanner verification.
+ — Core infrastructure hardening and mail-flow verification
 
 ## Goal
 
@@ -9,7 +12,7 @@ does not introduce a new mail engine or replace the existing database/API.
 
 ## Changes included
 
-### Postfix
+### Postfix (original Milestone 01 baseline; current filter route is in Milestone 04)
 
 - SMTP port 25 is server-to-server only and does not offer SMTP AUTH.
 - Authenticated mailbox submission remains available on 587 (mandatory
@@ -152,7 +155,7 @@ unencrypted authentication.
 ```sh
 # Service status and recent logs
 docker compose ps
-docker compose logs --since=10m postfix dovecot clamav spamassassin opendkim
+docker compose logs --since=10m postfix dovecot rspamd clamav opendkim
 
 # The config checker validates rendered Compose + live service configuration.
 ./infrastructure/tests/milestone-01-check.sh
@@ -180,7 +183,7 @@ and that the certificate SAN matches the hostname.
 5. Inspect the delivery trace:
 
    ```sh
-   docker compose logs --since=10m postfix dovecot clamav spamassassin
+   docker compose logs --since=10m postfix dovecot rspamd clamav
    docker compose exec -T dovecot doveadm search -u bob@your-domain mailbox INBOX ALL
    ```
 

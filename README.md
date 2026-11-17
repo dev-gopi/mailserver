@@ -16,32 +16,32 @@ domains on a host that you operate.
 | --- | --- |
 | Postfix | SMTP reception, authenticated submission, relay policy, and LMTP handoff |
 | Dovecot | IMAP, POP3, SMTP auth socket, LMTP delivery, quotas, and Sieve |
-| ClamSMTP + ClamAV | Malware scanning before mail re-enters Postfix |
-| SpamAssassin | Spam scoring and message headers |
+| Rspamd | SMTP milter, spam scoring, SPF/DKIM/DMARC signals, phishing feeds, Bayesian classification, and quarantine decisions |
+| ClamAV | Antivirus scanning requested by Rspamd over clamd INSTREAM |
 | OpenDKIM | Per-domain DKIM signing keys and signing milter |
 | PostgreSQL | Domains, virtual mailboxes, aliases, administrators, audit data, and settings |
-| Redis | Admin API task-queue storage |
+| Redis | Admin task-queue storage and Rspamd Bayesian classifier backend |
 | Admin API and UI | Administration, diagnostics, DNS guidance, and backup management |
 | Monitor | API health probe with optional webhook notification |
 
 ~~~mermaid
 flowchart LR
   Sender[SMTP client or remote sender] --> P[Postfix]
-  P -->|10026| AV[ClamSMTP + ClamAV]
-  AV -->|clean mail, 10025| P
-  P -->|spamc| SA[SpamAssassin]
-  SA --> P
-  P -->|LMTP| D[Dovecot]
-  D -->|X-Spam-Flag: YES| Junk[Junk mailbox]
-  D -->|other mail| Inbox[Maildir INBOX]
+  P -->|Milter 11332| R[Rspamd]
+  R -->|clamd INSTREAM 3310| AV[ClamAV]
+  R -->|accept / tag / defer / reject-to-HOLD| P
   P <-->|DKIM milter| DKIM[OpenDKIM]
+  P -->|LMTP| D[Dovecot]
+  D -->|X-Spam-Status / X-Spam-Flag| Junk[Junk mailbox]
+  D -->|other mail| Inbox[Maildir INBOX]
   Client[Mail client] <-->|IMAP / POP3| D
 ~~~
 
-`services/amavis` contains a baseline Amavis image and configuration only. It
-is intentionally commented out in Compose, and Postfix does not send mail to
-it. Rspamd is also present only as commented reference configuration; it is
-not part of the active path.
+Rspamd is the active filtering engine. Postfix calls it as a Milter, and
+Rspamd scans MIME parts with ClamAV over clamd's native INSTREAM protocol.
+SpamAssassin is retained only behind the optional `legacy-comparison` Compose
+profile for controlled A/B comparison; it is not in the default message path.
+`services/amavis` is inactive reference configuration and is not started.
 
 ## Requirements
 
@@ -151,8 +151,12 @@ IMAP_STARTTLS_ENABLED=true POP3_STARTTLS_ENABLED=true docker compose -f docker-c
 ~~~
 
 SMTP port 25 is for server-to-server delivery and does not offer SMTP AUTH.
-Mailbox clients must use 587 (STARTTLS) or 465 (implicit TLS). PostgreSQL,
-Redis, SpamAssassin, ClamAV, OpenDKIM, and the API have no host port mappings.
+Mailbox clients must use 587 (STARTTLS) or 465 (implicit TLS). PostgreSQL, Redis, Rspamd, SpamAssassin, ClamAV, OpenDKIM, and the API have
+no host port mappings. Rspamd's unused controller/WebUI worker is disabled; its normal HTTP scan
+worker is reachable only over the private `scanadminnet`. The Milter listens
+only on `filternet`, and ClamAV listens only on the dedicated `clamavnet`; Postfix
+is not attached to `clamavnet`. These services bind to network-specific addresses,
+not all container interfaces.
 The admin UI has no host HTTP mapping: it is HTTPS-only and loopback-bound by
 default. For remote administration, prefer a VPN and set
 `ADMIN_UI_BIND_ADDRESS` to the VPN interface address; do not bind it to all
@@ -221,16 +225,43 @@ patching, or deliverability monitoring.
 
 ## Filtering and delivery
 
-- SMTP listeners send mail to ClamSMTP on the internal filtering network. Only the filter subnet is trusted by the private Postfix reinjection listener; ClamSMTP resolves Postfix through a network-scoped filter alias.
-- Malware found by ClamAV is dropped.
-- Clean mail returns to Postfix on port 10025, then passes through
-  SpamAssassin.
-- SpamAssassin's configured threshold is `5.0`. Dovecot Sieve sends messages
-  with `X-Spam-Flag: YES` to `Junk`.
+- Postfix applies the Rspamd Milter on SMTP and non-SMTP ingress, followed by
+  the OpenDKIM Milter. `milter_default_action = tempfail` means an unavailable
+  filter or signing service defers mail instead of silently bypassing it.
+- Rspamd analyzes messages and requests antivirus inspection through ClamAV's
+  clamd INSTREAM endpoint on the dedicated internal `clamavnet`. The ClamAV
+  daemon binds only to that interface, drops to the `clamav` service user, and
+  is not published on a host port. ClamAV refuses to start with signature
+  databases older than two days; the API also reports database age separately.
+- A ClamAV transport/scanning failure creates `CLAM_VIRUS_FAIL`; Rspamd maps
+  this to a soft reject (temporary SMTP failure) so the sending MTA can retry.
+  A detected virus is rejected by Rspamd and Postfix's Milter quarantine
+  behavior places reject actions into its HOLD queue.
+- Initial policy thresholds in `services/rspamd/local.d/actions.conf` are:
+  score 4 for greylisting, score 6 for spam tagging, and score 15 for reject.
+  Tagged mail receives `X-Spam-Status` and Dovecot Sieve files it into `Junk`.
+  Tune these values only after measuring false positives and delivery impact.
+- Rspamd's Bayes classifier stores state in the password-protected Redis
+  instance. OpenPhish feed support is enabled and requires outbound HTTPS for
+  feed updates. MIME/attachment extension signals add risk score; extension
+  alone does not constitute a malware verdict. The interactive scan endpoint is
+  owner/admin-only and rate-limited to 10 scans per minute per client. These
+  policy thresholds are tracked in configuration; a dynamic policy editor is
+  not part of Milestone 04.
+- The optional SpamAssassin profile is not active by default and must not be
+  enabled as a second production filter without a reviewed A/B plan.
+- The admin Quarantine page exposes held-message metadata only, not message
+  bodies or attachments. Owners and admins can inspect/release held queue IDs;
+  only the owner can delete them. Release from Postfix HOLD does **not** run a
+  second scan. Review the original security signals out-of-band before release.
+  Postfix HOLD items do not automatically expire, so define and operate a
+  manual retention/review process; the UI lists at most 500 entries per view.
 - Dovecot stores Maildir data in `maildata` and reads virtual mailbox/alias
-  configuration from PostgreSQL.
-- OpenDKIM signs mail with per-domain keys managed by the administration
-  service.
+  configuration from PostgreSQL. OpenDKIM signs mail with per-domain keys
+  managed by the administration service.
+
+See [`docs/MILESTONE_04.md`](docs/MILESTONE_04.md) for the scanner topology,
+limits, quarantine workflow, test procedure, and upgrade notes.
 
 ## Backups and monitoring
 
@@ -271,7 +302,7 @@ The authenticated API exposes a few checks intended for a production runbook:
 ~~~sh
 docker compose config
 docker compose ps
-docker compose logs -f postfix dovecot clamav spamassassin opendkim app
+docker compose logs -f postfix dovecot rspamd clamav opendkim app
 
 cd apps/admin-api
 npm ci
@@ -287,8 +318,9 @@ docker compose down
 | `dbdata` | PostgreSQL data |
 | `maildata` | Maildir mailbox storage |
 | `mailspool` | Shared Postfix/Dovecot spool sockets and queue-related state |
-| `spamdata` | SpamAssassin data |
+| `rspamddata` | Rspamd persistent data/state |
 | `clamavdata` | ClamAV signatures |
+| `spamdata` | Optional legacy SpamAssassin comparison data |
 | `dkimkeys` | OpenDKIM keys |
 | `redisdata` | Redis append-only data |
 
@@ -296,7 +328,7 @@ docker compose down
 mailboxes, database state, DKIM keys, and filtering data. Use it only for a
 deliberate disposable reset.
 
-Run `./infrastructure/tests/milestone-01-check.sh` after the stack is up to validate the effective Postfix/Dovecot TLS policy, certificate mounts, Nginx configuration, and published-port policy. See [Milestone 01: core infrastructure hardening and mail-flow verification](docs/MILESTONE_01.md) for the internal delivery, external delivery, relay, and DNS verification runbook.
+Run `./infrastructure/tests/milestone-01-check.sh` after the stack is up to validate the effective Postfix/Dovecot TLS policy, current Rspamd/OpenDKIM Milter route, scanner configuration, certificate mounts, Nginx configuration, and published-port policy. Run `./infrastructure/tests/milestone-04-runtime.sh` for scanner-path and queue-bridge probes. See [Milestone 01: core infrastructure hardening and mail-flow verification](docs/MILESTONE_01.md) for the internal delivery, external delivery, relay, and DNS verification runbook.
 
 Read [the project audit](docs/PROJECT_AUDIT.md) before public exposure. Keep
 any local integration-test evidence alongside the deployment rather than
@@ -311,8 +343,9 @@ apps/
 services/
   postfix/         SMTP and delivery configuration
   dovecot/         IMAP, POP3, LMTP, Sieve, SQL authentication
-  clamav/          ClamAV and ClamSMTP
-  spamassassin/    SpamAssassin and learning job
+  clamav/          ClamAV daemon and signature updater
+  rspamd/          Active spam, phishing, MIME and antivirus integration policy
+  spamassassin/    Optional legacy SpamAssassin comparison profile
   opendkim/        DKIM signing
   amavis/          Inactive, future-only configuration
 infrastructure/
@@ -320,7 +353,7 @@ infrastructure/
   monitor/         API-health monitor
   tls/             Development certificate and renewal helpers
   tests/           Runtime validation scripts
-scripts/           Compose policy checks
+scripts/           Compose and milestone policy checks
 docs/              Audit, milestone, and integration documentation
 ~~~
 
@@ -334,3 +367,13 @@ review/revocation panel in Security & 2FA, and an isolated internal network for
 PostgreSQL and Redis. See
 [`docs/MILESTONE_02.md`](docs/MILESTONE_02.md) for the permission matrix,
 configuration, and verification steps.
+
+## Advanced email security (Milestone 04)
+
+Milestone 04 enables Rspamd as the active Postfix Milter, ClamAV INSTREAM
+scanning, fail-closed scanner behavior, Bayesian state in authenticated Redis,
+MIME attachment risk scoring, an admin spam-diagnostic endpoint, and an
+audited Postfix HOLD quarantine view. Run `node scripts/check-milestone-04.mjs`
+for static checks and `infrastructure/tests/milestone-04-runtime.sh` against the
+started Docker stack. Held mail requires manual retention and release review;
+Postfix HOLD release is not a re-scan operation.

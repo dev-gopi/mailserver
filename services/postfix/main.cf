@@ -84,10 +84,9 @@ alias_maps = hash:/etc/aliases
 alias_database = hash:/etc/aliases
 mydestination = localhost, localhost.localdomain
 relayhost = 
-# Only the private filtering network may reinject scanned mail on port 10025.
 # Public SMTP, submission, and SMTPS never trust the Docker service network.
-# Trust loopback only on public SMTP/submission listeners. Port 10025 has its
-# own exact filter-subnet override in master.cf for ClamSMTP reinjection.
+# Only loopback is trusted by public SMTP listeners; scanning happens through
+# the Rspamd Milter on the private filtering network.
 mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
 mailbox_size_limit = 0
 recipient_delimiter = +
@@ -122,17 +121,18 @@ virtual_gid_maps = static:5000
 
 #transport_maps = proxy:mysql:/etc/postfix/sql/mysql_transport_maps.cf
 
-# ClamSMTP reinjects mail on port 10025; master.cf sends it through
-# SpamAssassin before LMTP delivery to Dovecot.
-# Filtering is applied per SMTP listener. Re-injected mail is processed by
-# SpamAssassin on port 10025 and then enters the local queue without looping.
-content_filter =
-
-# Sign outgoing messages with the per-domain keys managed by OpenDKIM.
-smtpd_milters = inet:opendkim:8891
-non_smtpd_milters = inet:opendkim:8891
-milter_default_action = accept
+# All SMTP and locally submitted mail passes through Rspamd. Rspamd performs
+# spam/authentication checks and calls ClamAV directly via clamd INSTREAM.
+# OpenDKIM signs outgoing mail and verifies inbound signatures.
+smtpd_milters = inet:rspamd-filter:11332, inet:opendkim:8891
+non_smtpd_milters = inet:rspamd-filter:11332, inet:opendkim:8891
+# Fail closed: if either security/signing milter is unavailable, Postfix defers
+# the message instead of accepting unscanned or unsigned mail.
+milter_default_action = tempfail
 milter_protocol = 6
+milter_connect_timeout = 5s
+milter_command_timeout = 30s
+milter_content_timeout = 120s
 
 # Rate limiting and anvil connection concurrency control (anti-bruteforce / anti-flood)
 smtpd_client_connection_count_limit = 20

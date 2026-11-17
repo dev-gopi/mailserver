@@ -72,7 +72,7 @@
 
       <div class="auth-footer">
         <span class="badge-status-dot online"></span>
-        <span>Postfix &bull; Dovecot &bull; SpamAssassin &bull; ClamAV</span>
+        <span>Postfix &bull; Dovecot &bull; Rspamd &bull; ClamAV</span>
       </div>
     </div>
   </section>
@@ -277,6 +277,12 @@
           <span id="badge-nav-services" class="nav-pill online">Healthy</span>
         </button>
 
+        <button type="button" class="nav-item" data-tab="quarantine" id="nav-quarantine">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 3 7v5c0 5 4 8 9 9 5-1 9-4 9-9V7l-9-4z"/><path d="M9 12h6M12 9v6"/></svg>
+          <span>Quarantine</span>
+          <span id="badge-nav-quarantine" class="nav-pill">0</span>
+        </button>
+
         <button type="button" class="nav-item" data-tab="audit">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           <span>Audit Log</span>
@@ -472,7 +478,7 @@
                     <div class="service-meta">
                       <span class="service-dot online"></span>
                       <div>
-                        <strong>SpamAssassin & ClamAV</strong>
+                        <strong>Rspamd & ClamAV</strong>
                         <div id="infra-filter-details" class="text-muted">Filter configuration loading...</div>
                       </div>
                     </div>
@@ -668,7 +674,7 @@
               <div class="card-header flex-between">
                 <div>
                   <h3 class="card-title">Core Services Response Latency (ms)</h3>
-                  <p class="card-desc">Live TCP ping response times for Postfix, Dovecot, ClamAV, SpamAssassin, Postgres & Redis</p>
+                  <p class="card-desc">Live TCP ping response times for Postfix, Dovecot, ClamAV, Rspamd, Postgres & Redis</p>
                 </div>
                 <span id="dash-services-health-pill" class="badge badge-success">All Online</span>
               </div>
@@ -1186,18 +1192,19 @@
               </form>
             </div>
 
-            <!-- Diagnostic SpamAssassin Scoring Test -->
+            <!-- Diagnostic Rspamd Scoring Test -->
             <div class="card">
               <div class="card-header">
                 <div>
                   <h3 class="card-title">Spam Filter Scoring Analyzer</h3>
-                  <p class="card-desc">Test SpamAssassin rules, heuristic scoring, and quarantine triggers</p>
+                  <p class="card-desc">Submit a sample message to the active Rspamd /checkv2 engine; scanner errors are reported, never replaced with a heuristic result</p>
                 </div>
               </div>
               <form id="form-test-spam" onsubmit="handleTestSpam(event)">
                 <div class="form-group">
                   <label for="test-spam-content">Message Headers & Body</label>
-                  <textarea id="test-spam-content" rows="4" placeholder="Paste email content here to evaluate against SpamAssassin engine..." required></textarea>
+                  <textarea id="test-spam-content" rows="4" placeholder="Paste an RFC 822 email, or plain text to scan as a test email body..." required></textarea>
+                  <small class="form-help">Plain text is automatically wrapped in safe test headers. Paste full headers to test their exact score.</small>
                 </div>
                 <div class="pw-generator-row mb-4">
                   <button type="button" class="btn btn-secondary btn-xs" onclick="insertGtubeSpam()">
@@ -1218,7 +1225,41 @@
           </div>
         </section>
 
-        <!-- TAB 5: AUDIT LOG -->
+        <!-- TAB: SECURITY QUARANTINE -->
+        <section id="tab-quarantine" class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2>Security Quarantine</h2>
+              <p class="section-desc">Review messages held by the Rspamd Postfix Milter. This view exposes queue metadata only; message bodies and attachments are never returned by the admin API.</p>
+            </div>
+            <div class="header-actions">
+              <button class="btn btn-secondary btn-sm" onclick="loadQuarantine()">Refresh Quarantine</button>
+            </div>
+          </div>
+          <div class="alert-box alert-warning mb-4">
+            <strong>Release safety:</strong> Held items may contain malware or high-confidence spam. Review the corresponding security event and message headers through a trusted incident-response process before releasing. Releasing a Postfix HOLD item does not automatically run the message through the scanner again.
+          </div>
+          <div class="card">
+            <div class="card-header flex-between">
+              <div>
+                <h3 class="card-title">Held Messages</h3>
+                <p class="card-desc">Postfix HOLD queue entries created when Rspamd returns a quarantine-eligible reject.</p>
+              </div>
+              <span id="quarantine-count" class="badge badge-secondary">0 held</span>
+            </div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead><tr><th>Queue ID</th><th>Received</th><th>Sender</th><th>Recipients</th><th>Size</th><th>Actions</th></tr></thead>
+                <tbody id="quarantine-tbody">
+                  <tr><td colspan="6" class="text-muted">Open this page to load held messages.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="card-footer text-muted" style="font-size:0.8rem;">Only owners and administrators can view/release items. Permanent deletion is restricted to the owner role and is recorded in the audit log.</div>
+          </div>
+        </section>
+
+        <!-- TAB 6: AUDIT LOG -->
         <section id="tab-audit" class="tab-pane">
           <div class="section-header">
             <div>
@@ -1902,7 +1943,7 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
           <div>
             <strong>Spam & Antivirus Protection Active:</strong>
-            <span>All incoming messages are filtered by ClamAV and SpamAssassin before delivery into the mailbox Maildir spool.</span>
+            <span>All SMTP messages are inspected by Rspamd; Rspamd calls ClamAV directly. High-confidence rejected messages are held in the Postfix quarantine queue, while tagged spam is routed to Junk by Dovecot Sieve.</span>
           </div>
         </div>
       </div>

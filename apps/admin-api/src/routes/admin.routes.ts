@@ -1,4 +1,5 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { requireAdmin, requirePasswordChanged, requireRoles, requireCsrf } from "../middleware/auth";
 import { validate } from "../validation/validate";
 import {
@@ -17,7 +18,8 @@ import {
   backupSettingsSchema,
   administratorCreateSchema,
   administratorUpdateSchema,
-  administratorIdParamSchema
+  administratorIdParamSchema,
+  quarantineQueueIdParamSchema
 } from "../validation/schemas";
 import { companyController } from "../controllers/company.controller";
 import { domainController } from "../controllers/domain.controller";
@@ -29,6 +31,16 @@ import { backupController } from "../controllers/backup.controller";
 import { adminManagementController } from "../controllers/admin-management.controller";
 
 export const adminRouter = Router();
+
+// Scanning user-supplied RFC822 content is CPU-intensive. Keep the interactive
+// diagnostic bounded independently of the broader authenticated API limit.
+const scannerDiagnosticLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Scanner diagnostics are limited to 10 requests per minute" }
+});
 
 // All routes behind authentication + forced password-change gate
 adminRouter.use(requireAdmin);
@@ -89,7 +101,10 @@ adminRouter.get("/system/queue", requireRoles("admin"), systemController.getMail
 adminRouter.get("/system/certificate", systemController.getCertificateHealth);
 adminRouter.post("/system/queue/flush", requireRoles("admin"), systemController.flushMailQueue);
 adminRouter.post("/system/test-smtp", requireRoles("admin"), validate({ body: testSmtpSchema }), systemController.testSmtp);
-adminRouter.post("/system/test-spam", requireRoles("admin"), validate({ body: testSpamSchema }), systemController.testSpam);
+adminRouter.post("/system/test-spam", requireRoles("owner", "admin"), scannerDiagnosticLimit, validate({ body: testSpamSchema }), systemController.testSpam);
+adminRouter.get("/quarantine", requireRoles("owner", "admin"), systemController.getQuarantine);
+adminRouter.post("/quarantine/:queueId/release", requireRoles("owner", "admin"), validate({ params: quarantineQueueIdParamSchema }), systemController.releaseQuarantine);
+adminRouter.delete("/quarantine/:queueId", requireRoles("owner"), validate({ params: quarantineQueueIdParamSchema }), systemController.deleteQuarantine);
 adminRouter.get("/system/task-queue", requireRoles("admin"), systemController.getTaskQueueStats);
 adminRouter.get("/system/deliverability", validate({ query: deliverabilityQuerySchema }), systemController.checkDeliverability);
 

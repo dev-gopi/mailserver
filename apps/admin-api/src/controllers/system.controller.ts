@@ -77,6 +77,36 @@ export class SystemController {
     }
   }
 
+
+  async getQuarantine(req: Request, res: Response) {
+    try {
+      const messages = await systemService.getQuarantineMessages();
+      return res.json({ items: messages, count: messages.length });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Failed to inspect quarantine" });
+    }
+  }
+
+  async releaseQuarantine(req: Request, res: Response) {
+    if (!canWrite(req)) return res.status(403).json({ error: "Read-only administrator" });
+    try {
+      return res.json(await systemService.releaseQuarantinedMessage(req, req.params.queueId));
+    } catch (err: any) {
+      const status = err.message?.includes("Invalid Postfix queue ID") ? 400 : 500;
+      return res.status(status).json({ error: err.message || "Failed to release quarantined message" });
+    }
+  }
+
+  async deleteQuarantine(req: Request, res: Response) {
+    if (!canWrite(req)) return res.status(403).json({ error: "Read-only administrator" });
+    try {
+      return res.json(await systemService.deleteQuarantinedMessage(req, req.params.queueId));
+    } catch (err: any) {
+      const status = err.message?.includes("Invalid Postfix queue ID") ? 400 : 500;
+      return res.status(status).json({ error: err.message || "Failed to delete quarantined message" });
+    }
+  }
+
   async getTaskQueueStats(req: Request, res: Response) {
     const stats = await systemService.getTaskQueueStats();
     return res.json(stats);

@@ -55,9 +55,10 @@ if [ -f /run/rsyslog-postfix.pid ]; then
 fi
 rsyslogd -n -i /run/rsyslog-postfix.pid -f /etc/rsyslog-container.conf &
 
-# Expose only the two read/flush operations required by the admin API. The
-# bridge is internal to the mail network and never published on the host.
-socat TCP-LISTEN:2526,reuseaddr,fork,bind=0.0.0.0 EXEC:/usr/local/bin/postfix-bridge.sh &
+# The queue-control bridge listens only on the dedicated internal control
+# network interface, never on mail, DB, or filter networks.
+POSTFIX_BRIDGE_BIND="${POSTFIX_BRIDGE_BIND:-127.0.0.1}"
+socat "TCP-LISTEN:2526,reuseaddr,fork,bind=${POSTFIX_BRIDGE_BIND}" EXEC:/usr/local/bin/postfix-bridge.sh &
 
 # Start Postfix in foreground
 exec postfix start-fg

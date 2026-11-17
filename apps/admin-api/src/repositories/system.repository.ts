@@ -121,6 +121,135 @@ export class SystemRepository {
     });
   }
 
+
+  private async probeRspamd(): Promise<ServiceHealthStatus> {
+    const host = env.services.rspamdHost;
+    const port = env.services.rspamdPort;
+    const started = Date.now();
+    const checkedAt = new Date().toISOString();
+    // Include the standard EICAR test attachment so the normal worker must
+    // prove positive antivirus detection, not just answer an HTTP request.
+    // This is a scan-only /checkv2 request and is never submitted for delivery.
+    const message = [
+      "From: mailcore-healthcheck@localhost",
+      "To: mailcore-healthcheck@localhost",
+      "Subject: MailCore ClamAV EICAR health probe",
+      "Date: Tue, 17 Nov 2026 12:00:00 +0000",
+      "Message-ID: <mailcore-healthcheck@mailcore.invalid>",
+      "MIME-Version: 1.0",
+      'Content-Type: multipart/mixed; boundary="mailcore-health-probe"',
+      "",
+      "--mailcore-health-probe",
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      "Internal antivirus readiness probe. This message is scanned only and is never delivered.",
+      "--mailcore-health-probe",
+      'Content-Type: application/octet-stream; name="eicar.com"',
+      "Content-Transfer-Encoding: base64",
+      "Content-Disposition: attachment; filename=eicar.com",
+      "",
+      "WDVPIVAlQEFQWzRcUFpYNTQoUF4pN0NDKTd9JEVJQ0FSLVNUQU5EQVJELUFOVElWSVJVUy1URVNULUZJTEUhJEgrSCo=",
+      "--mailcore-health-probe--",
+      ""
+    ].join("\r\n");
+
+    try {
+      const response = await fetch(`http://${host}:${port}/checkv2`, {
+        method: "POST",
+        // Only the internal health probe bypasses greylisting. Otherwise its
+        // deliberate one-off EICAR message is soft-rejected before ClamAV can
+        // inspect the attachment, producing a false degraded status.
+        headers: {
+          "Content-Type": "message/rfc822",
+          "User-Agent": "MailCore-Service-Health/1.0",
+          "Pass": "all",
+          "Settings": '{groups_disabled = ["greylist"];}'
+        },
+        body: message,
+        signal: AbortSignal.timeout(6000)
+      });
+      if (!response.ok) {
+        return { service: "rspamd", displayName: "Rspamd + ClamAV Filter Pipeline", port, status: "degraded", latencyMs: Date.now() - started, error: `Rspamd HTTP ${response.status}`, lastChecked: checkedAt };
+      }
+      const payload = await response.json() as Record<string, unknown>;
+      const symbols = payload.symbols && typeof payload.symbols === "object" ? Object.keys(payload.symbols as Record<string, unknown>) : [];
+      const action = typeof payload.action === "string" ? payload.action : "unknown";
+      const score = Number(payload.score);
+      const scannerFailed = symbols.includes("CLAM_VIRUS_FAIL") || action.toLowerCase() === "soft reject";
+      const eicarDetected = symbols.includes("CLAM_VIRUS");
+      const skipped = payload.is_skipped === true || !Number.isFinite(score);
+      const status = scannerFailed || skipped || !eicarDetected ? "degraded" : "healthy";
+      return {
+        service: "rspamd",
+        displayName: "Rspamd + ClamAV Filter Pipeline",
+        port,
+        status,
+        latencyMs: Date.now() - started,
+        banner: `Rspamd scan ${action}; score ${Number.isFinite(score) ? score : "unknown"}; ClamAV EICAR ${eicarDetected ? "detected" : "not confirmed"}`,
+        error: scannerFailed ? "Mandatory ClamAV scanning reported a failure" : skipped ? "Rspamd skipped the diagnostic message or returned an invalid score" : !eicarDetected ? "ClamAV did not detect the EICAR health-test attachment" : undefined,
+        lastChecked: checkedAt
+      };
+    } catch (error) {
+      return {
+        service: "rspamd",
+        displayName: "Rspamd + ClamAV Filter Pipeline",
+        port,
+        status: "down",
+        latencyMs: Date.now() - started,
+        error: error instanceof Error ? error.message : "Rspamd scan probe failed",
+        lastChecked: checkedAt
+      };
+    }
+  }
+
+  private probeClamAV(): Promise<ServiceHealthStatus> {
+    const host = env.services.clamavHost;
+    const port = env.services.clamavPort;
+    const started = Date.now();
+    const checkedAt = new Date().toISOString();
+    return new Promise((resolve) => {
+      const socket = new net.Socket();
+      let response = "";
+      let settled = false;
+      const finish = (status: ServiceHealthStatus) => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        resolve(status);
+      };
+      socket.setTimeout(3000);
+      socket.connect(port, host, () => socket.write("nVERSION\n"));
+      socket.on("data", (chunk) => {
+        response += chunk.toString("utf8");
+        if (response.length > 512) {
+          finish({ service: "clamav", displayName: "ClamAV Antivirus", port, status: "degraded", latencyMs: Date.now() - started, error: "Unexpectedly large ClamAV VERSION response", lastChecked: checkedAt });
+          return;
+        }
+        if (!response.includes("\n")) return;
+        const banner = response.trim().replace(/^ClamAV\s+/, "");
+        const match = banner.match(/^([^/]+)\/(\d+)\/(.+)$/);
+        const version = match?.[1] || "unknown";
+        const signatureCount = Number(match?.[2] || 0);
+        const signatureDateText = (match?.[3] || "").replace(/\s{2,}/g, " ");
+        const signatureDate = Date.parse(signatureDateText);
+        const ageHours = Number.isFinite(signatureDate) ? (Date.now() - signatureDate) / 3_600_000 : Number.POSITIVE_INFINITY;
+        const current = signatureCount > 0 && ageHours >= -6 && ageHours <= 48;
+        finish({
+          service: "clamav",
+          displayName: "ClamAV Antivirus",
+          port,
+          status: current ? "healthy" : "degraded",
+          latencyMs: Date.now() - started,
+          banner: `ClamAV ${version}; signatures ${signatureCount}; age ${Number.isFinite(ageHours) ? `${Math.max(0, Math.round(ageHours))}h` : "unknown"}`,
+          error: current ? undefined : "ClamAV signature set is missing, invalid, or older than 48 hours",
+          lastChecked: checkedAt
+        });
+      });
+      socket.once("timeout", () => finish({ service: "clamav", displayName: "ClamAV Antivirus", port, status: "degraded", latencyMs: Date.now() - started, error: "ClamAV VERSION probe timed out", lastChecked: checkedAt }));
+      socket.once("error", (error) => finish({ service: "clamav", displayName: "ClamAV Antivirus", port, status: "down", latencyMs: Date.now() - started, error: error.message, lastChecked: checkedAt }));
+    });
+  }
+
   async checkAllServices(): Promise<ServiceHealthStatus[]> {
     const dbStart = Date.now();
     let dbStatus: ServiceHealthStatus;
@@ -150,10 +279,8 @@ export class SystemRepository {
     const probes = await Promise.all([
       this.probeTcp("postfix", "Postfix MTA (SMTP/Submission)", env.services.postfixHost, env.services.postfixPort, undefined, true),
       this.probeTcp("dovecot", "Dovecot MDA (IMAP)", env.services.dovecotHost, env.services.dovecotPort, undefined, true, true),
-      // spamd expects command first, followed by the SPAMC protocol version
-      // and a blank line terminating the headers.
-      this.probeTcp("spamassassin", "SpamAssassin Filter", env.services.spamassassinHost, env.services.spamassassinPort, "PING SPAMC/1.5\r\n\r\n"),
-      this.probeTcp("clamav", "ClamAV Engine", env.services.clamavHost, env.services.clamavPort, "PING\r\n"),
+      this.probeRspamd(),
+      this.probeClamAV(),
       this.probeTcp(
         "redis",
         "Redis Queue & Cache",
@@ -228,15 +355,58 @@ export class SystemRepository {
     });
   }
 
-  private postfixBridge(command: "STATUS" | "DETAIL" | "FLUSH"): Promise<string> {
-    const host = env.services.postfixHost;
+  async getQuarantineMessages(): Promise<Array<{
+    queueId: string; arrivalTime: string | null; sizeBytes: number; sender: string; recipients: string[];
+  }>> {
+    const output = await this.postfixBridge("HOLD_LIST");
+    const held: Array<{ queueId: string; arrivalTime: string | null; sizeBytes: number; sender: string; recipients: string[] }> = [];
+    for (const line of output.split(/\r?\n/).filter(Boolean)) {
+      try {
+        const item = JSON.parse(line) as Record<string, unknown>;
+        if (item.queue_name !== "hold" || typeof item.queue_id !== "string") continue;
+        const recipientsRaw = Array.isArray(item.recipients) ? item.recipients : [];
+        const recipients = recipientsRaw.map((recipient: any) => typeof recipient === "string" ? recipient : String(recipient?.address ?? ""))
+          .filter((address: string) => Boolean(address)).slice(0, 50);
+        const arrival = Number(item.arrival_time);
+        held.push({
+          queueId: item.queue_id,
+          arrivalTime: Number.isFinite(arrival) && arrival > 0 ? new Date(arrival * 1000).toISOString() : null,
+          sizeBytes: Number.isFinite(Number(item.message_size)) ? Number(item.message_size) : 0,
+          sender: typeof item.sender === "string" ? item.sender : "(empty sender)",
+          recipients
+        });
+      } catch {
+        // Ignore malformed/partial rows from postqueue; never expose raw spool data.
+      }
+    }
+    return held.sort((a, b) => (b.arrivalTime || "").localeCompare(a.arrivalTime || ""));
+  }
+
+  async releaseQuarantinedMessage(queueId: string): Promise<string> {
+    if (!/^[A-Za-z0-9]{5,64}$/.test(queueId)) throw new Error("Invalid Postfix queue ID");
+    return this.postfixBridge(`HOLD_RELEASE:${queueId}`);
+  }
+
+  async deleteQuarantinedMessage(queueId: string): Promise<string> {
+    if (!/^[A-Za-z0-9]{5,64}$/.test(queueId)) throw new Error("Invalid Postfix queue ID");
+    return this.postfixBridge(`HOLD_DELETE:${queueId}`);
+  }
+
+  private postfixBridge(command: "STATUS" | "DETAIL" | "FLUSH" | "HOLD_LIST" | `HOLD_RELEASE:${string}` | `HOLD_DELETE:${string}`): Promise<string> {
+    const host = env.services.postfixBridgeHost;
     const port = env.services.postfixBridgePort;
     return new Promise((resolve, reject) => {
       const socket = new net.Socket();
       let output = "";
       socket.setTimeout(3000);
       socket.connect(port, host, () => socket.write(`${command}\n`));
-      socket.on("data", (chunk) => { output += chunk.toString(); });
+      socket.on("data", (chunk) => {
+        output += chunk.toString();
+        if (Buffer.byteLength(output, "utf8") > 4 * 1024 * 1024) {
+          socket.destroy();
+          reject(new Error("Postfix queue response exceeded the 4 MiB safety limit"));
+        }
+      });
       socket.on("end", () => resolve(output));
       socket.on("timeout", () => { socket.destroy(); reject(new Error("Postfix queue bridge timed out")); });
       socket.on("error", (error) => reject(new Error(`Postfix queue bridge unavailable: ${error.message}`)));

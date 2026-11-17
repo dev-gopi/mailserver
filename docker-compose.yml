@@ -5,7 +5,10 @@ x-service-logging: &service-logging
     max-file: "5"
 
 services:
+  # Retained only for optional A/B comparison during migration. This service is
+  # not in the active mail path; Rspamd is the production filtering engine.
   spamassassin:
+    profiles: ["legacy-comparison"]
     build: ./services/spamassassin
     volumes:
       - spamdata:/home/spamd
@@ -15,6 +18,7 @@ services:
     networks:
       - mailnet
       - filternet
+      - clamavnet
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -25,23 +29,46 @@ services:
       timeout: 3s
       retries: 5
 
-  # rspamd:
-  #   image: rspamd/rspamd:3.11
-  #   restart: unless-stopped
-  #   volumes:
-  #     - ./services/rspamd/local.d:/etc/rspamd/local.d:ro
-  #     - rspamddata:/var/lib/rspamd
-  #   networks:
-  #     - mailnet
-  #     - filternet
-  #   depends_on:
-  #     clamav:
-  #       condition: service_healthy
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "rspamadm configtest >/dev/null"]
-  #     interval: 15s
-  #     timeout: 5s
-  #     retries: 5
+  rspamd:
+    image: rspamd/rspamd:4.3.0
+    restart: unless-stopped
+    command: ["/bin/sh", "-ec", "export RSPAMD_REDIS_PASSWORD=\"$$(cat /run/secrets/redis_password)\"; exec /usr/bin/rspamd -f"]
+    secrets:
+      - redis_password
+    volumes:
+      - ./services/rspamd/local.d:/etc/rspamd/local.d:ro
+      - rspamddata:/var/lib/rspamd
+    networks:
+      mailnet: {}     # outbound DNS and threat-feed access; no scanner listener binds here
+      filternet:
+        ipv4_address: 172.30.0.2
+        aliases:
+          - rspamd-filter
+      dbnet: {}       # authenticated Redis/Bayes backend
+      scanadminnet:
+        ipv4_address: 172.32.0.2
+        aliases:
+          - rspamd-admin
+      clamavnet:
+        ipv4_address: 172.33.0.3
+    depends_on:
+      clamav:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # Exercise the private HTTP scanner with a valid request. A bare TCP
+      # connection to the Milter listener produces a misleading EOF error.
+      test: ["CMD-SHELL", "rspamc -t 5 -h 172.32.0.2:11333 --empty symbols >/dev/null"]
+      interval: 20s
+      timeout: 8s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *service-logging
 
   # Optional only: Amavis is configured under services/amavis but is not part
   # of this project’s active mail path. Leave this service commented unless a
@@ -55,7 +82,7 @@ services:
   #     - clamav
   #   networks:
   #     - mailnet
-  #     - filternet
+  #     - clamavnet
 
   clamav:
     # image: clamav/clamav:stable
@@ -65,19 +92,23 @@ services:
       - no-new-privileges:true
     logging: *service-logging
     healthcheck:
-      test: ["CMD-SHELL", "pidof clamd >/dev/null && pidof clamsmtpd >/dev/null"]
+      # Ubuntu's ClamAV packages do not provide clamdscan. Probe the daemon's
+      # native TCP protocol instead, then require a downloaded daily database.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/172.33.0.2/3310 && printf \"PING\\n\" >&3 && IFS= read -r reply <&3 && test \"$$reply\" = PONG' && { test -s /var/lib/clamav/daily.cvd || test -s /var/lib/clamav/daily.cld; }"]
       interval: 15s
       timeout: 10s
       retries: 8
+      start_period: 10m
     environment:
       - TZ=${TZ:?set TZ in .env}
-      - CLAMD_CONF_MaxFileSize=25M
-      - CLAMD_CONF_MaxScanSize=100M
     volumes:
       - clamavdata:/var/lib/clamav
     networks:
-      - mailnet
-      - filternet
+      mailnet: {}     # outbound signature updates only; clamd binds to clamavnet
+      clamavnet:
+        ipv4_address: 172.33.0.2
+        aliases:
+          - clamav-scanner
 
   opendkim:
     build: ./services/opendkim
@@ -128,6 +159,10 @@ services:
       filternet:
         aliases:
           - postfix-filter
+      postfixcontrolnet:
+        ipv4_address: 172.31.1.2
+        aliases:
+          - postfix-bridge
     restart: unless-stopped
     logging: *service-logging
     environment:
@@ -139,14 +174,10 @@ services:
       - MAIL_DB_USER=${POSTFIX_DB_USER:-mail_postfix}
       - MAIL_DOMAIN=${MAIL_DOMAIN:?set MAIL_DOMAIN in .env}
       - MAIL_HOSTNAME=${MAIL_HOSTNAME:?set MAIL_HOSTNAME in .env}
+      - POSTFIX_BRIDGE_BIND=172.31.1.2
     depends_on:
-      spamassassin:
+      rspamd:
         condition: service_healthy
-      clamav:
-        # ClamSMTP reinjects mail into Postfix, so Postfix must be started
-        # before ClamAV waits for its Docker address. Health is still exposed
-        # to monitoring, without creating a startup dependency cycle.
-        condition: service_started
       opendkim:
         condition: service_healthy
       dovecot:
@@ -156,7 +187,9 @@ services:
       app:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "postfix status >/dev/null 2>&1 && bash -c '</dev/tcp/127.0.0.1/25' && bash -c '</dev/tcp/127.0.0.1/587' && bash -c '</dev/tcp/127.0.0.1/465'"]
+      # SMTPS requires a TLS handshake; a raw TCP probe causes spurious
+      # SSL_accept errors in the Postfix log.
+      test: ["CMD-SHELL", "postfix status >/dev/null 2>&1 && bash -c '</dev/tcp/127.0.0.1/25' && bash -c '</dev/tcp/127.0.0.1/587' && openssl s_client -connect 127.0.0.1:465 -brief </dev/null >/dev/null 2>&1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -344,12 +377,13 @@ services:
       REDIS_QUEUE: ${REDIS_QUEUE:-mail_tasks}
       POSTFIX_HOST: ${POSTFIX_HOST:?set POSTFIX_HOST in .env}
       POSTFIX_PORT: ${POSTFIX_PORT:?set POSTFIX_PORT in .env}
+      POSTFIX_BRIDGE_HOST: postfix-bridge
       POSTFIX_BRIDGE_PORT: ${POSTFIX_BRIDGE_PORT:?set POSTFIX_BRIDGE_PORT in .env}
       DOVECOT_HOST: ${DOVECOT_HOST:?set DOVECOT_HOST in .env}
       DOVECOT_PORT: ${DOVECOT_PORT:?set DOVECOT_PORT in .env}
-      SPAMASSASSIN_HOST: ${SPAMASSASSIN_HOST:?set SPAMASSASSIN_HOST in .env}
-      SPAMASSASSIN_PORT: ${SPAMASSASSIN_PORT:?set SPAMASSASSIN_PORT in .env}
-      CLAMAV_HOST: ${CLAMAV_HOST:?set CLAMAV_HOST in .env}
+      RSPAMD_HOST: rspamd-admin
+      RSPAMD_PORT: 11333
+      CLAMAV_HOST: clamav-scanner
       CLAMAV_PORT: ${CLAMAV_PORT:?set CLAMAV_PORT in .env}
       DKIM_KEY_DIR: /var/lib/opendkim/keys
       DKIM_KEY_UID: 10001
@@ -382,8 +416,16 @@ services:
       - dkimkeys:/var/lib/opendkim
       - ./backups:/backups
     networks:
-      - mailnet
-      - dbnet
+      mailnet: {}
+      dbnet: {}
+      scanadminnet:
+        ipv4_address: 172.32.0.3
+      clamavnet:
+        ipv4_address: 172.33.0.4
+      # Postfix owns .2 as the bridge listener; keep the admin API on a
+      # stable, non-conflicting address.
+      postfixcontrolnet:
+        ipv4_address: 172.31.1.3
     restart: unless-stopped
     logging: *service-logging
     depends_on:
@@ -423,6 +465,7 @@ volumes:
   clamavdata:
   dkimkeys:
   redisdata:
+  rspamddata:
 
 secrets:
   postgres_password:
@@ -454,3 +497,30 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/28
+
+  # Only the admin API and Rspamd HTTP normal worker join this private API network.
+  scanadminnet:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.32.0.0/28
+
+  # Scanner-only network shared by Rspamd, ClamAV and the trusted admin API.
+  # Postfix is deliberately not attached, so it cannot call clamd directly.
+  clamavnet:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.33.0.0/28
+
+  # Dedicated point-to-point control plane for the queue bridge. The listener
+  # binds only to the Postfix interface on this network; mail/scanner containers
+  # cannot invoke queue flush, hold, release, or delete operations.
+  postfixcontrolnet:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.1.0/28

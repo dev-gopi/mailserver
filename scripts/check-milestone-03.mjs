@@ -46,6 +46,8 @@ for (const [service, secret] of [["postfix", "postfix_db_password"], ["dovecot",
   assert.ok(block.includes(`/run/secrets/${secret}`), `${service} must receive only its own database password file`);
 }
 assert.match(compose, /  dbnet:\n    driver: bridge\n    internal: true/, "database network must remain internal");
+assert.match(compose, /  rspamd:\n    image: rspamd\/rspamd:4\.3\.0/, "Rspamd must be pinned to the reviewed 4.3.0 release");
+assert.match(compose, /  postfixcontrolnet:\n    driver: bridge\n    internal: true/, "Postfix queue-control bridge must use a dedicated internal network");
 assert.match(compose, /migrate:[\s\S]*?networks:\n      - dbnet/, "migration service must use only the internal DB network");
 assert.doesNotMatch(compose.match(/^  app:\n[\s\S]*?(?=^  admin-ui:\n)/m)?.[0] ?? "", /postgres_password|PGUSER: \$\{POSTGRES_USER/, "API must not receive the PostgreSQL bootstrap secret or owner login");
 

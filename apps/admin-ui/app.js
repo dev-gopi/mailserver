@@ -302,6 +302,7 @@ function switchTab(tabId) {
     domains: "Hosted Domains",
     aliases: "Email Aliases & Forwarding",
     services: "Services, Mail Queue & Diagnostics",
+    quarantine: "Security Quarantine",
     audit: "Audit Log & Security Trail",
     backups: "Mail Backups & Disaster Recovery",
     administrators: "Administrator Accounts",
@@ -321,6 +322,9 @@ function switchTab(tabId) {
   if (tabId === "services") {
     runDiagnosticsNow();
   }
+  if (tabId === "quarantine") {
+    loadQuarantine();
+  }
   if (tabId === "administrators") {
     loadAdministrators();
   }
@@ -335,6 +339,8 @@ function updateUserInfo() {
   $("user-avatar-initials").textContent = initials;
   const adminNav = $("nav-administrators");
   if (adminNav) adminNav.classList.toggle("hidden", user.role !== "owner");
+  const quarantineNav = $("nav-quarantine");
+  if (quarantineNav) quarantineNav.classList.toggle("hidden", !["owner", "admin"].includes(user.role));
 }
 
 // Modal Handlers
@@ -578,26 +584,38 @@ function renderOverviewConnectionReference(config) {
 }
 
 function renderInfrastructureSummary(services = []) {
-  const byService = Object.fromEntries(services.map((service) => [service.service, service]));
+  const byService = Object.fromEntries((Array.isArray(services) ? services : []).map((service) => [service.service, service]));
   const setStatus = (id, service) => {
     const element = $(id);
-    if (!element || !service) return;
+    if (!element) return;
+    if (!service) {
+      element.className = "badge badge-warning";
+      element.textContent = "Unavailable";
+      return;
+    }
     const healthy = service.status === "healthy";
-    element.className = `badge ${healthy ? "badge-success" : "badge-danger"}`;
+    const unavailable = service.status === "unavailable" || service.status === "unknown";
+    element.className = `badge ${healthy ? "badge-success" : unavailable ? "badge-warning" : "badge-danger"}`;
     element.textContent = healthy ? "Healthy" : service.status;
   };
   const postfix = byService.postfix;
   const dovecot = byService.dovecot;
-  const spamassassin = byService.spamassassin;
+  const rspamd = byService.rspamd;
+  const clamav = byService.clamav;
   const database = byService.postgresql;
 
   if (postfix) $("infra-postfix-details").textContent = `SMTP service port ${postfix.port}`;
   if (dovecot) $("infra-dovecot-details").textContent = `IMAP service port ${dovecot.port} • Maildir Storage`;
-  if (spamassassin) $("infra-filter-details").textContent = `SpamAssassin service port ${spamassassin.port} • ClamAV filter engine`;
+  const rspamdText = rspamd ? `Rspamd ${rspamd.status}` : "Rspamd unavailable";
+  const clamavText = clamav ? `ClamAV ${clamav.status}` : "ClamAV unavailable";
+  if ($("infra-filter-details")) $("infra-filter-details").textContent = `${rspamdText} • ${clamavText}`;
   if (database) $("infra-database-name").textContent = database.displayName;
   setStatus("infra-postfix-status", postfix);
   setStatus("infra-dovecot-status", dovecot);
-  setStatus("infra-filter-status", spamassassin);
+  const filterStatus = rspamd && clamav
+    ? { ...rspamd, status: rspamd.status === "healthy" && clamav.status === "healthy" ? "healthy" : rspamd.status === "down" || clamav.status === "down" ? "down" : "degraded" }
+    : { service: "filter-pipeline", status: rspamd?.status === "down" || clamav?.status === "down" ? "down" : "unavailable" };
+  setStatus("infra-filter-status", filterStatus);
   setStatus("infra-database-status", database);
 }
 
@@ -2156,6 +2174,68 @@ async function triggerFlushQueue() {
   }
 }
 
+async function loadQuarantine() {
+  const tbody = $("quarantine-tbody");
+  if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-muted">Loading held messages...</td></tr>';
+  try {
+    const response = await request("/api/quarantine");
+    const items = Array.isArray(response.items) ? response.items : [];
+    if ($("quarantine-count")) $("quarantine-count").textContent = `${items.length} held`;
+    if ($("badge-nav-quarantine")) $("badge-nav-quarantine").textContent = String(items.length);
+    if (!tbody) return;
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-muted">No messages are currently held in the Postfix quarantine queue.</td></tr>';
+      return;
+    }
+    const owner = state.adminUser?.role === "owner";
+    tbody.innerHTML = items.map((item) => {
+      const queueId = String(item.queueId || "");
+      const recipients = Array.isArray(item.recipients) ? item.recipients.join(", ") : "";
+      const received = item.arrivalTime ? formatDate(item.arrivalTime) : "Unknown";
+      const size = formatBytes(Number(item.sizeBytes || 0));
+      return `<tr>
+        <td><code>${escapeHtml(queueId)}</code></td>
+        <td>${escapeHtml(received)}</td>
+        <td>${escapeHtml(item.sender || "(empty sender)")}</td>
+        <td>${escapeHtml(recipients || "No recipient metadata")}</td>
+        <td>${escapeHtml(size)}</td>
+        <td class="table-actions">
+          <button class="btn btn-secondary btn-xs" onclick="releaseQuarantinedMessage('${escapeHtml(queueId)}')">Release</button>
+          ${owner ? `<button class="btn btn-danger btn-xs" onclick="deleteQuarantinedMessage('${escapeHtml(queueId)}')">Delete</button>` : ""}
+        </td>
+      </tr>`;
+    }).join("");
+  } catch (err) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="text-danger">${escapeHtml(err.message)}</td></tr>`;
+    showToast("Quarantine Load Failed", err.message, "error");
+  }
+}
+
+async function releaseQuarantinedMessage(queueId) {
+  if (!/^[A-Za-z0-9]{5,64}$/.test(queueId)) return showToast("Invalid Queue ID", "The queue ID format is not valid.", "error");
+  if (!confirm(`Release held message ${queueId}? Only do this after verifying it is safe.`)) return;
+  try {
+    await request(`/api/quarantine/${encodeURIComponent(queueId)}/release`, { method: "POST" });
+    showToast("Message Released", `Postfix release requested for ${queueId}.`, "success");
+    await loadQuarantine();
+  } catch (err) {
+    showToast("Release Failed", err.message, "error");
+  }
+}
+
+async function deleteQuarantinedMessage(queueId) {
+  if (state.adminUser?.role !== "owner") return showToast("Permission Denied", "Only the owner can permanently delete held mail.", "error");
+  if (!/^[A-Za-z0-9]{5,64}$/.test(queueId)) return showToast("Invalid Queue ID", "The queue ID format is not valid.", "error");
+  if (!confirm(`Permanently delete held message ${queueId}? This cannot be undone.`)) return;
+  try {
+    await request(`/api/quarantine/${encodeURIComponent(queueId)}`, { method: "DELETE" });
+    showToast("Message Deleted", `Held message ${queueId} was deleted.`, "success");
+    await loadQuarantine();
+  } catch (err) {
+    showToast("Delete Failed", err.message, "error");
+  }
+}
+
 async function handleTestSmtp(event) {
   event.preventDefault();
   const recipient = $("test-smtp-recipient").value.trim();
@@ -2201,22 +2281,27 @@ async function handleTestSpam(event) {
     });
 
     resultBox.classList.remove("hidden");
-    resultBox.className = `alert-box mt-3 ${res.isSpam ? "alert-warning" : "alert-success"}`;
+    const title = res.scanBlocked ? "SCAN DEFERRED" : res.isMalware ? "MALWARE DETECTED" : res.isSpam ? "SPAM DETECTED" : "CLEAN MESSAGE";
+    const kind = res.scanBlocked || res.isMalware || res.isSpam ? "alert-warning" : "alert-success";
+    resultBox.className = `alert-box mt-3 ${kind}`;
     resultBox.innerHTML = `
-      <strong>${res.isSpam ? "SPAM DETECTED" : "CLEAN MESSAGE"}:</strong>
-      Score: <b>${res.score}</b> (Threshold: ${res.threshold}) &bull; Action: <b>${res.action.toUpperCase()}</b> &bull; Engine: ${res.engine}
+      <strong>${title}:</strong>
+      Score: <b>${escapeHtml(res.score)}</b> (Tag threshold: ${escapeHtml(res.threshold)}) &bull; Action: <b>${escapeHtml(String(res.action).toUpperCase())}</b> &bull; Engine: ${escapeHtml(res.engine)}
+      ${res.inputNormalized ? `<div class="mt-2 text-muted">Plain text was wrapped in standard diagnostic email headers before scanning.</div>` : ""}
+      ${res.scanBlocked ? `<div class="mt-2">Mandatory malware scanning did not complete. Do not treat this message as clean.</div>` : ""}
+      ${Array.isArray(res.symbols) && res.symbols.length ? `<div class="mt-2 text-muted">Signals: ${res.symbols.map(escapeHtml).join(", ")}</div>` : ""}
     `;
 
     showToast(
-      res.isSpam ? "Spam Rule Triggered" : "Message Passed Clean",
+      res.scanBlocked ? "Security Scan Deferred" : res.isMalware ? "Malware Signal Detected" : res.isSpam ? "Spam Rule Triggered" : "Message Passed Clean",
       `Score: ${res.score} / ${res.threshold} -> ${res.action}`,
-      res.isSpam ? "warning" : "success"
+      res.scanBlocked || res.isMalware || res.isSpam ? "warning" : "success"
     );
   } catch (err) {
     recordFailureAlert({
-      category: "SpamAssassin",
+      category: "Rspamd",
       title: "Spam Filter Analysis Failed",
-      target: "SpamAssassin Engine",
+      target: "Rspamd Engine",
       reason: err.message
     });
     showToast("Spam Analysis Failed", err.message, "error");
@@ -2226,12 +2311,12 @@ async function handleTestSpam(event) {
 }
 
 function insertGtubeSpam() {
-  $("test-spam-content").value = "Subject: Test\nFrom: sender@example.com\n\nThis is a standard test for spam filtering.\nXJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X\n";
-  showToast("GTUBE Inserted", "SpamAssassin standard test pattern loaded.", "info", 1500);
+  $("test-spam-content").value = "From: sender@example.com\nTo: recipient@example.com\nSubject: GTUBE Spam Filter Test\nDate: Tue, 17 Nov 2026 12:00:00 +0000\nMessage-ID: <gtube-test@mailcore.invalid>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\n\nThis is a standard test for spam filtering.\nXJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X\n";
+  showToast("GTUBE Inserted", "GTUBE standard test pattern loaded for the Rspamd engine.", "info", 1500);
 }
 
 function insertCleanEmail() {
-  $("test-spam-content").value = "Subject: Meeting Schedule for Next Week\nFrom: team@company.com\n\nHi John,\nJust checking in on the quarterly report progress. Let me know when you are free.\nBest regards,\nJane\n";
+  $("test-spam-content").value = "From: team@example.invalid\nTo: john@example.invalid\nSubject: Meeting Schedule for Next Week\nDate: Tue, 17 Nov 2026 12:00:00 +0000\nMessage-ID: <meeting-schedule@mailcore.invalid>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\n\nHi John,\nJust checking in on the quarterly report progress. Let me know when you are free.\nBest regards,\nJane\n";
   showToast("Clean Email Inserted", "Sample business email loaded.", "info", 1500);
 }
 
@@ -2440,38 +2525,40 @@ function renderServicesLatencyChart(services) {
   const container = $("chart-latency-container");
   if (!container) return;
 
-  const list = Array.isArray(services) && services.length > 0 ? services : [
-    { service: "postgresql", displayName: "PostgreSQL 16", port: 5432, status: "healthy", latencyMs: 2 },
-    { service: "postfix", displayName: "Postfix MTA (SMTP)", port: 25, status: "healthy", latencyMs: 4 },
-    { service: "dovecot", displayName: "Dovecot MDA (IMAPS)", port: 993, status: "healthy", latencyMs: 5 },
-    { service: "spamassassin", displayName: "SpamAssassin Filter", port: 783, status: "healthy", latencyMs: 8 },
-    { service: "clamav", displayName: "ClamAV Anti-Virus", port: 3310, status: "healthy", latencyMs: 12 },
-    { service: "redis", displayName: "Redis Task Queue", port: 6379, status: "healthy", latencyMs: 3 }
-  ];
-
-  const allOnline = list.every((s) => s.status === "healthy");
+  const list = Array.isArray(services) ? services : [];
   const pill = $("dash-services-health-pill");
+  if (list.length === 0) {
+    if (pill) {
+      pill.className = "badge badge-warning";
+      pill.textContent = "Service Checks Unavailable";
+    }
+    container.innerHTML = '<div class="empty-state"><p>Live service health data is unavailable. Check the administrator API and service diagnostics.</p></div>';
+    return;
+  }
+
+  const allOnline = list.length > 0 && list.every((service) => service.status === "healthy");
   if (pill) {
     pill.className = `badge ${allOnline ? "badge-success" : "badge-danger"}`;
-    pill.textContent = allOnline ? "All 6 Services Healthy" : "Service Issue Detected";
+    pill.textContent = allOnline ? `All ${list.length} Services Healthy` : "Service Issue Detected";
   }
 
   container.innerHTML = `
     <div class="latency-list">
-      ${list.map((s) => {
-        const isDown = s.status === "down";
-        const isDegraded = s.status === "degraded";
-        const width = isDown ? 100 : Math.min(100, Math.max(8, (s.latencyMs / 50) * 100));
-        const color = isDown ? "#ef4444" : isDegraded ? "#f59e0b" : "#10b981";
+      ${list.map((service) => {
+        const status = typeof service.status === "string" ? service.status : "unknown";
+        const isDown = status === "down";
+        const isDegraded = status === "degraded";
+        const isHealthy = status === "healthy";
+        const width = isDown ? 100 : Math.min(100, Math.max(8, (Number(service.latencyMs) / 50) * 100 || 8));
+        const color = isDown ? "#ef4444" : isDegraded ? "#f59e0b" : isHealthy ? "#10b981" : "#94a3b8";
+        const label = isDown ? "DOWN" : isDegraded ? "DEGRADED" : isHealthy ? `${Number(service.latencyMs) || 1}ms` : "UNKNOWN";
         return `
           <div class="latency-item">
-            <span class="latency-name">${escapeHtml(s.displayName)}</span>
+            <span class="latency-name">${escapeHtml(service.displayName || service.service || "Unknown service")}</span>
             <div class="latency-track">
               <div class="latency-fill" style="width: ${width}%; background: ${color};"></div>
             </div>
-            <span class="latency-val" style="color: ${color}; font-weight: 600;">
-              ${isDown ? "DOWN" : `${s.latencyMs || 1}ms`}
-            </span>
+            <span class="latency-val" style="color: ${color}; font-weight: 600;">${label}</span>
           </div>
         `;
       }).join("")}

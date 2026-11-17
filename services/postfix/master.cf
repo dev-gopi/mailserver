@@ -10,8 +10,6 @@
 #               (yes)   (yes)   (no)    (never) (100)
 # ==========================================================================
 smtp      inet n       -       n       -       -       smtpd
-  # Inbound SMTP: scan through ClamAV before delivery
-  -o content_filter=clamav:clamav:10026
   # Server-to-server SMTP on port 25 never offers AUTH. User submission must
   # use port 587 (STARTTLS) or 465 (implicit TLS).
   -o smtpd_sasl_auth_enable=no
@@ -20,7 +18,6 @@ smtp      inet n       -       n       -       -       smtpd
 #dnsblog   unix  -       -       y       -       0       dnsblog
 #tlsproxy  unix  -       -       y       -       0       tlsproxy
 submission inet n       -       n       -       -       smtpd
-  -o content_filter=clamav:clamav:10026
   -o syslog_name=postfix/submission
   -o smtpd_tls_security_level=encrypt
   -o stress=
@@ -38,7 +35,6 @@ submission inet n       -       n       -       -       smtpd
   -o smtpd_relay_restrictions=permit_mynetworks,permit_sasl_authenticated,defer_unauth_destination
   -o milter_macro_daemon_name=ORIGINATING
 smtps     inet  n       -       n       -       -       smtpd
-  -o content_filter=clamav:clamav:10026
   -o syslog_name=postfix/smtps
   -o smtpd_tls_wrappermode=yes
   -o smtpd_tls_security_level=encrypt
@@ -141,39 +137,4 @@ mailman   unix  -       n       n       -       -       pipe
   ${nexthop} ${user}
 
 
-# My config
-
-#spamassassin unix -     n       n       -       -       pipe
-#  flags=Rq user=vmail argv=/usr/bin/spamc -d spamassassin -p 783 -f -e /usr/sbin/sendmail -oi -f ${sender} ${recipient}
-
-spamassassin unix  -     n       n       -       -       pipe
-  flags=Rq user=spamfilter argv=/usr/bin/spamc -d spamassassin -p 783 -f -e /usr/sbin/sendmail -oi -f ${sender} ${recipient}
-
-dovecot   unix   -       n       n       -       -       pipe
-  flags=DRhu user=vmail:vmail argv=/usr/lib/dovecot/deliver -d ${recipient}
-
-smtp-amavis unix -       -       y       -       -       smtp
-  -o smtp_data_done_timeout=1200
-  -o smtp_send_xforward_command=yes
-  -o disable_dns_lookups=yes
-
-clamav     unix  -       -       n       -       10      smtp
-  -o smtp_send_xforward_command=yes
-  -o disable_dns_lookups=yes
-  -o max_use=20
-
-scan      unix  -       -       n       -       10      smtp
-  -o smtp_send_xforward_command=yes
-  -o disable_dns_lookups=yes
-
-10025     inet n  -       n       -       -       smtpd
-  -o content_filter=spamassassin
-  -o smtpd_tls_security_level=none
-  -o smtpd_sasl_auth_enable=no
-  -o mynetworks=127.0.0.0/8,[::ffff:127.0.0.0]/104,[::1]/128,172.30.0.0/28
-  -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks
-  -o smtpd_helo_restrictions=
-  -o smtpd_client_restrictions=permit_mynetworks,reject
-  -o smtpd_sender_restrictions=
-  -o smtpd_recipient_restrictions=permit_mynetworks,reject
-  -o smtpd_relay_restrictions=permit_mynetworks,reject
+# Content inspection is provided by the Rspamd Milter on smtpd_milters.
