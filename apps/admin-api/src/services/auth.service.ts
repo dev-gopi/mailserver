@@ -341,7 +341,9 @@ export class AuthService {
       challenge,
       attestationType: "none",
       timeout: 60000,
-      authenticatorSelection: { residentKey: "preferred", userVerification: "preferred" },
+      // Registration must create a credential capable of satisfying the verification
+      // requirement enforced when this credential is later used to sign in.
+      authenticatorSelection: { residentKey: "preferred", userVerification: "required" },
       excludeCredentials: (admin.passkeys || []).map((passkey: PasskeyCredential) => ({
         id: passkey.id,
         transports: passkey.transports

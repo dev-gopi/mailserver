@@ -2693,7 +2693,8 @@ async function handlePasskeyLogin() {
         challenge: challengeBuf,
         rpId: options.rpId || window.location.hostname,
         ...(allowCredentials.length > 0 ? { allowCredentials } : {}),
-        userVerification: "preferred",
+        // Keep the browser request aligned with the server-side verification policy.
+        userVerification: "required",
         timeout: options.timeout || 60000
       }
     });
