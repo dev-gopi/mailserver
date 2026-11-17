@@ -1,9 +1,9 @@
 export const openapi = {
   openapi: "3.0.3",
   info: {
-    title: "Multi-tenant Mail Admin API",
-    version: "2.0.0",
-    description: "Production mail server control panel API with layered architecture (controllers, services, repositories, validation, and task queues)."
+    title: "MailCore Single-Tenant Admin API",
+    version: "2.1.0",
+    description: "Single-tenant organizational mail platform API. Administrator access is enforced by owner/admin/viewer roles; bearer sessions have absolute and idle expiry."
   },
   servers: [{ url: "/" }],
   components: {
@@ -17,6 +17,9 @@ export const openapi = {
     "/auth/me": { get: { security: [{ bearerAuth: [] }], summary: "Get current administrator profile" } },
     "/auth/change-password": { post: { security: [{ bearerAuth: [] }], summary: "Rotate administrator password" } },
     "/auth/logout": { post: { security: [{ bearerAuth: [] }], summary: "Revoke current session" } },
+    "/auth/sessions": { get: { security: [{ bearerAuth: [] }], summary: "List this administrator's active sessions" } },
+    "/auth/sessions/revoke-others": { post: { security: [{ bearerAuth: [] }], summary: "Revoke all other sessions for this administrator" } },
+    "/auth/sessions/{id}": { delete: { security: [{ bearerAuth: [] }], summary: "Revoke one of this administrator's active sessions" } },
 
     "/api/dashboard": { get: { security: [{ bearerAuth: [] }], summary: "System dashboard metrics, service statuses, and queue metrics" } },
     "/api/company": {

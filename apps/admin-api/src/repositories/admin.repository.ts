@@ -20,10 +20,20 @@ export class AdminRepository {
   }
 
   async recordFailedLogin(id: number): Promise<void> {
+    // After an expired lock, start a fresh failure window instead of carrying
+    // the threshold count forward and immediately locking the account again.
     await db.query(
       `UPDATE admins
-       SET failed_login_count = failed_login_count + 1,
-           locked_until = CASE WHEN failed_login_count + 1 >= 5 THEN now() + interval '15 minutes' ELSE NULL END 
+       SET failed_login_count = CASE
+             WHEN locked_until IS NOT NULL AND locked_until <= now() THEN 1
+             ELSE failed_login_count + 1
+           END,
+           locked_until = CASE
+             WHEN (CASE WHEN locked_until IS NOT NULL AND locked_until <= now()
+                        THEN 1 ELSE failed_login_count + 1 END) >= 5
+               THEN now() + interval '15 minutes'
+             ELSE NULL
+           END
        WHERE id = $1`,
       [id]
     );
@@ -42,13 +52,76 @@ export class AdminRepository {
     tokenHash: string,
     hours: number,
     ipAddress: string | null,
-    userAgent: string | null
+    userAgent: string | null,
+    maxSessions: number,
+    idleMinutes: number
   ): Promise<void> {
-    await db.query(
-      `INSERT INTO admin_sessions (id, admin_id, token_hash, expires_at, ip_address, user_agent)
-       VALUES ($1, $2, $3, now() + ($4 || ' hours')::interval, $5, $6)`,
-      [sessionId, adminId, tokenHash, hours, ipAddress, userAgent]
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      // Serialize concurrent logins for the same administrator so parallel
+      // requests cannot exceed the configured active-session cap.
+      await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [adminId]);
+      // Mark old idle/expired rows closed before enforcing the concurrent-session cap.
+      await client.query(
+        `UPDATE admin_sessions SET revoked_at = now()
+         WHERE admin_id = $1 AND revoked_at IS NULL
+           AND (expires_at <= now() OR last_seen_at <= now() - ($2::int * interval '1 minute'))`,
+        [adminId, idleMinutes]
+      );
+      // Keep at most maxSessions active sessions including the new one.
+      await client.query(
+        `UPDATE admin_sessions SET revoked_at = now()
+         WHERE id IN (
+           SELECT id FROM admin_sessions
+           WHERE admin_id = $1 AND revoked_at IS NULL AND expires_at > now()
+           ORDER BY last_seen_at DESC, created_at DESC, id DESC
+           OFFSET $2
+         )`,
+        [adminId, Math.max(0, maxSessions - 1)]
+      );
+      await client.query(
+        `INSERT INTO admin_sessions (id, admin_id, token_hash, expires_at, ip_address, user_agent)
+         VALUES ($1, $2, $3, now() + ($4 || ' hours')::interval, $5, $6)`,
+        [sessionId, adminId, tokenHash, hours, ipAddress, userAgent]
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listActiveSessions(adminId: number, idleMinutes: number): Promise<Array<{ id: string; created_at: string | Date; last_seen_at: string | Date; expires_at: string | Date; ip_address: string | null; user_agent: string | null }>> {
+    const result = await db.query(
+      `SELECT id, created_at, last_seen_at, expires_at, host(ip_address) AS ip_address, user_agent
+       FROM admin_sessions
+       WHERE admin_id = $1 AND revoked_at IS NULL AND expires_at > now()
+         AND last_seen_at > now() - ($2::int * interval '1 minute')
+       ORDER BY last_seen_at DESC`,
+      [adminId, idleMinutes]
     );
+    return result.rows;
+  }
+
+  async revokeSessionById(adminId: number, sessionId: string): Promise<boolean> {
+    const result = await db.query(
+      `UPDATE admin_sessions SET revoked_at = now()
+       WHERE id = $1 AND admin_id = $2 AND revoked_at IS NULL AND expires_at > now()`,
+      [sessionId, adminId]
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async revokeOtherSessions(adminId: number, currentTokenHash: string): Promise<number> {
+    const result = await db.query(
+      `UPDATE admin_sessions SET revoked_at = now()
+       WHERE admin_id = $1 AND token_hash <> $2 AND revoked_at IS NULL`,
+      [adminId, currentTokenHash]
+    );
+    return result.rowCount ?? 0;
   }
 
   async revokeSession(tokenHash: string): Promise<void> {
@@ -56,6 +129,14 @@ export class AdminRepository {
       "UPDATE admin_sessions SET revoked_at = now() WHERE token_hash = $1",
       [tokenHash]
     );
+  }
+
+  async getSessionIdByTokenHash(hash: string): Promise<string | null> {
+    const result = await db.query<{ id: string }>(
+      "SELECT id FROM admin_sessions WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()",
+      [hash]
+    );
+    return result.rows[0]?.id ?? null;
   }
 
   async updatePassword(id: number, passwordHash: string, currentTokenHash?: string): Promise<void> {

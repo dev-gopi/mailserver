@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireAdmin, requirePasswordChanged } from "../middleware/auth";
+import { requireAdmin, requirePasswordChanged, requireRoles } from "../middleware/auth";
 import { validate } from "../validation/validate";
 import {
   companyUpdateSchema,
@@ -35,27 +35,28 @@ adminRouter.get("/dashboard", systemController.getDashboard);
 
 // ── Company Profile ────────────────────────────────────────────────────────────
 adminRouter.get("/company", companyController.get);
-adminRouter.put("/company", validate({ body: companyUpdateSchema }), companyController.update);
+adminRouter.put("/company", requireRoles("owner"), validate({ body: companyUpdateSchema }), companyController.update);
 
 // ── Domains (admin view — all domains) ────────────────────────────────────────
 adminRouter.get("/domains", domainController.list);
 // IMPORTANT: /domains/active must come BEFORE /domains/:id to avoid Express
 // matching "active" as an id parameter.
 adminRouter.get("/domains/active", domainController.listActive);
-adminRouter.post("/domains", validate({ body: domainCreateSchema }), domainController.create);
-adminRouter.post("/domains/:id/verify", domainController.verify);
-adminRouter.patch("/domains/:id", validate({ body: domainPatchSchema }), domainController.updateActive);
-adminRouter.delete("/domains/:id", domainController.delete);
+adminRouter.post("/domains", requireRoles("admin"), validate({ body: domainCreateSchema }), domainController.create);
+adminRouter.post("/domains/:id/verify", requireRoles("admin"), domainController.verify);
+adminRouter.patch("/domains/:id", requireRoles("admin"), validate({ body: domainPatchSchema }), domainController.updateActive);
+adminRouter.delete("/domains/:id", requireRoles("owner"), domainController.delete);
 
 // ── Mailboxes (virtual_users backed) ───────────────────────────────────────────
 adminRouter.get("/mailboxes", mailboxController.list);
 adminRouter.get("/mailboxes/client-config", validate({ query: clientConfigQuerySchema }), mailboxController.getClientConfig);
 adminRouter.get("/mailboxes/:id", mailboxController.get);
-adminRouter.post("/mailboxes", validate({ body: mailboxCreateSchema }), mailboxController.create);
-adminRouter.patch("/mailboxes/:id", validate({ body: mailboxPatchSchema }), mailboxController.update);
-adminRouter.delete("/mailboxes/:id", mailboxController.delete);
+adminRouter.post("/mailboxes", requireRoles("admin"), validate({ body: mailboxCreateSchema }), mailboxController.create);
+adminRouter.patch("/mailboxes/:id", requireRoles("admin"), validate({ body: mailboxPatchSchema }), mailboxController.update);
+adminRouter.delete("/mailboxes/:id", requireRoles("owner"), mailboxController.delete);
 adminRouter.post(
   "/mailboxes/:id/test-auth",
+  requireRoles("admin"),
   validate({ body: mailboxTestAuthSchema }),
   mailboxController.testAuth
 );
@@ -63,29 +64,29 @@ adminRouter.post(
 // ── Aliases (virtual_aliases backed for routing display) ───────────────────────
 adminRouter.get("/aliases", aliasController.list);
 adminRouter.get("/aliases/active", aliasController.listActive);
-adminRouter.post("/aliases", validate({ body: aliasCreateSchema }), aliasController.create);
-adminRouter.patch("/aliases/:id", validate({ body: aliasPatchSchema }), aliasController.updateActive);
-adminRouter.delete("/aliases/:id", aliasController.delete);
+adminRouter.post("/aliases", requireRoles("admin"), validate({ body: aliasCreateSchema }), aliasController.create);
+adminRouter.patch("/aliases/:id", requireRoles("admin"), validate({ body: aliasPatchSchema }), aliasController.updateActive);
+adminRouter.delete("/aliases/:id", requireRoles("owner"), aliasController.delete);
 
 // ── Audit Log ──────────────────────────────────────────────────────────────────
-adminRouter.get("/audit-log", auditController.list);
-adminRouter.get("/audit-log/export", auditController.exportCsv);
+adminRouter.get("/audit-log", requireRoles("admin"), auditController.list);
+adminRouter.get("/audit-log/export", requireRoles("admin"), auditController.exportCsv);
 
 // ── System Services & Diagnostics ─────────────────────────────────────────────
 adminRouter.get("/system/services", systemController.checkServices);
-adminRouter.get("/system/queue", systemController.getMailQueue);
+adminRouter.get("/system/queue", requireRoles("admin"), systemController.getMailQueue);
 adminRouter.get("/system/certificate", systemController.getCertificateHealth);
-adminRouter.post("/system/queue/flush", systemController.flushMailQueue);
-adminRouter.post("/system/test-smtp", validate({ body: testSmtpSchema }), systemController.testSmtp);
-adminRouter.post("/system/test-spam", validate({ body: testSpamSchema }), systemController.testSpam);
-adminRouter.get("/system/task-queue", systemController.getTaskQueueStats);
+adminRouter.post("/system/queue/flush", requireRoles("admin"), systemController.flushMailQueue);
+adminRouter.post("/system/test-smtp", requireRoles("admin"), validate({ body: testSmtpSchema }), systemController.testSmtp);
+adminRouter.post("/system/test-spam", requireRoles("admin"), validate({ body: testSpamSchema }), systemController.testSpam);
+adminRouter.get("/system/task-queue", requireRoles("admin"), systemController.getTaskQueueStats);
 adminRouter.get("/system/deliverability", validate({ query: deliverabilityQuerySchema }), systemController.checkDeliverability);
 
 // ── Backups & Disaster Recovery ────────────────────────────────────────────────
-adminRouter.get("/backups", backupController.list);
-adminRouter.post("/backups", backupController.create);
-adminRouter.get("/backups/settings", backupController.getSettings);
-adminRouter.put("/backups/settings", validate({ body: backupSettingsSchema }), backupController.updateSettings);
-adminRouter.delete("/backups/:filename", backupController.delete);
-adminRouter.get("/backups/:filename/download", backupController.download);
-adminRouter.post("/backups/:filename/verify", backupController.verify);
+adminRouter.get("/backups", requireRoles("owner", "admin"), backupController.list);
+adminRouter.post("/backups", requireRoles("owner", "admin"), backupController.create);
+adminRouter.get("/backups/settings", requireRoles("owner", "admin"), backupController.getSettings);
+adminRouter.put("/backups/settings", requireRoles("owner"), validate({ body: backupSettingsSchema }), backupController.updateSettings);
+adminRouter.delete("/backups/:filename", requireRoles("owner"), backupController.delete);
+adminRouter.get("/backups/:filename/download", requireRoles("owner"), backupController.download);
+adminRouter.post("/backups/:filename/verify", requireRoles("owner", "admin"), backupController.verify);

@@ -10,7 +10,8 @@ import {
   totpEnableSchema,
   passwordConfirmSchema,
   passkeyRegisterSchema,
-  passkeyLoginVerifySchema
+  passkeyLoginVerifySchema,
+  sessionIdParamSchema
 } from "../validation/schemas";
 
 export const authRouter = Router();
@@ -51,6 +52,10 @@ authRouter.get(
   requireAdmin,
   authController.getMe
 );
+
+authRouter.get("/sessions", requireAdmin, authController.listSessions);
+authRouter.post("/sessions/revoke-others", requireAdmin, authController.revokeOtherSessions);
+authRouter.delete("/sessions/:id", requireAdmin, validate({ params: sessionIdParamSchema }), authController.revokeSession);
 
 authRouter.post(
   "/change-password",

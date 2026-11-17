@@ -30,7 +30,8 @@ const state = {
   backupSettings: {},
   pendingMfa: null,
   mfaMode: "totp",
-  pendingTotpSetup: null
+  pendingTotpSetup: null,
+  adminSessions: []
 };
 
 // DOM Helper
@@ -2742,8 +2743,84 @@ async function handlePasskeyLogin() {
 // Admin Security Modal & 2FA Setup Functions
 async function openAdminSecurityModal() {
   openModal("modal-admin-security");
-  cancelTotpSetup();
-  await refreshSecurityStatus();
+  state.pendingTotpSetup = null;
+  $("security-totp-setup-panel")?.classList.add("hidden");
+  await Promise.all([refreshSecurityStatus(), refreshAdminSessions()]);
+}
+
+async function refreshAdminSessions() {
+  const container = $("security-sessions-list");
+  if (container) container.innerHTML = '<div class="text-muted" style="padding: 6px 0;">Loading active sessions...</div>';
+  try {
+    const result = await request("/auth/sessions");
+    state.adminSessions = Array.isArray(result.sessions) ? result.sessions : [];
+    renderAdminSessions();
+  } catch (err) {
+    if (container) container.innerHTML = `<div class="text-muted" style="padding: 6px 0;">${escapeHtml(err.message || "Unable to load sessions")}</div>`;
+  }
+}
+
+function renderAdminSessions() {
+  const container = $("security-sessions-list");
+  const revokeOthersButton = $("btn-revoke-other-sessions");
+  if (!container) return;
+
+  const otherSessions = state.adminSessions.filter((session) => !session.current);
+  if (revokeOthersButton) revokeOthersButton.disabled = otherSessions.length === 0;
+
+  if (state.adminSessions.length === 0) {
+    container.innerHTML = '<div class="text-muted" style="padding: 6px 0;">No active sessions were found. Refresh the panel or sign in again.</div>';
+    return;
+  }
+
+  container.innerHTML = state.adminSessions.map((session) => {
+    const lastSeen = new Date(session.last_seen_at);
+    const expires = new Date(session.expires_at);
+    const dateText = (value) => Number.isNaN(value.getTime()) ? "Unknown" : value.toLocaleString();
+    const browserValue = String(session.user_agent || "Unknown browser / device");
+    const browser = browserValue.length > 180 ? `${browserValue.slice(0, 177)}...` : browserValue;
+    const ip = String(session.ip_address || "Unknown IP");
+    return `
+      <div class="passkey-item-row" style="align-items: flex-start; gap: 12px;">
+        <div class="passkey-item-info" style="min-width: 0; flex: 1;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          <div style="min-width: 0;">
+            <div class="passkey-item-title" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              ${session.current ? "Current browser" : "Signed-in browser"}
+              ${session.current ? '<span class="badge badge-success">This session</span>' : ""}
+            </div>
+            <div class="passkey-item-date" style="overflow-wrap: anywhere;">${escapeHtml(browser)}</div>
+            <div class="passkey-item-date">IP: ${escapeHtml(ip)} · Last active: ${escapeHtml(dateText(lastSeen))}</div>
+            <div class="passkey-item-date">Absolute expiry: ${escapeHtml(dateText(expires))}</div>
+          </div>
+        </div>
+        ${session.current ? '<span class="text-muted" style="font-size: 0.78rem;">Keep</span>' : `<button type="button" class="btn btn-xs btn-danger-outline" onclick="revokeAdminSession('${escapeHtml(session.id)}')">Revoke</button>`}
+      </div>
+    `;
+  }).join("");
+}
+
+async function revokeAdminSession(sessionId) {
+  if (!sessionId || !window.confirm("Revoke this administrator session? That device will need to sign in again.")) return;
+  try {
+    await request(`/auth/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+    showToast("Session Revoked", "The selected administrator session has been signed out.", "success");
+    await refreshAdminSessions();
+  } catch (err) {
+    showToast("Unable to Revoke Session", err.message, "error");
+  }
+}
+
+async function revokeOtherAdminSessions() {
+  const otherCount = state.adminSessions.filter((session) => !session.current).length;
+  if (otherCount === 0 || !window.confirm(`Sign out ${otherCount} other session(s) for this administrator? The current browser will stay signed in.`)) return;
+  try {
+    const result = await request("/auth/sessions/revoke-others", { method: "POST" });
+    showToast("Other Sessions Revoked", `${result.revokedCount || 0} session(s) signed out.`, "success");
+    await refreshAdminSessions();
+  } catch (err) {
+    showToast("Unable to Revoke Sessions", err.message, "error");
+  }
 }
 
 async function refreshSecurityStatus() {

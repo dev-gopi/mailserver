@@ -147,6 +147,31 @@ export class AuthController {
     }
   }
 
+  async listSessions(req: Request, res: Response) {
+    try {
+      return res.json(await authService.listSessions(req));
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Failed to load sessions" });
+    }
+  }
+
+  async revokeSession(req: Request, res: Response) {
+    try {
+      return res.json(await authService.revokeSession(req, req.params.id));
+    } catch (err: any) {
+      const message = err?.message || "Failed to revoke session";
+      return res.status(message === "Active session was not found." ? 404 : 500).json({ error: message });
+    }
+  }
+
+  async revokeOtherSessions(req: Request, res: Response) {
+    try {
+      return res.json(await authService.revokeOtherSessions(req));
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Failed to revoke other sessions" });
+    }
+  }
+
   async getMe(req: Request, res: Response) {
     try {
       const profile = await authService.getCurrentProfile(req);

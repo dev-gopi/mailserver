@@ -138,3 +138,5 @@ export const backupSettingsSchema = z.object({
   compression_level: z.enum(["gzip", "tar"]).optional(),
   storage_path: z.string().max(255).optional()
 });
+
+export const sessionIdParamSchema = z.object({ id: z.string().uuid("Session ID must be a UUID") });

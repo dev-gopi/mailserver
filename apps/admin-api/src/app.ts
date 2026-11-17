@@ -13,11 +13,14 @@ app.set("trust proxy", 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: "32kb" }));
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: "draft-7", legacyHeaders: false }));
-app.use("/auth/login", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: "draft-7", legacyHeaders: false }));
-app.use("/auth/mfa/verify", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: "draft-7", legacyHeaders: false }));
-app.use("/auth/reset-password", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: "draft-7", legacyHeaders: false }));
-app.use("/auth/passkey/login-options", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: "draft-7", legacyHeaders: false }));
-app.use("/auth/passkey/login-verify", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: "draft-7", legacyHeaders: false }));
+// Auth endpoints are separately throttled; this in-memory limiter is intended
+// for the single API replica used by this deployment. Use a shared Redis store
+// before scaling the API horizontally.
+app.use("/auth/login", rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: "draft-7", legacyHeaders: false }));
+app.use("/auth/mfa/verify", rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: "draft-7", legacyHeaders: false }));
+app.use("/auth/reset-password", rateLimit({ windowMs: 15 * 60 * 1000, limit: 3, standardHeaders: "draft-7", legacyHeaders: false }));
+app.use("/auth/passkey/login-options", rateLimit({ windowMs: 15 * 60 * 1000, limit: 8, standardHeaders: "draft-7", legacyHeaders: false }));
+app.use("/auth/passkey/login-verify", rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: "draft-7", legacyHeaders: false }));
 app.get("/health", async (_req, res) => { try { await db.query("SELECT 1"); res.json({ status: "ok" }); } catch { res.status(503).json({ status: "database unavailable" }); } });
 app.get("/openapi.json", (_req, res) => res.json(openapi));
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(openapi, { explorer: true }));

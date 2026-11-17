@@ -13,9 +13,16 @@ export const env = {
   databaseHost: process.env.PGHOST,
   databasePort: Number(process.env.PGPORT ?? 5432),
   databaseName: process.env.PGDATABASE,
-  databaseUser: process.env.PGUSER,
+  databaseUser: process.env.PGUSER ?? "",
   databasePassword: process.env.PGPASSWORD,
+  dbServiceAccounts: {
+    postfix: { username: process.env.POSTFIX_DB_USER ?? "mail_postfix", password: process.env.POSTFIX_DB_PASSWORD ?? process.env.PGPASSWORD ?? "" },
+    dovecot: { username: process.env.DOVECOT_DB_USER ?? "mail_dovecot", password: process.env.DOVECOT_DB_PASSWORD ?? process.env.PGPASSWORD ?? "" },
+    opendkim: { username: process.env.OPENDKIM_DB_USER ?? "mail_opendkim", password: process.env.OPENDKIM_DB_PASSWORD ?? process.env.PGPASSWORD ?? "" }
+  },
   sessionHours: Number(process.env.SESSION_HOURS ?? 8),
+  sessionIdleMinutes: Number(process.env.SESSION_IDLE_MINUTES ?? 30),
+  adminMaxSessions: Number(process.env.ADMIN_MAX_SESSIONS ?? 5),
   dkimKeyDir: process.env.DKIM_KEY_DIR ?? "/var/lib/opendkim/keys",
   mailStoragePath: process.env.MAIL_STORAGE_PATH ?? "/var/mail/vhosts",
   backupDir: process.env.BACKUP_DIR ?? "/backups",
@@ -66,11 +73,32 @@ if (!Number.isInteger(env.port) || env.port < 1 || env.port > 65535) {
 if (!env.authEncryptionKey) {
   required("AUTH_ENCRYPTION_KEY");
 }
-if (!Number.isFinite(env.sessionHours) || env.sessionHours <= 0) {
-  throw new Error("SESSION_HOURS must be a positive number");
+if (!Number.isFinite(env.sessionHours) || env.sessionHours <= 0 || env.sessionHours > 24) {
+  throw new Error("SESSION_HOURS must be a number greater than 0 and no more than 24");
+}
+if (!Number.isInteger(env.sessionIdleMinutes) || env.sessionIdleMinutes < 5 || env.sessionIdleMinutes > 240) {
+  throw new Error("SESSION_IDLE_MINUTES must be an integer between 5 and 240");
+}
+if (!Number.isInteger(env.adminMaxSessions) || env.adminMaxSessions < 1 || env.adminMaxSessions > 20) {
+  throw new Error("ADMIN_MAX_SESSIONS must be an integer between 1 and 20");
 }
 if (!env.databaseUrl && (!env.databaseHost || !env.databaseName || !env.databaseUser || !env.databasePassword)) {
   required("DATABASE_URL or PGHOST/PGDATABASE/PGUSER/PGPASSWORD");
+}
+const dbRoleNames = Object.values(env.dbServiceAccounts).map((account) => account.username);
+if (new Set(dbRoleNames).size !== dbRoleNames.length) {
+  throw new Error("POSTFIX_DB_USER, DOVECOT_DB_USER and OPENDKIM_DB_USER must be distinct");
+}
+for (const [service, account] of Object.entries(env.dbServiceAccounts)) {
+  if (!/^[a-z_][a-z0-9_]{0,62}$/.test(account.username)) {
+    throw new Error(`${service.toUpperCase()}_DB_USER must use lowercase letters, digits and underscores`);
+  }
+  if (!account.password || account.password.length < 16) {
+    throw new Error(`${service.toUpperCase()}_DB_PASSWORD must contain at least 16 characters`);
+  }
+  if (env.databaseUser && account.username === env.databaseUser) {
+    throw new Error(`${service.toUpperCase()}_DB_USER must not equal the administrative database user`);
+  }
 }
 for (const [name, value] of Object.entries({
   POSTFIX_PORT: env.services.postfixPort,

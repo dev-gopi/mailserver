@@ -283,3 +283,14 @@ infrastructure/
 scripts/           Compose policy checks
 docs/              Audit, milestone, and integration documentation
 ~~~
+
+
+## Security hardening (Milestone 02)
+
+Milestone 02 adds API-enforced administrator roles, idle and absolute session
+expiry, a concurrent-session cap, administrator session revocation endpoints,
+stronger authentication rate limits, MFA/passkey failure handling, a session
+review/revocation panel in Security & 2FA, and an isolated internal network for
+PostgreSQL and Redis. See
+[`docs/MILESTONE_02.md`](docs/MILESTONE_02.md) for the permission matrix,
+configuration, and verification steps.

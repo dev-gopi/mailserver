@@ -87,16 +87,19 @@ services:
     logging: *service-logging
     environment:
       - TZ=${TZ:?set TZ in .env}
-      - MAIL_DB_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      - MAIL_DB_PASSWORD=${OPENDKIM_DB_PASSWORD:-${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}}
       - MAIL_DB_HOST=${POSTGRES_HOST:?set POSTGRES_HOST in .env}
       - MAIL_DB_NAME=${POSTGRES_DB:?set POSTGRES_DB in .env}
-      - MAIL_DB_USER=${POSTGRES_USER:?set POSTGRES_USER in .env}
+      - MAIL_DB_USER=${OPENDKIM_DB_USER:-mail_opendkim}
     volumes:
       - dkimkeys:/var/lib/opendkim
     networks:
       - mailnet
+      - dbnet
     depends_on:
       db:
+        condition: service_healthy
+      app:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 ${OPENDKIM_PORT:?set OPENDKIM_PORT in .env}"]
@@ -117,6 +120,7 @@ services:
       - "${SMTPS_PORT:?set SMTPS_PORT in .env}:465"
     networks:
       mailnet: {}
+      dbnet: {}
       filternet:
         aliases:
           - postfix-filter
@@ -125,10 +129,10 @@ services:
     environment:
       - TZ=${TZ:?set TZ in .env}
       - DEBIAN_FRONTEND=noninteractive
-      - MAIL_DB_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      - MAIL_DB_PASSWORD=${POSTFIX_DB_PASSWORD:-${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}}
       - MAIL_DB_HOST=${POSTGRES_HOST:?set POSTGRES_HOST in .env}
       - MAIL_DB_NAME=${POSTGRES_DB:?set POSTGRES_DB in .env}
-      - MAIL_DB_USER=${POSTGRES_USER:?set POSTGRES_USER in .env}
+      - MAIL_DB_USER=${POSTFIX_DB_USER:-mail_postfix}
       - MAIL_DOMAIN=${MAIL_DOMAIN:?set MAIL_DOMAIN in .env}
       - MAIL_HOSTNAME=${MAIL_HOSTNAME:?set MAIL_HOSTNAME in .env}
     depends_on:
@@ -144,6 +148,8 @@ services:
       dovecot:
         condition: service_healthy
       db:
+        condition: service_healthy
+      app:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "postfix status >/dev/null 2>&1 && bash -c '</dev/tcp/127.0.0.1/25' && bash -c '</dev/tcp/127.0.0.1/587' && bash -c '</dev/tcp/127.0.0.1/465'"]
@@ -164,6 +170,7 @@ services:
       - "${POP3S_PORT:?set POP3S_PORT in .env}:995"
     networks:
       - mailnet
+      - dbnet
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -171,12 +178,15 @@ services:
     environment:
       - TZ=${TZ:?set TZ in .env}
       - DEBIAN_FRONTEND=noninteractive
-      - MAIL_DB_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      - MAIL_DB_PASSWORD=${DOVECOT_DB_PASSWORD:-${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}}
       - MAIL_DB_HOST=${POSTGRES_HOST:?set POSTGRES_HOST in .env}
       - MAIL_DB_NAME=${POSTGRES_DB:?set POSTGRES_DB in .env}
-      - MAIL_DB_USER=${POSTGRES_USER:?set POSTGRES_USER in .env}
+      - MAIL_DB_USER=${DOVECOT_DB_USER:-mail_dovecot}
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "doveconf -n >/dev/null 2>&1 && bash -c '</dev/tcp/127.0.0.1/993' && bash -c '</dev/tcp/127.0.0.1/995'"]
       interval: 15s
@@ -197,7 +207,7 @@ services:
       - ./infrastructure/database/init:/docker-entrypoint-initdb.d:ro
       - dbdata:/var/lib/postgresql/data
     networks:
-      - mailnet
+      - dbnet
     restart: unless-stopped
     logging: *service-logging
     healthcheck:
@@ -214,7 +224,7 @@ services:
     volumes:
       - redisdata:/data
     networks:
-      - mailnet
+      - dbnet
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -248,7 +258,16 @@ services:
       PGDATABASE: ${POSTGRES_DB:?set POSTGRES_DB in .env}
       PGUSER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
       PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTFIX_DB_USER: ${POSTFIX_DB_USER:-mail_postfix}
+      POSTFIX_DB_PASSWORD: ${POSTFIX_DB_PASSWORD:-${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}}
+      DOVECOT_DB_USER: ${DOVECOT_DB_USER:-mail_dovecot}
+      DOVECOT_DB_PASSWORD: ${DOVECOT_DB_PASSWORD:-${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}}
+      OPENDKIM_DB_USER: ${OPENDKIM_DB_USER:-mail_opendkim}
+      OPENDKIM_DB_PASSWORD: ${OPENDKIM_DB_PASSWORD:-${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}}
       PORT: ${API_PORT:?set API_PORT in .env}
+      SESSION_HOURS: ${SESSION_HOURS:-8}
+      SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-30}
+      ADMIN_MAX_SESSIONS: ${ADMIN_MAX_SESSIONS:-5}
       REDIS_HOST: ${REDIS_HOST:?set REDIS_HOST in .env}
       REDIS_PORT: ${REDIS_PORT:?set REDIS_PORT in .env}
       POSTFIX_HOST: ${POSTFIX_HOST:?set POSTFIX_HOST in .env}
@@ -287,6 +306,7 @@ services:
       - ./backups:/backups
     networks:
       - mailnet
+      - dbnet
     restart: unless-stopped
     logging: *service-logging
     depends_on:
@@ -330,6 +350,11 @@ volumes:
 networks:
   mailnet:
     driver: bridge
+  # Private east-west network for stateful backend services. It is isolated
+  # from external routing; only services that need DB/cache access join it.
+  dbnet:
+    driver: bridge
+    internal: true
   filternet:
     driver: bridge
     internal: true

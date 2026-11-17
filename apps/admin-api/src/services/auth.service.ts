@@ -14,6 +14,7 @@ interface MfaPendingSession {
   adminId: number;
   username: string;
   expiresAt: number;
+  attempts: number;
 }
 
 interface PasskeyPendingChallenge {
@@ -91,7 +92,7 @@ export class AuthService {
         error: "Authentication failed",
         clientIp: req.ip || null
       });
-      throw new Error("Invalid administrator credentials");
+      throw new Error("Invalid credentials or account temporarily unavailable.");
     }
 
     const isLocked = Boolean(admin.locked_until && new Date(admin.locked_until) > new Date());
@@ -102,7 +103,7 @@ export class AuthService {
         error: "Authentication failed",
         clientIp: req.ip || null
       });
-      throw new Error("Account is temporarily locked. Try again later.");
+      throw new Error("Invalid credentials or account temporarily unavailable.");
     }
 
     if (!admin.active) {
@@ -112,7 +113,7 @@ export class AuthService {
         error: "Authentication failed",
         clientIp: req.ip || null
       });
-      throw new Error("Invalid administrator credentials");
+      throw new Error("Invalid credentials or account temporarily unavailable.");
     }
 
     const passwordMatches = await bcrypt.compare(password, admin.password_hash);
@@ -124,7 +125,7 @@ export class AuthService {
         error: "Authentication failed",
         clientIp: req.ip || null
       });
-      throw new Error("Invalid administrator credentials");
+      throw new Error("Invalid credentials or account temporarily unavailable.");
     }
 
     // Check if Two-Factor Authentication (TOTP) is enabled for this admin
@@ -133,7 +134,8 @@ export class AuthService {
       this.mfaPendingSessions.set(mfaToken, {
         adminId: admin.id,
         username: admin.username,
-        expiresAt: Date.now() + 5 * 60 * 1000 // 5 minutes validity
+        expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutes validity
+        attempts: 0
       });
 
       return {
@@ -161,28 +163,42 @@ export class AuthService {
       this.mfaPendingSessions.delete(mfaToken);
       throw new Error("Administrator account is inactive or not found");
     }
+    if (admin.locked_until && new Date(admin.locked_until) > new Date()) {
+      this.mfaPendingSessions.delete(mfaToken);
+      throw new Error("Invalid credentials or account temporarily unavailable.");
+    }
 
     if (code) {
       const isValid = totpService.verifyTotp(code, decryptSecret(admin.totp_secret || ""));
       if (!isValid) {
+        pending.attempts += 1;
         await adminRepository.recordFailedLogin(admin.id);
+        if (pending.attempts >= 5) this.mfaPendingSessions.delete(mfaToken);
         await auditService.log(req, "admin.mfa.failed", "admin", admin.id, {
           username: admin.username,
           method: "totp",
+          attempts: pending.attempts,
           reason: "Invalid 6-digit TOTP code"
         });
-        throw new Error("Invalid 6-digit verification code. Please check your authenticator app.");
+        throw new Error(pending.attempts >= 5
+          ? "Too many verification attempts. Sign in again."
+          : "Invalid 6-digit verification code. Please check your authenticator app.");
       }
     } else if (recoveryCode) {
       const consumed = await adminRepository.consumeRecoveryCode(admin.id, recoveryCode);
       if (!consumed) {
+        pending.attempts += 1;
         await adminRepository.recordFailedLogin(admin.id);
+        if (pending.attempts >= 5) this.mfaPendingSessions.delete(mfaToken);
         await auditService.log(req, "admin.mfa.failed", "admin", admin.id, {
           username: admin.username,
           method: "recovery_code",
+          attempts: pending.attempts,
           reason: "Invalid or already consumed recovery code"
         });
-        throw new Error("Invalid or previously used recovery code.");
+        throw new Error(pending.attempts >= 5
+          ? "Too many verification attempts. Sign in again."
+          : "Invalid or previously used recovery code.");
       }
     } else {
       throw new Error("Either 6-digit code or emergency recovery code is required.");
@@ -206,7 +222,9 @@ export class AuthService {
       tokenHash(token),
       env.sessionHours,
       ip,
-      userAgent
+      userAgent,
+      env.adminMaxSessions,
+      env.sessionIdleMinutes
     );
 
     req.admin = {
@@ -438,27 +456,43 @@ export class AuthService {
 
     const admin = await adminRepository.findAdminByPasskeyId(credential.id);
     if (!admin || !admin.active) {
+      this.passkeyChallenges.delete(challengeId);
       throw new Error("Passkey not recognized or account is inactive.");
+    }
+    if (admin.locked_until && new Date(admin.locked_until) > new Date()) {
+      this.passkeyChallenges.delete(challengeId);
+      throw new Error("Account temporarily unavailable. Try again later.");
     }
     const storedPasskey = (admin.passkeys || []).find((passkey: PasskeyCredential) => passkey.id === credential.id);
     if (!storedPasskey?.publicKey || storedPasskey.counter === undefined) {
+      this.passkeyChallenges.delete(challengeId);
       throw new Error("This passkey uses an obsolete registration. Register it again.");
     }
 
-    const verification = await verifyAuthenticationResponse({
-      response: credential,
-      expectedChallenge: pending.challenge,
-      expectedOrigin: pending.origin,
-      expectedRPID: pending.rpId,
-      requireUserVerification: true,
-      credential: {
-        id: storedPasskey.id,
-        publicKey: Buffer.from(storedPasskey.publicKey, "base64url"),
-        counter: storedPasskey.counter,
-        transports: storedPasskey.transports
-      }
-    });
-    if (!verification.verified) throw new Error("Passkey signature verification failed.");
+    let verification: Awaited<ReturnType<typeof verifyAuthenticationResponse>>;
+    try {
+      verification = await verifyAuthenticationResponse({
+        response: credential,
+        expectedChallenge: pending.challenge,
+        expectedOrigin: pending.origin,
+        expectedRPID: pending.rpId,
+        requireUserVerification: true,
+        credential: {
+          id: storedPasskey.id,
+          publicKey: Buffer.from(storedPasskey.publicKey, "base64url"),
+          counter: storedPasskey.counter,
+          transports: storedPasskey.transports
+        }
+      });
+      if (!verification.verified) throw new Error("Passkey signature verification failed.");
+    } catch (error) {
+      this.passkeyChallenges.delete(challengeId);
+      await adminRepository.recordFailedLogin(admin.id);
+      await auditService.log(req, "admin.passkey.login.failed", "admin", admin.id, {
+        method: "passkey", reason: "Passkey assertion verification failed"
+      });
+      throw new Error("Passkey authentication failed.");
+    }
 
     this.passkeyChallenges.delete(challengeId);
     await adminRepository.updatePasskeyCounter(admin.id, storedPasskey.id, verification.authenticationInfo.newCounter);
@@ -490,6 +524,31 @@ export class AuthService {
       await adminRepository.revokeSession(tokenHash(token));
       await auditService.log(req, "admin.logout", "admin", req.admin!.id);
     }
+  }
+
+  async listSessions(req: Request) {
+    const rawToken = (req.header("authorization") || "").replace(/^Bearer\s+/i, "");
+    const currentHash = rawToken ? tokenHash(rawToken) : "";
+    const sessions = await adminRepository.listActiveSessions(req.admin!.id, env.sessionIdleMinutes);
+    const currentSessionId = currentHash ? await adminRepository.getSessionIdByTokenHash(currentHash) : null;
+    return {
+      sessions: sessions.map((session) => ({ ...session, current: session.id === currentSessionId }))
+    };
+  }
+
+  async revokeSession(req: Request, sessionId: string) {
+    const revoked = await adminRepository.revokeSessionById(req.admin!.id, sessionId);
+    if (!revoked) throw new Error("Active session was not found.");
+    await auditService.log(req, "admin.session.revoked", "admin_session", sessionId);
+    return { message: "Session revoked." };
+  }
+
+  async revokeOtherSessions(req: Request) {
+    const rawToken = (req.header("authorization") || "").replace(/^Bearer\s+/i, "");
+    if (!rawToken) throw new Error("Current session is missing.");
+    const count = await adminRepository.revokeOtherSessions(req.admin!.id, tokenHash(rawToken));
+    await auditService.log(req, "admin.sessions.revoked_others", "admin", req.admin!.id, { revokedCount: count });
+    return { revokedCount: count };
   }
 
   async getCurrentProfile(req: Request) {

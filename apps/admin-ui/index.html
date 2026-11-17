@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MailCore Admin — Single-Tenant Mail Server Control Panel</title>
   <meta name="description" content="Single-tenant self-hosted mail server management console for domains, mailboxes, aliases, and security audit logs.">
-  <link rel="stylesheet" href="/styles.css?v=20261117-1">
+  <link rel="stylesheet" href="/styles.css?v=20261117-2">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -2214,6 +2214,21 @@
             <!-- Populated via JS -->
           </div>
         </div>
+
+        <!-- Card 3: Active administrator sessions -->
+        <div class="security-card" style="margin-top: 16px;">
+          <div class="security-card-header">
+            <div class="security-card-title">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M7 9h10M7 12h6"/></svg>
+              <span>Active Administrator Sessions</span>
+            </div>
+            <button type="button" id="btn-revoke-other-sessions" class="btn btn-danger-outline btn-xs" onclick="revokeOtherAdminSessions()">Sign Out Other Sessions</button>
+          </div>
+          <p class="security-card-desc">Review browsers and devices signed in to this administrator account. You can revoke another session without exposing its authentication token.</p>
+          <div id="security-sessions-list" class="passkeys-list" aria-live="polite">
+            <div style="font-size: 0.825rem; color: #64748b; font-style: italic; padding: 6px 0;">Loading active sessions...</div>
+          </div>
+        </div>
       </div>
 
       <div class="modal-footer">
@@ -2223,6 +2238,6 @@
   </div>
 
   <!-- Script logic -->
-  <script src="/app.js?v=20261117-1"></script>
+  <script src="/app.js?v=20261117-2"></script>
 </body>
 </html>
