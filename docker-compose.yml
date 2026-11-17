@@ -591,6 +591,10 @@ services:
       - ./infrastructure/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     networks:
       - monitoringnet
+      # A separate bridge is required for Docker to publish Grafana's
+      # loopback-only HTTP port. Monitoring traffic remains on the isolated
+      # monitoring network.
+      - grafanauinet
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -678,3 +682,7 @@ networks:
   monitoringnet:
     driver: bridge
     internal: true
+  # Grafana is the only member. Its published port remains loopback-bound by
+  # the service-level ports declaration above.
+  grafanauinet:
+    driver: bridge
