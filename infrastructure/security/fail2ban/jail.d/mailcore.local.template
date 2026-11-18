@@ -1,0 +1,49 @@
+[DEFAULT]
+bantime = 1h
+findtime = 10m
+maxretry = 5
+backend = auto
+banaction = nftables-multiport
+ignoreip = __IGNOREIP__
+
+[mailcore-postfix-auth]
+enabled = true
+filter = postfix[mode=auth]
+logpath = __PROJECT_ROOT__/var/log/mailcore/postfix.log
+port = 25,465,587
+maxretry = 5
+findtime = 10m
+bantime = 1h
+action = nftables-multiport[name=mailcore-postfix, port="25,465,587", protocol=tcp]
+         mailcore-alert[alert_script=__PROJECT_ROOT__/infrastructure/security/send-security-alert.sh]
+
+[mailcore-dovecot-auth]
+enabled = true
+filter = dovecot
+logpath = __PROJECT_ROOT__/var/log/mailcore/dovecot.log
+port = 993,995
+maxretry = 5
+findtime = 10m
+bantime = 1h
+action = nftables-multiport[name=mailcore-dovecot, port="993,995", protocol=tcp]
+         mailcore-alert[alert_script=__PROJECT_ROOT__/infrastructure/security/send-security-alert.sh]
+
+[mailcore-admin-auth]
+enabled = true
+filter = mailcore-admin-auth
+logpath = __PROJECT_ROOT__/var/log/mailcore/admin-ui-access.log
+port = 443
+maxretry = 5
+findtime = 10m
+bantime = 1h
+action = nftables-multiport[name=mailcore-admin, port="443", protocol=tcp]
+         mailcore-alert[alert_script=__PROJECT_ROOT__/infrastructure/security/send-security-alert.sh]
+
+[recidive]
+enabled = true
+filter = recidive
+logpath = /var/log/fail2ban.log
+banaction = nftables-allports
+findtime = 1d
+bantime = 1w
+maxretry = 5

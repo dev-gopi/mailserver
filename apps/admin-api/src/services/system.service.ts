@@ -8,10 +8,36 @@ import { auditRepository } from "../repositories/audit.repository";
 import { auditService } from "./audit";
 import { taskQueue } from "../queue/task-queue";
 import { resolve4, resolveMx, resolveTxt, reverse } from "dns/promises";
+import { randomUUID } from "crypto";
 import net from "net";
 import { env } from "../config/env";
+import { securityPolicyService } from "./security-policy.service";
 
 export class SystemService {
+  /**
+   * Rspamd's /checkv2 endpoint expects an RFC 822 message.  The diagnostic UI
+   * also accepts a quick body-only sample, so give that form the minimum
+   * well-formed message envelope instead of scoring it as malformed mail.
+   */
+  private toDiagnosticMessage(content: string) {
+    const hasHeaderBlock = /^(?:[!-9;-~]+:[^\r\n]*\r?\n)+\r?\n/.test(content);
+    if (hasHeaderBlock) return { message: content, inputNormalized: false };
+
+    const message = [
+      "From: diagnostic-sender@example.invalid",
+      "To: diagnostic-recipient@example.invalid",
+      "Subject: MailCore spam-filter diagnostic",
+      `Date: ${new Date().toUTCString()}`,
+      `Message-ID: <${randomUUID()}@mailcore.invalid>`,
+      "MIME-Version: 1.0",
+      "Content-Type: text/plain; charset=UTF-8",
+      "Content-Transfer-Encoding: 8bit",
+      "",
+      content
+    ].join("\r\n");
+    return { message, inputNormalized: true };
+  }
+
   async checkDeliverability(domain = env.mailDomain) {
     const checks: Array<{
       name: string;
@@ -210,6 +236,10 @@ export class SystemService {
     };
   }
 
+  async getMailAnalytics(days: number) {
+    return systemRepository.getMailAnalytics(days);
+  }
+
   async checkServices() {
     return systemRepository.checkAllServices();
   }
@@ -341,81 +371,148 @@ export class SystemService {
   }
 
   async testSpam(req: Request, input: { content: string }) {
-    const host = env.services.spamassassinHost || "spamassassin";
-    const port = env.services.spamassassinPort || 783;
+    const content = input.content.trim();
+    if (!content) throw new Error("Message content is required");
+    if (Buffer.byteLength(content, "utf8") > 256 * 1024) throw new Error("Message is too large for an interactive scan (maximum 256 KiB)");
+    const { message, inputNormalized } = this.toDiagnosticMessage(content);
 
-    let score = 0.0;
-    let threshold = 5.0;
-    let isSpam = false;
-    let engine = "SpamAssassin 4.0 / spamd";
+    const url = `http://${env.services.rspamdHost}:${env.services.rspamdPort}/checkv2`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "message/rfc822",
+        "User-Agent": "MailCore-Admin-Diagnostic/1.0",
+        "Pass": "all"
+      },
+      body: message,
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!response.ok) throw new Error(`Rspamd scan failed with HTTP ${response.status}`);
 
-    try {
-      const checkResult = await new Promise<{ score: number; threshold: number; isSpam: boolean }>((resolve, reject) => {
-        const socket = net.createConnection({ host, port });
-        const body = input.content.includes("\n") ? input.content : `Subject: Test message\r\n\r\n${input.content}`;
-        const payload = Buffer.from(body, "utf8");
-        const request = `CHECK SPAMC/1.5\r\nContent-length: ${payload.length}\r\n\r\n`;
+    const payload = await response.json() as Record<string, unknown>;
+    if (payload.is_skipped === true) throw new Error("Rspamd skipped this message; no clean verdict is available");
+    const score = Number(payload.score);
+    if (!Number.isFinite(score)) throw new Error("Rspamd returned an invalid scan score");
+    const action = typeof payload.action === "string" ? payload.action : "unknown";
+    const normalizedAction = action.toLowerCase();
+    const symbols = payload.symbols && typeof payload.symbols === "object"
+      ? Object.keys(payload.symbols as Record<string, unknown>).slice(0, 30)
+      : [];
+    const scanBlocked = normalizedAction === "soft reject" || symbols.includes("CLAM_VIRUS_FAIL");
+    const isMalware = symbols.some((symbol) => symbol === "CLAM_VIRUS" || (symbol.startsWith("CLAM_VIRUS_") && symbol !== "CLAM_VIRUS_FAIL"));
+    // The interactive diagnostic is organization-scoped, so use the live
+    // database policy instead of hard-coding the initial deployment default.
+    const threshold = (await securityPolicyService.getEffectiveGlobalPolicy()).spamTagScore;
+    const isSpam = !scanBlocked && (isMalware || score >= threshold || ["add header", "greylist", "reject"].includes(normalizedAction));
+    const result = { score, threshold, isSpam, isMalware, scanBlocked, action, engine: "Rspamd", symbols, inputNormalized };
+    await auditService.log(req, "system.test.rspamd", "system", "rspamd", result);
+    return result;
+  }
 
-        let responseData = "";
-        socket.setTimeout(6000);
+  async getQuarantineMessages() {
+    return systemRepository.getQuarantineMessages();
+  }
 
-        socket.on("connect", () => {
-          socket.write(request);
-          socket.write(payload);
-        });
-
-        socket.on("data", (chunk) => {
-          responseData += chunk.toString();
-        });
-
-        socket.on("end", () => {
-          const match = responseData.match(/Spam:\s*(True|False|Yes|No)\s*;\s*([-\d.]+)\s*\/\s*([-\d.]+)/i);
-          if (match) {
-            const spamBool = match[1].toLowerCase() === "true" || match[1].toLowerCase() === "yes";
-            resolve({
-              score: parseFloat(match[2]),
-              threshold: parseFloat(match[3]),
-              isSpam: spamBool
-            });
-          } else {
-            const isGTUBE = input.content.includes("GTUBE");
-            resolve({ score: isGTUBE ? 1000.0 : 0.2, threshold: 5.0, isSpam: isGTUBE });
-          }
-        });
-
-        socket.on("timeout", () => {
-          socket.destroy();
-          reject(new Error("SpamAssassin connection timed out"));
-        });
-
-        socket.on("error", (err) => {
-          socket.destroy();
-          reject(err);
-        });
-      });
-
-      score = checkResult.score;
-      threshold = checkResult.threshold;
-      isSpam = checkResult.isSpam;
-    } catch {
-      // If SpamAssassin daemon is temporarily unreachable during startup, perform deterministic heuristic
-      const isGTUBE = input.content.includes("GTUBE") || input.content.includes("XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE");
-      score = isGTUBE ? 1000.0 : 0.2;
-      threshold = 5.0;
-      isSpam = isGTUBE;
-      engine = "SpamAssassin (heuristic fallback)";
+  async rescanAndReleaseQuarantinedMessage(req: Request, queueId: string) {
+    const held = await systemRepository.getQuarantineMessages();
+    const item = held.find((entry) => entry.queueId === queueId);
+    if (!item) {
+      const error = new Error("Quarantine item was not found or is no longer held") as Error & { statusCode?: number };
+      error.statusCode = 404;
+      throw error;
     }
 
-    const result = {
-      score,
-      threshold,
-      isSpam,
-      action: isSpam ? "quarantine" : "pass",
-      engine
-    };
+    const { message, sha256 } = await systemRepository.getHeldMessageForRescan(queueId);
+    const threshold = await securityPolicyService.getStrictestTagThreshold(item.recipients);
+    let response: Response;
+    try {
+      response = await fetch(`http://${env.services.rspamdHost}:${env.services.rspamdPort}/checkv2`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "message/rfc822",
+          "User-Agent": "MailCore-Quarantine-Rescan/1.0",
+          // Disable greylisting for this one-off scan only. Do not use Pass:
+          // all, which would bypass the scanners and security rules.
+          "Settings": '{groups_disabled = ["greylist"];}'
+        },
+        // Buffer<ArrayBufferLike> is not assignable to fetch's browser-style
+        // BodyInit in newer Node typings. Copy into a Uint8Array backed by an
+        // ArrayBuffer while preserving the raw RFC 822 bytes.
+        body: new Uint8Array(message),
+        signal: AbortSignal.timeout(20_000)
+      });
+    } catch (error) {
+      const failure = new Error(`Mandatory rescan service is unavailable; message remains held: ${error instanceof Error ? error.message : "scanner request failed"}`) as Error & { statusCode?: number };
+      failure.statusCode = 503;
+      throw failure;
+    }
+    if (!response.ok) {
+      const failure = new Error(`Rspamd returned HTTP ${response.status}; message remains held`) as Error & { statusCode?: number };
+      failure.statusCode = 503;
+      throw failure;
+    }
 
-    await auditService.log(req, "system.test.spam", "system", "spamassassin", result);
-    return result;
+    let payload: Record<string, unknown>;
+    try {
+      payload = await response.json() as Record<string, unknown>;
+    } catch {
+      const failure = new Error("Rspamd returned an invalid scan response; message remains held") as Error & { statusCode?: number };
+      failure.statusCode = 503;
+      throw failure;
+    }
+    const symbols = payload.symbols && typeof payload.symbols === "object"
+      ? Object.keys(payload.symbols as Record<string, unknown>).slice(0, 40)
+      : [];
+    const action = typeof payload.action === "string" ? payload.action.toLowerCase() : "unknown";
+    const score = Number(payload.score);
+    const scannerFailed = payload.is_skipped === true || !Number.isFinite(score) ||
+      symbols.includes("CLAM_VIRUS_FAIL") || action === "soft reject";
+    const malwareDetected = symbols.some((symbol) =>
+      symbol === "CLAM_VIRUS" || (symbol.startsWith("CLAM_VIRUS_") && symbol !== "CLAM_VIRUS_FAIL")
+    );
+    const deniedReason = scannerFailed
+      ? "Mandatory antivirus/spam scanning did not return a clean verdict"
+      : malwareDetected
+        ? "ClamAV detected malware"
+        : score >= threshold
+          ? `Spam score ${score} meets or exceeds the strictest recipient tag threshold ${threshold}`
+          : action !== "no action"
+            ? `Rspamd returned action '${action}', not a clean verdict`
+            : null;
+
+    if (deniedReason) {
+      await auditService.log(req, "security.quarantine.rescan.denied", "email_quarantine", queueId, {
+        sha256, score: Number.isFinite(score) ? score : null, threshold, action, symbols, reason: deniedReason
+      });
+      const error = new Error(`${deniedReason}; message remains quarantined`) as Error & { statusCode?: number };
+      error.statusCode = scannerFailed ? 503 : 422;
+      throw error;
+    }
+
+    // Persist the approval before changing queue state, then ask the bridge to
+    // re-hash the exact queue content before it is allowed out of HOLD.
+    await auditService.log(req, "security.quarantine.rescan.approved", "email_quarantine", queueId, {
+      sha256, score, threshold, action, symbols
+    });
+    let releaseResult: string;
+    try {
+      releaseResult = await systemRepository.releaseHeldMessageIfUnchanged(queueId, sha256);
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : "Queue release failed";
+      const failure = new Error(`Rescan was clean but the held message was not released: ${messageText}`) as Error & { statusCode?: number };
+      failure.statusCode = messageText.includes("changed") || messageText.includes("not currently held") ? 409 : 503;
+      throw failure;
+    }
+    await auditService.log(req, "security.quarantine.rescan.released", "email_quarantine", queueId, {
+      sha256, score, threshold, action, symbols, result: releaseResult.trim()
+    });
+    return { success: true, queueId, rescanned: true, score, threshold, action, symbols, sha256 };
+  }
+
+  async deleteQuarantinedMessage(req: Request, queueId: string) {
+    const result = await systemRepository.deleteQuarantinedMessage(queueId);
+    await auditService.log(req, "security.quarantine.delete", "email_quarantine", queueId, { result: result.trim() });
+    return { success: true, queueId, result: result.trim() };
   }
 
   async getTaskQueueStats() {

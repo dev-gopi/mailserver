@@ -12,6 +12,7 @@ test("Backup service detects backup directory and lists backup archives", async 
   assert.equal(Array.isArray(data.backups), true);
   assert.equal(typeof data.metrics.totalCount, "number");
   assert.equal(typeof data.metrics.totalSizeBytes, "number");
+  assert.equal(data.metrics.storageCapacity === null || typeof data.metrics.storageCapacity.availableBytes === "number", true);
   assert.equal(typeof data.settings, "object");
   assert.equal(data.settings.retention_days >= 1, true);
 

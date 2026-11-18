@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MailCore Admin — Single-Tenant Mail Server Control Panel</title>
   <meta name="description" content="Single-tenant self-hosted mail server management console for domains, mailboxes, aliases, and security audit logs.">
-  <link rel="stylesheet" href="/styles.css?v=20261117-2">
+  <link rel="stylesheet" href="/styles.css?v=20261117-3">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
+  <a class="skip-link" href="#app-main-content">Skip to main content</a>
   <!-- Toast Notification Container -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
@@ -72,7 +73,7 @@
 
       <div class="auth-footer">
         <span class="badge-status-dot online"></span>
-        <span>Postfix &bull; Dovecot &bull; SpamAssassin &bull; ClamAV</span>
+        <span>Postfix &bull; Dovecot &bull; Rspamd &bull; ClamAV</span>
       </div>
     </div>
   </section>
@@ -165,7 +166,7 @@
           <label for="forgot-new-password">New Password (minimum 14 characters)</label>
           <div class="input-with-icon">
             <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <input id="forgot-new-password" type="password" minlength="14" required placeholder="Min 12 characters">
+            <input id="forgot-new-password" type="password" minlength="14" required placeholder="Minimum 14 characters">
             <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('forgot-new-password', this)">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
             </button>
@@ -212,7 +213,7 @@
         <div class="form-group">
           <label for="new-password">New Password (minimum 14 characters)</label>
           <div class="input-with-icon">
-            <input id="new-password" type="password" minlength="14" required placeholder="Min 12 characters">
+            <input id="new-password" type="password" minlength="14" required placeholder="Minimum 14 characters">
             <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('new-password', this)">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
             </button>
@@ -229,7 +230,7 @@
   <!-- MAIN APP: Dashboard Layout -->
   <div id="view-app" class="app-layout hidden">
     <!-- Sidebar Navigation -->
-    <aside class="app-sidebar">
+    <aside class="app-sidebar" aria-label="Primary navigation">
       <div class="sidebar-header">
         <div class="sidebar-logo">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
@@ -241,7 +242,7 @@
       </div>
 
       <!-- Navigation links -->
-      <nav class="sidebar-nav">
+      <nav class="sidebar-nav" aria-label="Mail server sections">
         <button type="button" class="nav-item active" data-tab="overview">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
           <span>Overview</span>
@@ -277,9 +278,26 @@
           <span id="badge-nav-services" class="nav-pill online">Healthy</span>
         </button>
 
+        <button type="button" class="nav-item" data-tab="quarantine" id="nav-quarantine">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 3 7v5c0 5 4 8 9 9 5-1 9-4 9-9V7l-9-4z"/><path d="M9 12h6M12 9v6"/></svg>
+          <span>Quarantine</span>
+          <span id="badge-nav-quarantine" class="nav-pill">0</span>
+        </button>
+
+        <button type="button" class="nav-item" data-tab="security-policies" id="nav-security-policies">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 3 7v5c0 5 4 8 9 9 5-1 9-4 9-9V7l-9-4z"/><path d="m9 12 2 2 4-4"/></svg>
+          <span>Security Policies</span>
+        </button>
+
         <button type="button" class="nav-item" data-tab="audit">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           <span>Audit Log</span>
+        </button>
+
+        <button type="button" class="nav-item" data-tab="events" id="nav-events">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/><circle cx="18" cy="18" r="4" fill="currentColor" stroke="none"/></svg>
+          <span>Events & Alerts</span>
+          <span id="badge-nav-events" class="nav-pill hidden">0</span>
         </button>
 
         <button type="button" class="nav-item" data-tab="administrators" id="nav-administrators">
@@ -306,17 +324,17 @@
           <strong id="user-display-name">Administrator</strong>
           <span id="user-display-role" class="user-role-badge">owner</span>
         </div>
-        <button id="btn-sidebar-security" class="btn-icon-logout" onclick="openAdminSecurityModal()" title="Security, 2FA & Passkeys" style="margin-right: 4px;">
+        <button id="btn-sidebar-security" class="btn-icon-logout" onclick="openAdminSecurityModal()" title="Security, 2FA & Passkeys" aria-label="Open security settings" style="margin-right: 4px;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         </button>
-        <button id="btn-logout" class="btn-icon-logout" title="Sign out">
+        <button id="btn-logout" class="btn-icon-logout" title="Sign out" aria-label="Sign out">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         </button>
       </div>
     </aside>
 
     <!-- Main Content Area -->
-    <main class="app-main">
+    <main id="app-main-content" class="app-main" tabindex="-1">
       <!-- Top Bar -->
       <header class="app-topbar">
         <div class="topbar-left">
@@ -328,6 +346,10 @@
           <button id="topbar-alerts-pill" type="button" class="failed-alert-pill hidden" onclick="toggleFailedAlertsPanel()" title="Click to view failure details">
             <span class="alert-pulse"></span>
             <span id="topbar-alerts-text">0 Issues</span>
+          </button>
+          <button id="btn-event-notifications" type="button" class="btn btn-secondary btn-sm" onclick="switchTab('events')" title="View event notifications">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
+            <span>Alerts</span><span id="badge-topbar-events" class="nav-pill hidden">0</span>
           </button>
           <!-- Admin Security & 2FA Modal Button -->
           <button id="btn-topbar-security" type="button" class="btn btn-secondary btn-sm" onclick="openAdminSecurityModal()" title="Admin Security, 2FA & Passkeys">
@@ -346,6 +368,10 @@
           <button id="btn-refresh-all" class="btn btn-secondary btn-sm" title="Refresh all data">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             <span>Sync</span>
+          </button>
+          <button id="btn-topbar-logout" class="btn btn-secondary btn-sm mobile-only" type="button" title="Sign out" aria-label="Sign out">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            <span>Sign out</span>
           </button>
         </div>
       </header>
@@ -472,7 +498,7 @@
                     <div class="service-meta">
                       <span class="service-dot online"></span>
                       <div>
-                        <strong>SpamAssassin & ClamAV</strong>
+                        <strong>Rspamd & ClamAV</strong>
                         <div id="infra-filter-details" class="text-muted">Filter configuration loading...</div>
                       </div>
                     </div>
@@ -668,12 +694,43 @@
               <div class="card-header flex-between">
                 <div>
                   <h3 class="card-title">Core Services Response Latency (ms)</h3>
-                  <p class="card-desc">Live TCP ping response times for Postfix, Dovecot, ClamAV, SpamAssassin, Postgres & Redis</p>
+                  <p class="card-desc">Live TCP ping response times for Postfix, Dovecot, ClamAV, Rspamd, Postgres & Redis</p>
                 </div>
                 <span id="dash-services-health-pill" class="badge badge-success">All Online</span>
               </div>
               <div class="chart-body" id="chart-latency-container">
                 <!-- Dynamically rendered latency bars via app.js -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Mail lifecycle analytics from persisted Postfix events -->
+          <div class="dashboard-charts-grid mt-4" id="mail-flow-analytics-card">
+            <div class="card chart-card">
+              <div class="card-header flex-between">
+                <div>
+                  <h3 class="card-title">Mail Flow Analytics</h3>
+                  <p class="card-desc">Queued, accepted, deferred, bounced and rejected delivery events</p>
+                </div>
+                <select id="mail-analytics-period" class="form-control" style="max-width: 132px;" aria-label="Mail analytics period">
+                  <option value="7">Last 7 days</option>
+                  <option value="30" selected>Last 30 days</option>
+                  <option value="90">Last 90 days</option>
+                </select>
+              </div>
+              <div class="chart-body" id="chart-mail-flow-container" aria-live="polite">
+                <div class="table-empty">Loading persisted mail-flow events…</div>
+              </div>
+            </div>
+            <div class="card chart-card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Delivery Summary</h3>
+                  <p class="card-desc">Computed from recorded Postfix recipient outcomes</p>
+                </div>
+              </div>
+              <div class="chart-body" id="mail-flow-summary-container" aria-live="polite">
+                <div class="table-empty">Loading delivery summary…</div>
               </div>
             </div>
           </div>
@@ -1166,7 +1223,7 @@
               <form id="form-test-smtp" onsubmit="handleTestSmtp(event)">
                 <div class="form-group">
                   <label for="test-smtp-sender">Sender Email (From)</label>
-                  <input id="test-smtp-sender" type="email" placeholder="user@yourdomain.com (leave blank for verified domain)">
+                  <input id="test-smtp-sender" type="email" placeholder="diagnostic@yourdomain.com">
                 </div>
                 <div class="form-group">
                   <label for="test-smtp-recipient">Recipient Email</label>
@@ -1186,18 +1243,19 @@
               </form>
             </div>
 
-            <!-- Diagnostic SpamAssassin Scoring Test -->
+            <!-- Diagnostic Rspamd Scoring Test -->
             <div class="card">
               <div class="card-header">
                 <div>
                   <h3 class="card-title">Spam Filter Scoring Analyzer</h3>
-                  <p class="card-desc">Test SpamAssassin rules, heuristic scoring, and quarantine triggers</p>
+                  <p class="card-desc">Submit a sample message to the active Rspamd /checkv2 engine; scanner errors are reported, never replaced with a heuristic result</p>
                 </div>
               </div>
               <form id="form-test-spam" onsubmit="handleTestSpam(event)">
                 <div class="form-group">
                   <label for="test-spam-content">Message Headers & Body</label>
-                  <textarea id="test-spam-content" rows="4" placeholder="Paste email content here to evaluate against SpamAssassin engine..." required></textarea>
+                  <textarea id="test-spam-content" rows="4" placeholder="Paste an RFC 822 email, or plain text to scan as a test email body..." required></textarea>
+                  <small class="form-help">Plain text is automatically wrapped in safe test headers. Paste full headers to test their exact score.</small>
                 </div>
                 <div class="pw-generator-row mb-4">
                   <button type="button" class="btn btn-secondary btn-xs" onclick="insertGtubeSpam()">
@@ -1218,7 +1276,162 @@
           </div>
         </section>
 
-        <!-- TAB 5: AUDIT LOG -->
+        <!-- TAB: SECURITY QUARANTINE -->
+        <section id="tab-quarantine" class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2>Security Quarantine</h2>
+              <p class="section-desc">Review messages held by the Rspamd Postfix Milter. This view exposes queue metadata only; message bodies and attachments are never returned by the admin API.</p>
+            </div>
+            <div class="header-actions">
+              <button class="btn btn-secondary btn-sm" onclick="loadQuarantine()">Refresh Quarantine</button>
+            </div>
+          </div>
+          <div class="alert-box alert-warning mb-4">
+            <strong>Release safety:</strong> Messages remain held until the API retrieves the exact queue content, scans it again through Rspamd and ClamAV, checks the strictest recipient policy, and confirms the queue content has not changed. A scanner outage, malware detection, spam verdict or hash mismatch prevents release.
+          </div>
+          <div class="card">
+            <div class="card-header flex-between">
+              <div>
+                <h3 class="card-title">Held Messages</h3>
+                <p class="card-desc">Postfix HOLD queue entries created when Rspamd returns a quarantine-eligible reject.</p>
+              </div>
+              <span id="quarantine-count" class="badge badge-secondary">0 held</span>
+            </div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead><tr><th>Queue ID</th><th>Received</th><th>Sender</th><th>Recipients</th><th>Size</th><th>Actions</th></tr></thead>
+                <tbody id="quarantine-tbody">
+                  <tr><td colspan="6" class="text-muted">Open this page to load held messages.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="card-footer text-muted" style="font-size:0.8rem;">Only owners and administrators can view/release items. Permanent deletion is restricted to the owner role and is recorded in the audit log.</div>
+          </div>
+        </section>
+
+        <!-- TAB: CENTRALIZED SECURITY POLICIES -->
+        <section id="tab-security-policies" class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2>Security Policies</h2>
+              <p class="section-desc">Manage organization-wide, domain-level and mailbox-level spam thresholds plus trusted and blocked sender, domain and attachment lists.</p>
+            </div>
+            <div class="header-actions">
+              <button class="btn btn-secondary btn-sm" onclick="loadSecurityPolicies()">Refresh Policies</button>
+            </div>
+          </div>
+
+          <div class="alert-box alert-warning mb-4">
+            <strong>Security behavior:</strong> Allowlisted senders/domains only receive a spam-score reduction. They never bypass SPF, DKIM, DMARC, phishing analysis or mandatory ClamAV scanning. Blocked senders, domains and attachment extensions are rejected by Rspamd and handled by the Postfix quarantine policy.
+          </div>
+
+          <div id="security-policy-map-status" class="alert-box alert-info mb-4" role="status">Loading policy map publication status...</div>
+
+          <div class="security-policy-grid">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Spam Threshold Policy</h3>
+                  <p class="card-desc">Lower thresholds are stricter. Empty domain/mailbox values inherit from their parent scope.</p>
+                </div>
+              </div>
+              <div class="settings-form">
+                <div class="policy-form-grid">
+                  <div class="form-group">
+                    <label for="security-policy-scope">Policy Scope</label>
+                    <select id="security-policy-scope" onchange="populateSecurityPolicyTarget(); renderSecurityPolicyEditor();">
+                      <option value="global">Organization default</option>
+                      <option value="domain">Domain override</option>
+                      <option value="mailbox">Mailbox override</option>
+                    </select>
+                  </div>
+                  <div class="form-group" id="security-policy-target-wrap">
+                    <label for="security-policy-target">Target</label>
+                    <select id="security-policy-target" onchange="renderSecurityPolicyEditor()"></select>
+                  </div>
+                </div>
+
+                <div class="policy-score-grid">
+                  <div class="form-group">
+                    <label for="security-policy-tag-score">Tag as spam score</label>
+                    <input id="security-policy-tag-score" type="number" min="2" max="20" step="0.1" inputmode="decimal" placeholder="Inherit parent policy">
+                    <small class="form-hint">Adds spam headers / routes to Junk.</small>
+                  </div>
+                  <div class="form-group">
+                    <label for="security-policy-reject-score">Reject score</label>
+                    <input id="security-policy-reject-score" type="number" min="5" max="50" step="0.1" inputmode="decimal" placeholder="Inherit parent policy">
+                    <small class="form-hint">High-confidence spam; Postfix holds Milter rejects.</small>
+                  </div>
+                  <div class="form-group">
+                    <label for="security-policy-greylist-score">Greylist score</label>
+                    <input id="security-policy-greylist-score" type="number" min="1" max="10" step="0.1" inputmode="decimal" placeholder="Inherit parent policy">
+                    <small class="form-hint">Temporary defer threshold.</small>
+                  </div>
+                </div>
+                <div id="security-policy-inheritance" class="form-hint">Organization defaults are currently 6 / 15 / 4.</div>
+                <div class="flex-row gap-2">
+                  <button id="btn-save-security-policy" class="btn btn-primary" onclick="saveSecurityPolicy()">Save Policy</button>
+                  <button id="btn-reset-security-policy" class="btn btn-secondary" onclick="resetSecurityPolicy()">Reset Override</button>
+                </div>
+                <div class="form-hint">Organization defaults can only be changed by the owner. Domain and mailbox overrides can be managed by owners and administrators.</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Sender, Domain & Attachment Lists</h3>
+                  <p class="card-desc">Manage organization-wide allowlists and blocklists. Entries are normalized and validated by the API.</p>
+                </div>
+              </div>
+              <form class="settings-form" onsubmit="addSecurityPolicyEntry(event)">
+                <div class="form-group">
+                  <label for="security-list-type">List Type</label>
+                  <select id="security-list-type" required>
+                    <option value="allow_sender">Allow sender address</option>
+                    <option value="block_sender">Block sender address</option>
+                    <option value="allow_domain">Allow sender domain</option>
+                    <option value="block_domain">Block sender domain</option>
+                    <option value="block_extension">Block attachment extension</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="security-list-value">Value</label>
+                  <input id="security-list-value" type="text" maxlength="254" required placeholder="sender@example.com / example.com / exe" autocomplete="off">
+                </div>
+                <div class="form-group">
+                  <label for="security-list-note">Administrative note (optional)</label>
+                  <input id="security-list-note" type="text" maxlength="240" placeholder="Reason / ticket reference">
+                </div>
+                <button class="btn btn-primary" type="submit">Add List Entry</button>
+              </form>
+              <div class="table-container mt-4">
+                <table class="data-table">
+                  <thead><tr><th>Type</th><th>Value</th><th>Note</th><th>Added</th><th>Action</th></tr></thead>
+                  <tbody id="security-policy-list-tbody"><tr><td colspan="5" class="text-muted">Open this page to load policy entries.</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="card mt-4">
+            <div class="card-header flex-between">
+              <div>
+                <h3 class="card-title">Recent Security Policy Changes</h3>
+                <p class="card-desc">Persisted policy, allow/block list and quarantine re-scan decisions from the audit log.</p>
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="loadSecurityPolicyHistory()">Refresh History</button>
+            </div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead><tr><th>Time</th><th>Action</th><th>Administrator</th><th>Entity</th><th>Details</th></tr></thead>
+                <tbody id="security-policy-history-tbody"><tr><td colspan="5" class="text-muted">Open this page to load policy history.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 6: AUDIT LOG -->
         <section id="tab-audit" class="tab-pane">
           <div class="section-header">
             <div>
@@ -1254,6 +1467,100 @@
                 </tbody>
               </table>
             </div>
+          </div>
+        </section>
+
+        <!-- TAB: EVENT MANAGEMENT -->
+        <section id="tab-events" class="tab-pane">
+          <div class="section-header">
+            <div>
+              <h2>Event Explorer & Notifications</h2>
+              <p class="section-desc">Searchable administrator, security and Postfix delivery events. Mail delivery acceptance means the next SMTP/LMTP hop accepted the message; it does not guarantee inbox placement.</p>
+            </div>
+            <div class="flex-row gap-2">
+              <span id="events-live-status" class="badge badge-secondary">Live stream disconnected</span>
+              <button class="btn btn-secondary btn-sm" onclick="loadEvents()">Refresh</button>
+              <button class="btn btn-secondary btn-sm" onclick="exportEventsCsv()">Export CSV</button>
+            </div>
+          </div>
+
+          <div class="stats-grid mb-4 event-metrics-grid">
+            <div class="stat-card"><div class="stat-content"><span class="stat-label">Events · 24 hours</span><strong class="stat-value" id="event-metric-day">—</strong><span class="stat-hint">Current event store</span></div></div>
+            <div class="stat-card"><div class="stat-content"><span class="stat-label">Last hour</span><strong class="stat-value" id="event-metric-hour">—</strong><span class="stat-hint">New activity</span></div></div>
+            <div class="stat-card"><div class="stat-content"><span class="stat-label">Unread alerts</span><strong class="stat-value" id="event-metric-unread">—</strong><span class="stat-hint">Owner/admin notifications</span></div></div>
+            <div class="stat-card"><div class="stat-content"><span class="stat-label">Archived events</span><strong class="stat-value" id="event-metric-archived">—</strong><span class="stat-hint">Retention archive</span></div></div>
+            <div class="stat-card"><div class="stat-content"><span class="stat-label">Outbox pending</span><strong class="stat-value" id="event-metric-outbox-pending">—</strong><span class="stat-hint">Awaiting dispatch</span></div></div>
+            <div class="stat-card"><div class="stat-content"><span class="stat-label">Outbox dead-lettered</span><strong class="stat-value" id="event-metric-outbox-dead">—</strong><span class="stat-hint">Owner review required</span></div></div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header flex-between">
+              <div><h3 class="card-title">Event Filters</h3><p class="card-desc">Filter by category, severity, time, source or event text.</p></div>
+              <label class="flex-row gap-2" style="font-size:0.85rem;"><input id="event-include-archive" type="checkbox" onchange="loadEvents()"> Include archived</label>
+            </div>
+            <div class="filter-bar" style="padding: 0; border: 0;">
+              <input id="event-search" class="form-control" type="search" maxlength="120" placeholder="Search event, action or entity" onkeydown="if(event.key==='Enter')loadEvents()">
+              <select id="event-category-filter" class="form-control" onchange="loadEvents()">
+                <option value="">All categories</option><option>authentication</option><option>mail</option><option>mailboxes</option><option>domains</option><option>security</option><option>backup</option><option>system</option><option>administration</option>
+              </select>
+              <select id="event-severity-filter" class="form-control" onchange="loadEvents()">
+                <option value="">All severities</option><option value="info">Info</option><option value="notice">Notice</option><option value="warning">Warning</option><option value="critical">Critical</option>
+              </select>
+              <input id="event-from-filter" class="form-control" type="datetime-local" title="From" onchange="loadEvents()">
+              <input id="event-to-filter" class="form-control" type="datetime-local" title="To" onchange="loadEvents()">
+              <button class="btn btn-secondary btn-sm" onclick="resetEventFilters()">Reset</button>
+            </div>
+          </div>
+
+          <div class="card table-card mb-4">
+            <div class="card-header flex-between"><div><h3 class="card-title">Event Timeline</h3><p class="card-desc" id="event-result-summary">Latest operational and security events.</p></div><span id="event-page-status" class="text-muted">Loading…</span></div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead><tr><th>Time</th><th>Severity</th><th>Category / Action</th><th>Source</th><th>Summary / Entity</th><th>Correlation</th></tr></thead>
+                <tbody id="events-tbody"><tr><td colspan="6" class="text-muted">Open Events & Alerts to load events.</td></tr></tbody>
+              </table>
+            </div>
+            <div class="card-footer flex-between"><span class="text-muted" id="events-cursor-label">Showing latest events</span><button id="btn-events-older" class="btn btn-secondary btn-sm" onclick="loadOlderEvents()" disabled>Load older events</button></div>
+          </div>
+
+          <div class="card table-card mb-4">
+            <div class="card-header flex-between">
+              <div><h3 class="card-title">Event Outbox Delivery</h3><p class="card-desc">Reliable event publication status. Failed items retry with backoff and move to dead-letter after twelve attempts.</p></div>
+              <button class="btn btn-secondary btn-sm" onclick="loadEventOutbox()">Refresh Outbox</button>
+            </div>
+            <div class="table-responsive"><table class="data-table">
+              <thead><tr><th>Outbox ID</th><th>Event</th><th>Attempts</th><th>Next retry / status</th><th>Last error</th><th>Action</th></tr></thead>
+              <tbody id="event-outbox-tbody"><tr><td colspan="6" class="text-muted">Loading outbox…</td></tr></tbody>
+            </table></div>
+          </div>
+
+          <div class="overview-grid mb-4">
+            <div class="card">
+              <div class="card-header flex-between"><div><h3 class="card-title">Administrator Notifications</h3><p class="card-desc">Persistent alerts generated from enabled alert rules.</p></div><button class="btn btn-secondary btn-xs" onclick="markAllEventNotificationsRead()">Mark all read</button></div>
+              <div id="event-notifications-list" class="recent-activity-list"><p class="text-muted">Loading notifications…</p></div>
+            </div>
+            <div class="card">
+              <div class="card-header"><div><h3 class="card-title">Alert Rules</h3><p class="card-desc">Owners define which event severities generate in-app notifications for active owners and administrators.</p></div></div>
+              <div id="event-alert-rule-owner-controls" class="form-grid" style="margin-bottom:16px;">
+                <div class="form-group"><label for="event-rule-name">Rule name</label><input id="event-rule-name" class="form-control" maxlength="80" placeholder="Example: Outbound delivery warnings"></div>
+                <div class="form-group"><label for="event-rule-category">Category</label><select id="event-rule-category" class="form-control"><option value="">All categories</option><option>authentication</option><option>mail</option><option>mailboxes</option><option>domains</option><option>security</option><option>backup</option><option>system</option><option>administration</option></select></div>
+                <div class="form-group"><label for="event-rule-severity">Minimum severity</label><select id="event-rule-severity" class="form-control"><option value="critical">Critical</option><option value="warning" selected>Warning</option><option value="notice">Notice</option><option value="info">Info</option></select></div>
+                <div class="form-group"><label for="event-rule-prefix">Action prefix (optional)</label><input id="event-rule-prefix" class="form-control" maxlength="100" placeholder="mail.delivery."></div>
+                <button class="btn btn-primary btn-sm" onclick="createEventAlertRule()">Add Alert Rule</button>
+              </div>
+              <div class="table-responsive"><table class="data-table"><thead><tr><th>Rule</th><th>Match</th><th>Enabled</th><th>Action</th></tr></thead><tbody id="event-alert-rules-tbody"><tr><td colspan="4" class="text-muted">Loading rules…</td></tr></tbody></table></div>
+            </div>
+          </div>
+
+          <div class="card" id="event-retention-owner-controls">
+            <div class="card-header"><div><h3 class="card-title">Event Retention & Archive</h3><p class="card-desc">Older events are moved to the archive before deletion when enabled. Existing administrator audit_log records are retained separately.</p></div></div>
+            <div class="form-grid">
+              <div class="form-group"><label for="event-retention-days">Active event retention (days)</label><input id="event-retention-days" class="form-control" type="number" min="7" max="3650"></div>
+              <div class="form-group"><label for="event-archive-days">Archive retention (days)</label><input id="event-archive-days" class="form-control" type="number" min="30" max="3650"></div>
+              <div class="form-group"><label class="flex-row gap-2"><input id="event-archive-enabled" type="checkbox"> Archive before deleting</label></div>
+              <div class="form-group flex-row gap-2"><button class="btn btn-primary btn-sm" onclick="saveEventRetention()">Save Retention</button><button class="btn btn-secondary btn-sm" onclick="runEventRetention()">Run Retention Now</button></div>
+            </div>
+            <p id="event-retention-status" class="text-muted" style="margin-top:10px;"></p>
           </div>
         </section>
 
@@ -1297,6 +1604,17 @@
                 <span class="metric-label">Storage Consumed</span>
                 <strong id="stat-backup-size" class="metric-value">0 B</strong>
                 <span class="metric-sub">Total compressed backup size</span>
+              </div>
+            </div>
+
+            <div class="metric-card">
+              <div class="metric-icon success">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M16 12h5m-2.5-2.5v5"/></svg>
+              </div>
+              <div class="metric-body">
+                <span class="metric-label">Available Disk Space</span>
+                <strong id="stat-backup-space-available" class="metric-value">Unavailable</strong>
+                <span id="stat-backup-space-detail" class="metric-sub">Backup volume capacity</span>
               </div>
             </div>
 
@@ -1902,7 +2220,7 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
           <div>
             <strong>Spam & Antivirus Protection Active:</strong>
-            <span>All incoming messages are filtered by ClamAV and SpamAssassin before delivery into the mailbox Maildir spool.</span>
+            <span>All SMTP messages are inspected by Rspamd; Rspamd calls ClamAV directly. High-confidence rejected messages are held in the Postfix quarantine queue, while tagged spam is routed to Junk by Dovecot Sieve.</span>
           </div>
         </div>
       </div>
@@ -2301,6 +2619,6 @@
   </div>
 
   <!-- Script logic -->
-  <script src="/app.js?v=20261117-2"></script>
+  <script src="/app.js?v=20261117-m07"></script>
 </body>
 </html>

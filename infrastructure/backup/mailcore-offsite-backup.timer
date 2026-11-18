@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily MailCore encrypted offsite backup schedule
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=mailcore-offsite-backup.service
+
+[Install]
+WantedBy=timers.target

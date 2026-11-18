@@ -1,0 +1,31 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /run/promtail/positions.yml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: mailcore-files
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: mailcore
+          service: postfix
+          __path__: /var/log/mailcore/postfix*.log
+      - targets:
+          - localhost
+        labels:
+          job: mailcore
+          service: dovecot
+          __path__: /var/log/mailcore/dovecot*.log
+      - targets:
+          - localhost
+        labels:
+          job: mailcore
+          service: admin-ui
+          __path__: /var/log/mailcore/admin-ui*.log

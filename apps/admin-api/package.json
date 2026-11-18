@@ -4,11 +4,12 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "AUTH_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= npm run build && AUTH_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= node --test test/*.test.js",
+    "test": "AUTH_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= PROMETHEUS_SCRAPE_TOKEN=TEST_ONLY_PROMETHEUS_SCRAPE_TOKEN_DO_NOT_USE_IN_PRODUCTION npm run build && AUTH_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= PROMETHEUS_SCRAPE_TOKEN=TEST_ONLY_PROMETHEUS_SCRAPE_TOKEN_DO_NOT_USE_IN_PRODUCTION node --test test/*.test.js",
     "reset-admin-password": "ts-node src/scripts/reset-password.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "nodemon src/index.ts"
+    "dev": "nodemon src/index.ts",
+    "rotate-auth-key": "node dist/scripts/rotate-auth-encryption-key.js"
   },
   "keywords": [],
   "author": "",

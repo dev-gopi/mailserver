@@ -42,3 +42,147 @@ CREATE TABLE IF NOT EXISTS backup_settings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 INSERT INTO backup_settings (id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS mail_security_policies (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  scope_type TEXT NOT NULL CHECK (scope_type IN ('global', 'domain', 'mailbox')),
+  domain_id BIGINT REFERENCES domains(id) ON DELETE CASCADE,
+  mailbox_id BIGINT REFERENCES mailboxes(id) ON DELETE CASCADE,
+  spam_tag_score NUMERIC(5,2),
+  spam_reject_score NUMERIC(5,2),
+  greylist_score NUMERIC(5,2),
+  created_by BIGINT REFERENCES admins(id) ON DELETE SET NULL,
+  updated_by BIGINT REFERENCES admins(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT mail_security_policy_scope_check CHECK (
+    (scope_type = 'global' AND domain_id IS NULL AND mailbox_id IS NULL
+      AND spam_tag_score IS NOT NULL AND spam_reject_score IS NOT NULL AND greylist_score IS NOT NULL)
+    OR (scope_type = 'domain' AND domain_id IS NOT NULL AND mailbox_id IS NULL)
+    OR (scope_type = 'mailbox' AND mailbox_id IS NOT NULL AND domain_id IS NULL)
+  ),
+  CONSTRAINT mail_security_policy_tag_check CHECK (spam_tag_score IS NULL OR spam_tag_score BETWEEN 2 AND 20),
+  CONSTRAINT mail_security_policy_reject_check CHECK (spam_reject_score IS NULL OR spam_reject_score BETWEEN 5 AND 50),
+  CONSTRAINT mail_security_policy_greylist_check CHECK (greylist_score IS NULL OR greylist_score BETWEEN 1 AND 10),
+  CONSTRAINT mail_security_policy_order_check CHECK (spam_tag_score IS NULL OR spam_reject_score IS NULL OR spam_reject_score > spam_tag_score)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mail_security_policy_global ON mail_security_policies (scope_type) WHERE scope_type = 'global';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mail_security_policy_domain ON mail_security_policies (domain_id) WHERE domain_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mail_security_policy_mailbox ON mail_security_policies (mailbox_id) WHERE mailbox_id IS NOT NULL;
+DROP TRIGGER IF EXISTS mail_security_policies_touch ON mail_security_policies;
+CREATE TRIGGER mail_security_policies_touch BEFORE UPDATE ON mail_security_policies FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+INSERT INTO mail_security_policies (scope_type, spam_tag_score, spam_reject_score, greylist_score) VALUES ('global', 6, 15, 4) ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS mail_security_list_entries (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  list_type TEXT NOT NULL CHECK (list_type IN ('allow_sender', 'block_sender', 'allow_domain', 'block_domain', 'block_extension')),
+  value TEXT NOT NULL,
+  note TEXT,
+  created_by BIGINT REFERENCES admins(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT mail_security_list_value_nonempty CHECK (length(value) BETWEEN 1 AND 254),
+  CONSTRAINT mail_security_list_entry_unique UNIQUE (list_type, value)
+);
+CREATE INDEX IF NOT EXISTS idx_mail_security_list_type_value ON mail_security_list_entries (list_type, value);
+
+-- Durable event management and transactional notifications.
+CREATE TABLE IF NOT EXISTS system_events (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  category TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('info','notice','warning','critical')),
+  source TEXT NOT NULL,
+  action TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  actor_admin_id BIGINT REFERENCES admins(id) ON DELETE SET NULL,
+  entity_type TEXT,
+  entity_id TEXT,
+  source_ip INET,
+  correlation_id TEXT,
+  details JSONB NOT NULL DEFAULT '{}'::jsonb,
+  dedupe_key CHAR(64)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_system_events_dedupe_key ON system_events (dedupe_key) WHERE dedupe_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_system_events_time_id ON system_events (occurred_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_system_events_category_severity ON system_events (category, severity, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_system_events_actor ON system_events (actor_admin_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_system_events_correlation ON system_events (correlation_id) WHERE correlation_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS event_outbox (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  event_id BIGINT NOT NULL UNIQUE REFERENCES system_events(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  published_at TIMESTAMPTZ,
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  last_error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_event_outbox_pending ON event_outbox (available_at, id) WHERE published_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS system_event_archive (
+  id BIGINT PRIMARY KEY,
+  occurred_at TIMESTAMPTZ NOT NULL,
+  category TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  source TEXT NOT NULL,
+  action TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  actor_admin_id BIGINT,
+  entity_type TEXT,
+  entity_id TEXT,
+  source_ip INET,
+  correlation_id TEXT,
+  details JSONB NOT NULL DEFAULT '{}'::jsonb,
+  dedupe_key CHAR(64),
+  archived_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_system_event_archive_time ON system_event_archive (occurred_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_system_event_archive_category ON system_event_archive (category, severity, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS event_alert_rules (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE CHECK (length(name) BETWEEN 3 AND 80),
+  category TEXT,
+  min_severity TEXT NOT NULL CHECK (min_severity IN ('info','notice','warning','critical')),
+  action_prefix TEXT,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by BIGINT REFERENCES admins(id) ON DELETE SET NULL,
+  updated_by BIGINT REFERENCES admins(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (category IS NULL OR category ~ '^[a-z][a-z0-9_-]{0,39}$'),
+  CHECK (action_prefix IS NULL OR (length(action_prefix) BETWEEN 2 AND 100 AND action_prefix !~ '[[:cntrl:]]'))
+);
+CREATE INDEX IF NOT EXISTS idx_event_alert_rules_enabled ON event_alert_rules (enabled);
+INSERT INTO event_alert_rules (name, category, min_severity, action_prefix, enabled)
+VALUES ('Critical events', NULL, 'critical', NULL, TRUE), ('Security warnings', 'security', 'warning', NULL, TRUE), ('Authentication warnings', 'authentication', 'warning', NULL, TRUE)
+ON CONFLICT (name) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS event_notifications (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  admin_id BIGINT NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
+  event_id BIGINT NOT NULL,
+  category TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('info','notice','warning','critical')),
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  read_at TIMESTAMPTZ,
+  acknowledged_at TIMESTAMPTZ,
+  acknowledged_by BIGINT REFERENCES admins(id) ON DELETE SET NULL,
+  UNIQUE (admin_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_event_notifications_unread ON event_notifications (admin_id, created_at DESC) WHERE read_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_event_notifications_time ON event_notifications (admin_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_event_notifications_unacknowledged ON event_notifications (admin_id, severity, created_at DESC) WHERE acknowledged_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS event_retention_settings (
+  id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+  retention_days INTEGER NOT NULL DEFAULT 90 CHECK (retention_days BETWEEN 7 AND 3650),
+  archive_retention_days INTEGER NOT NULL DEFAULT 365 CHECK (archive_retention_days BETWEEN 30 AND 3650),
+  archive_before_delete BOOLEAN NOT NULL DEFAULT TRUE,
+  updated_by BIGINT REFERENCES admins(id) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO event_retention_settings (id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING;
+

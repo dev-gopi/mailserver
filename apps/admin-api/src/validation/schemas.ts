@@ -71,7 +71,7 @@ export const testSmtpSchema = z.object({
 });
 
 export const testSpamSchema = z.object({
-  content: z.string().min(1, "Email message content is required")
+  content: z.string().min(1, "Email message content is required").max(256 * 1024, "Message is too large for an interactive scan")
 });
 
 export const deliverabilityQuerySchema = z.object({
@@ -153,3 +153,106 @@ export const administratorUpdateSchema = z.object({
 }).refine((value) => value.role !== undefined || value.active !== undefined, "At least one administrator attribute must be provided");
 
 export const administratorIdParamSchema = z.object({ id: z.coerce.number().int().positive() });
+
+export const quarantineQueueIdParamSchema = z.object({
+  queueId: z.string().min(5).max(64).regex(/^[A-Za-z0-9]+$/, "Invalid Postfix queue ID")
+});
+
+
+export const globalSecurityPolicySchema = z.object({
+  spamTagScore: z.number().min(2).max(20),
+  spamRejectScore: z.number().min(5).max(50),
+  greylistScore: z.number().min(1).max(10)
+}).refine((value) => value.spamRejectScore > value.spamTagScore, {
+  message: "Spam reject threshold must be greater than the spam tag threshold"
+});
+
+export const scopedSecurityPolicySchema = z.object({
+  spamTagScore: z.number().min(2).max(20).nullable(),
+  spamRejectScore: z.number().min(5).max(50).nullable(),
+  greylistScore: z.number().min(1).max(10).nullable()
+}).refine((value) => value.spamTagScore === null || value.spamRejectScore === null || value.spamRejectScore > value.spamTagScore, {
+  message: "Spam reject threshold must be greater than the spam tag threshold when both are overridden"
+});
+
+export const securityPolicyListEntrySchema = z.object({
+  listType: z.enum(["allow_sender", "block_sender", "allow_domain", "block_domain", "block_extension"]),
+  value: z.string().trim().min(1).max(254),
+  note: z.string().trim().max(240).optional().nullable()
+});
+
+export const securityPolicyListEntryIdParamSchema = z.object({
+  id: z.coerce.number().int().positive()
+});
+
+// Bounded event explorer and administrator notification controls.
+const eventCategorySchema = z.enum([
+  "authentication", "mailboxes", "domains", "security", "backup", "system", "administration", "mail", "audit"
+]);
+const eventSeveritySchema = z.enum(["info", "notice", "warning", "critical"]);
+const eventDateSchema = z.string().max(40).refine((value) => Number.isFinite(Date.parse(value)), "Invalid date/time filter");
+
+export const eventListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  afterId: z.string().regex(/^\d{1,18}$/, "Invalid event cursor").optional(),
+  category: eventCategorySchema.optional(),
+  severity: eventSeveritySchema.optional(),
+  source: z.string().trim().min(1).max(80).optional(),
+  action: z.string().trim().min(1).max(100).optional(),
+  from: eventDateSchema.optional(),
+  to: eventDateSchema.optional(),
+  q: z.string().trim().max(120).optional(),
+  includeArchived: z.enum(["true", "false"]).default("false").transform((value) => value === "true")
+}).refine((value) => !value.from || !value.to || Date.parse(value.from) <= Date.parse(value.to), {
+  message: "The from date must be earlier than or equal to the to date"
+});
+
+export const eventExportQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(5000).default(1000),
+  category: eventCategorySchema.optional(),
+  severity: eventSeveritySchema.optional(),
+  source: z.string().trim().min(1).max(80).optional(),
+  action: z.string().trim().min(1).max(100).optional(),
+  from: eventDateSchema.optional(),
+  to: eventDateSchema.optional(),
+  q: z.string().trim().max(120).optional(),
+  includeArchived: z.enum(["true", "false"]).default("false").transform((value) => value === "true")
+}).refine((value) => !value.from || !value.to || Date.parse(value.from) <= Date.parse(value.to), {
+  message: "The from date must be earlier than or equal to the to date"
+});
+
+export const eventNotificationQuerySchema = z.object({
+  unreadOnly: z.union([z.boolean(), z.enum(["true", "false"]).transform((value) => value === "true")]).default(false),
+  limit: z.coerce.number().int().min(1).max(100).default(50)
+});
+
+export const eventAlertRuleCreateSchema = z.object({
+  name: z.string().trim().min(3).max(80),
+  category: eventCategorySchema.nullable().optional(),
+  minSeverity: eventSeveritySchema,
+  actionPrefix: z.string().trim().min(2).max(100).regex(/^[a-z][a-z0-9._-]*$/i).nullable().optional(),
+  enabled: z.boolean().default(true)
+});
+
+export const eventAlertRuleUpdateSchema = z.object({
+  name: z.string().trim().min(3).max(80).optional(),
+  category: eventCategorySchema.nullable().optional(),
+  minSeverity: eventSeveritySchema.optional(),
+  actionPrefix: z.string().trim().min(2).max(100).regex(/^[a-z][a-z0-9._-]*$/i).nullable().optional(),
+  enabled: z.boolean().optional()
+}).refine((value) => Object.values(value).some((item) => item !== undefined), "At least one alert-rule field is required");
+
+export const eventAlertRuleIdParamSchema = z.object({ id: z.string().regex(/^\d{1,18}$/) });
+export const eventNotificationIdParamSchema = z.object({ id: z.string().regex(/^\d{1,18}$/) });
+
+export const eventRetentionSettingsSchema = z.object({
+  retentionDays: z.number().int().min(7).max(3650),
+  archiveRetentionDays: z.number().int().min(30).max(3650),
+  archiveBeforeDelete: z.boolean()
+}).refine((value) => value.archiveRetentionDays >= value.retentionDays, {
+  message: "Archive retention must be greater than or equal to active event retention"
+});
+
+export const eventOutboxIdParamSchema = z.object({ id: z.string().regex(/^\d{1,18}$/) });
+
+export const mailAnalyticsQuerySchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(30) });

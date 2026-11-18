@@ -25,6 +25,10 @@ if grep -q '__MAIL_DB_' /etc/dovecot/dovecot-sql.conf.ext; then
   exit 1
 fi
 
+# Host-visible authentication logs are consumed by host Fail2ban.
+mkdir -p /var/log/mailcore
+chmod 0750 /var/log/mailcore
+
 # Ensure /var/mail/vhosts exists
 mkdir -p /var/mail/vhosts
 

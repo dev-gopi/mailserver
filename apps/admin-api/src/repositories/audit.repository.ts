@@ -28,6 +28,21 @@ export class AuditRepository {
     return res.rows;
   }
 
+  async findSecurityPolicyHistory(limit = 100): Promise<AuditLogEntity[]> {
+    const boundedLimit = Math.max(1, Math.min(200, Math.trunc(limit)));
+    const res = await db.query<AuditLogEntity>(
+      `SELECT id, occurred_at, admin_id, action, entity_type, entity_id, ip_address, details
+       FROM audit_log
+       WHERE action LIKE 'security.policy.%'
+          OR action LIKE 'security.quarantine.rescan.%'
+          OR action = 'security.quarantine.delete'
+       ORDER BY id DESC
+       LIMIT $1`,
+      [boundedLimit]
+    );
+    return res.rows;
+  }
+
   async findFailures(limit = 25): Promise<AuditLogEntity[]> {
     const res = await db.query<AuditLogEntity>(
       `SELECT id, occurred_at, admin_id, action, entity_type, entity_id, ip_address, details 

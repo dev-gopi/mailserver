@@ -5,7 +5,32 @@ x-service-logging: &service-logging
     max-file: "5"
 
 services:
+  rspamd-policy-map-init:
+    image: alpine:3.21
+    command: ["/bin/sh", "/usr/local/bin/map-init.sh"]
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=4m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      # Existing policy-map files are owned by UID 1000 after initialization.
+      # FOWNER permits chmod on those files on subsequent container starts.
+      - FOWNER
+    volumes:
+      - ./services/rspamd/map-init.sh:/usr/local/bin/map-init.sh:ro
+      - rspamdpolicydata:/maps
+    restart: "no"
+    logging: *service-logging
+
+  # Retained only for optional A/B comparison during migration. This service is
+  # not in the active mail path; Rspamd is the production filtering engine.
   spamassassin:
+    profiles: ["legacy-comparison"]
     build: ./services/spamassassin
     volumes:
       - spamdata:/home/spamd
@@ -15,6 +40,7 @@ services:
     networks:
       - mailnet
       - filternet
+      - clamavnet
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -25,23 +51,50 @@ services:
       timeout: 3s
       retries: 5
 
-  # rspamd:
-  #   image: rspamd/rspamd:3.11
-  #   restart: unless-stopped
-  #   volumes:
-  #     - ./services/rspamd/local.d:/etc/rspamd/local.d:ro
-  #     - rspamddata:/var/lib/rspamd
-  #   networks:
-  #     - mailnet
-  #     - filternet
-  #   depends_on:
-  #     clamav:
-  #       condition: service_healthy
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "rspamadm configtest >/dev/null"]
-  #     interval: 15s
-  #     timeout: 5s
-  #     retries: 5
+  rspamd:
+    image: rspamd/rspamd:4.3.0
+    restart: unless-stopped
+    command: ["/bin/sh", "-ec", "export RSPAMD_REDIS_PASSWORD=\"$$(cat /run/secrets/redis_password)\"; exec /usr/bin/rspamd -f"]
+    secrets:
+      - redis_password
+    volumes:
+      - ./services/rspamd/local.d:/etc/rspamd/local.d:ro
+      - ./services/rspamd/rspamd.conf.override:/etc/rspamd/rspamd.conf.override:ro
+      - rspamddata:/var/lib/rspamd
+      - rspamdpolicydata:/var/lib/mailcore-rspamd-maps:ro
+    networks:
+      mailnet: {}     # outbound DNS and threat-feed access; no scanner listener binds here
+      filternet:
+        ipv4_address: 172.30.0.2
+        aliases:
+          - rspamd-filter
+      dbnet: {}       # authenticated Redis/Bayes backend
+      scanadminnet:
+        ipv4_address: 172.32.0.2
+        aliases:
+          - rspamd-admin
+      clamavnet:
+        ipv4_address: 172.33.0.3
+    depends_on:
+      rspamd-policy-map-init:
+        condition: service_completed_successfully
+      clamav:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # Exercise the private HTTP scanner with a valid request. A bare TCP
+      # connection to the Milter listener produces a misleading EOF error.
+      test: ["CMD-SHELL", "rspamc -t 5 -h 172.32.0.2:11333 --empty symbols >/dev/null"]
+      interval: 20s
+      timeout: 8s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *service-logging
 
   # Optional only: Amavis is configured under services/amavis but is not part
   # of this project’s active mail path. Leave this service commented unless a
@@ -55,7 +108,7 @@ services:
   #     - clamav
   #   networks:
   #     - mailnet
-  #     - filternet
+  #     - clamavnet
 
   clamav:
     # image: clamav/clamav:stable
@@ -65,19 +118,23 @@ services:
       - no-new-privileges:true
     logging: *service-logging
     healthcheck:
-      test: ["CMD-SHELL", "pidof clamd >/dev/null && pidof clamsmtpd >/dev/null"]
+      # Ubuntu's ClamAV packages do not provide clamdscan. Probe the daemon's
+      # native TCP protocol instead, then require a downloaded daily database.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/172.33.0.2/3310 && printf \"PING\\n\" >&3 && IFS= read -r reply <&3 && test \"$$reply\" = PONG' && { test -s /var/lib/clamav/daily.cvd || test -s /var/lib/clamav/daily.cld; }"]
       interval: 15s
       timeout: 10s
       retries: 8
+      start_period: 10m
     environment:
       - TZ=${TZ:?set TZ in .env}
-      - CLAMD_CONF_MaxFileSize=25M
-      - CLAMD_CONF_MaxScanSize=100M
     volumes:
       - clamavdata:/var/lib/clamav
     networks:
-      - mailnet
-      - filternet
+      mailnet: {}     # outbound signature updates only; clamd binds to clamavnet
+      clamavnet:
+        ipv4_address: 172.33.0.2
+        aliases:
+          - clamav-scanner
 
   opendkim:
     build: ./services/opendkim
@@ -115,9 +172,12 @@ services:
       - postfix_db_password
     volumes:
       - maildata:/var/mail/vhosts
-      - ./secrets/tls/cert.pem:/etc/mailcore/tls/cert.pem:ro
-      - ./secrets/tls/privkey.key:/etc/mailcore/tls/privkey.key:ro
+      # Mount the directory so atomically replaced cert/key files are visible
+      # to the daemon after a validated reload.
+      - ./secrets/tls:/etc/mailcore/tls:ro
       - mailspool:/var/spool/postfix
+      - postfixeventqueue:/var/spool/rsyslog
+      - ./var/log/mailcore:/var/log/mailcore
     ports:
       - "${SMTP_PORT:?set SMTP_PORT in .env}:25"
       - "${SUBMISSION_PORT:?set SUBMISSION_PORT in .env}:587"
@@ -128,6 +188,10 @@ services:
       filternet:
         aliases:
           - postfix-filter
+      postfixcontrolnet:
+        ipv4_address: 172.31.1.2
+        aliases:
+          - postfix-bridge
     restart: unless-stopped
     logging: *service-logging
     environment:
@@ -139,14 +203,10 @@ services:
       - MAIL_DB_USER=${POSTFIX_DB_USER:-mail_postfix}
       - MAIL_DOMAIN=${MAIL_DOMAIN:?set MAIL_DOMAIN in .env}
       - MAIL_HOSTNAME=${MAIL_HOSTNAME:?set MAIL_HOSTNAME in .env}
+      - POSTFIX_BRIDGE_BIND=172.31.1.2
     depends_on:
-      spamassassin:
+      rspamd:
         condition: service_healthy
-      clamav:
-        # ClamSMTP reinjects mail into Postfix, so Postfix must be started
-        # before ClamAV waits for its Docker address. Health is still exposed
-        # to monitoring, without creating a startup dependency cycle.
-        condition: service_started
       opendkim:
         condition: service_healthy
       dovecot:
@@ -156,7 +216,9 @@ services:
       app:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "postfix status >/dev/null 2>&1 && bash -c '</dev/tcp/127.0.0.1/25' && bash -c '</dev/tcp/127.0.0.1/587' && bash -c '</dev/tcp/127.0.0.1/465'"]
+      # SMTPS requires a TLS handshake; a raw TCP probe causes spurious
+      # SSL_accept errors in the Postfix log.
+      test: ["CMD-SHELL", "postfix status >/dev/null 2>&1 && bash -c '</dev/tcp/127.0.0.1/25' && bash -c '</dev/tcp/127.0.0.1/587' && openssl s_client -connect 127.0.0.1:465 -brief </dev/null >/dev/null 2>&1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -168,9 +230,9 @@ services:
       - dovecot_db_password
     volumes:
       - maildata:/var/mail/vhosts
-      - ./secrets/tls/cert.pem:/etc/mailcore/tls/cert.pem:ro
-      - ./secrets/tls/privkey.key:/etc/mailcore/tls/privkey.key:ro
+      - ./secrets/tls:/etc/mailcore/tls:ro
       - mailspool:/var/spool/postfix
+      - ./var/log/mailcore:/var/log/mailcore
     ports:
       - "${IMAPS_PORT:?set IMAPS_PORT in .env}:993"
       - "${POP3S_PORT:?set POP3S_PORT in .env}:995"
@@ -236,7 +298,7 @@ services:
       - ALL
     restart: unless-stopped
     logging: *service-logging
-    command: ["/bin/sh", "-ec", "umask 077; printf 'requirepass %s\n' \"$$(cat /run/secrets/redis_password)\" > /tmp/redis-secret.conf; exec redis-server /tmp/redis-secret.conf --appendonly yes"]
+    command: ["/bin/sh", "-ec", "umask 077; printf 'requirepass %s\n' \"$$(cat /run/secrets/redis_password)\" > /tmp/redis-secret.conf; exec redis-server /tmp/redis-secret.conf --appendonly yes --appendfsync everysec --maxmemory-policy noeviction"]
     secrets:
       - redis_password
     volumes:
@@ -344,12 +406,14 @@ services:
       REDIS_QUEUE: ${REDIS_QUEUE:-mail_tasks}
       POSTFIX_HOST: ${POSTFIX_HOST:?set POSTFIX_HOST in .env}
       POSTFIX_PORT: ${POSTFIX_PORT:?set POSTFIX_PORT in .env}
+      POSTFIX_BRIDGE_HOST: postfix-bridge
       POSTFIX_BRIDGE_PORT: ${POSTFIX_BRIDGE_PORT:?set POSTFIX_BRIDGE_PORT in .env}
       DOVECOT_HOST: ${DOVECOT_HOST:?set DOVECOT_HOST in .env}
       DOVECOT_PORT: ${DOVECOT_PORT:?set DOVECOT_PORT in .env}
-      SPAMASSASSIN_HOST: ${SPAMASSASSIN_HOST:?set SPAMASSASSIN_HOST in .env}
-      SPAMASSASSIN_PORT: ${SPAMASSASSIN_PORT:?set SPAMASSASSIN_PORT in .env}
-      CLAMAV_HOST: ${CLAMAV_HOST:?set CLAMAV_HOST in .env}
+      RSPAMD_HOST: rspamd-admin
+      RSPAMD_PORT: 11333
+      RSPAMD_POLICY_MAP_DIR: /var/lib/mailcore-rspamd-maps
+      CLAMAV_HOST: clamav-scanner
       CLAMAV_PORT: ${CLAMAV_PORT:?set CLAMAV_PORT in .env}
       DKIM_KEY_DIR: /var/lib/opendkim/keys
       DKIM_KEY_UID: 10001
@@ -372,22 +436,40 @@ services:
       WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}
       WEBAUTHN_RP_NAME: ${WEBAUTHN_RP_NAME:-MailCore Admin Console}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      MAILCORE_EVENT_SYSLOG_BIND: 172.31.1.3
+      MAILCORE_EVENT_SYSLOG_PORT: 6514
       TZ: ${TZ:-UTC}
+      PROMETHEUS_SCRAPE_TOKEN_FILE: /run/mailcore-secrets/prometheus_scrape_token
     secrets:
       - api_db_password
       - auth_encryption_key
       - redis_password
     volumes:
+      - mailcore_monitoring_secrets:/run/mailcore-secrets:ro
       - maildata:/var/mail/vhosts
       - dkimkeys:/var/lib/opendkim
+      - rspamdpolicydata:/var/lib/mailcore-rspamd-maps
       - ./backups:/backups
     networks:
-      - mailnet
-      - dbnet
+      mailnet: {}
+      dbnet: {}
+      scanadminnet:
+        ipv4_address: 172.32.0.3
+      clamavnet:
+        ipv4_address: 172.33.0.4
+      # Postfix owns .2 as the bridge listener; keep the admin API on a
+      # stable, non-conflicting address.
+      postfixcontrolnet:
+        ipv4_address: 172.31.1.3
+      monitoringnet: {}
     restart: unless-stopped
     logging: *service-logging
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      rspamd-policy-map-init:
+        condition: service_completed_successfully
+      monitoring-secrets-init:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -402,11 +484,13 @@ services:
     ports:
       - "${ADMIN_UI_BIND_ADDRESS:-127.0.0.1}:${ADMIN_UI_HTTPS_PORT:-8443}:443"
     volumes:
-      - ./secrets/tls/cert.pem:/etc/nginx/tls/cert.pem:ro
-      - ./secrets/tls/privkey.key:/etc/nginx/tls/privkey.key:ro
+      - ./secrets/tls:/etc/nginx/tls:ro
+      - ./secrets/acme-webroot:/var/www/certbot:ro
+      - ./var/log/mailcore:/var/log/mailcore:rw
     environment:
       ADMIN_UI_API_HOST: ${ADMIN_UI_API_HOST:?set ADMIN_UI_API_HOST in .env}
       ADMIN_UI_API_PORT: ${API_PORT:?set API_PORT in .env}
+      ADMIN_UI_TRUSTED_PROXY_CIDR: ${ADMIN_UI_TRUSTED_PROXY_CIDR:-127.0.0.1/32}
     networks:
       - mailnet
     restart: unless-stopped
@@ -414,6 +498,164 @@ services:
     depends_on:
       app:
         condition: service_healthy
+
+  # Initialize monitoring credentials in a named Docker volume. This avoids
+  # file-backed bind mounts failing when a fresh host has no monitoring secret files.
+  monitoring-secrets-init:
+    image: alpine:3.21.3
+    entrypoint: ["/bin/sh", "/init-monitoring-secrets.sh"]
+    environment:
+      GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+    volumes:
+      - mailcore_monitoring_secrets:/run/mailcore-secrets
+      - ./secrets/runtime:/legacy-secrets:ro
+      - ./infrastructure/monitoring/init-monitoring-secrets.sh:/init-monitoring-secrets.sh:ro
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+    restart: "no"
+    logging: *service-logging
+
+  # Prometheus is an internal metrics backend. Grafana accesses it over the
+  # monitoring network; it is intentionally not published on the host.
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.wal-compression
+      - --web.listen-address=:9090
+    # ports:
+    #   - "${PROMETHEUS_BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - mailcore_monitoring_secrets:/run/mailcore-secrets:ro
+      - prometheusdata:/prometheus
+    networks:
+      - monitoringnet
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *service-logging
+    depends_on:
+      monitoring-secrets-init:
+        condition: service_completed_successfully
+      app:
+        condition: service_healthy
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|host|run)($|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host:ro,rslave
+    networks:
+      - monitoringnet
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *service-logging
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    ports:
+      - "${GRAFANA_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3001}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/mailcore-secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: http://localhost:${GRAFANA_PORT:-3001}/
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./infrastructure/monitoring/grafana/entrypoint.sh:/entrypoint.sh:ro
+      - mailcore_monitoring_secrets:/run/mailcore-secrets:ro
+      - grafanadata:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - monitoringnet
+      # A separate bridge is required for Docker to publish Grafana's
+      # loopback-only HTTP port. Monitoring traffic remains on the isolated
+      # monitoring network.
+      - grafanauinet
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *service-logging
+    depends_on:
+      monitoring-secrets-init:
+        condition: service_completed_successfully
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+
+  # Loki provides the log datasource used by Grafana Explore. It is internal
+  # only; Grafana is the sole UI exposed on the host.
+  loki:
+    image: grafana/loki:3.3.0
+    command: ["-config.file=/etc/loki/config.yml"]
+    volumes:
+      - ./infrastructure/monitoring/loki.yml:/etc/loki/config.yml:ro
+      - lokidata:/loki
+    networks:
+      - monitoringnet
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *service-logging
+
+  # Collect the existing MailCore service log files without a Docker-socket
+  # mount. This avoids granting the log collector container Docker control.
+  promtail:
+    image: grafana/promtail:3.3.0
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ./infrastructure/monitoring/promtail.yml:/etc/promtail/config.yml:ro
+      - ./var/log/mailcore:/var/log/mailcore:ro
+      - promtailpositions:/run/promtail
+    networks:
+      - monitoringnet
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+    logging: *service-logging
+    depends_on:
+      loki:
+        condition: service_started
 
 volumes:
   maildata:
@@ -423,6 +665,14 @@ volumes:
   clamavdata:
   dkimkeys:
   redisdata:
+  rspamddata:
+  rspamdpolicydata:
+  postfixeventqueue:
+  prometheusdata:
+  grafanadata:
+  mailcore_monitoring_secrets:
+  lokidata:
+  promtailpositions:
 
 secrets:
   postgres_password:
@@ -454,3 +704,39 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/28
+
+  # Only the admin API and Rspamd HTTP normal worker join this private API network.
+  scanadminnet:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.32.0.0/28
+
+  # Scanner-only network shared by Rspamd, ClamAV and the trusted admin API.
+  # Postfix is deliberately not attached, so it cannot call clamd directly.
+  clamavnet:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.33.0.0/28
+
+  # Dedicated point-to-point control plane for the queue bridge. The listener
+  # binds only to the Postfix interface on this network; mail/scanner containers
+  # cannot invoke queue flush, hold, release, or delete operations.
+  postfixcontrolnet:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.1.0/28
+
+  # Dedicated metrics plane. Grafana alone is published on host loopback.
+  monitoringnet:
+    driver: bridge
+    internal: true
+  # Grafana is the only member. Its published port remains loopback-bound by
+  # the service-level ports declaration above.
+  grafanauinet:
+    driver: bridge

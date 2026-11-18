@@ -42,6 +42,7 @@ export const env = {
   dkimKeyDir: process.env.DKIM_KEY_DIR ?? "/var/lib/opendkim/keys",
   mailStoragePath: process.env.MAIL_STORAGE_PATH ?? "/var/mail/vhosts",
   backupDir: process.env.BACKUP_DIR ?? "/backups",
+  securityPolicyMapDir: process.env.RSPAMD_POLICY_MAP_DIR ?? "/var/lib/mailcore-rspamd-maps",
   webauthnRpId: process.env.WEBAUTHN_RP_ID ?? "",
   webauthnRpName: process.env.WEBAUTHN_RP_NAME ?? "MailCore Admin Console",
   authEncryptionKey: readSecret("AUTH_ENCRYPTION_KEY") ?? "",
@@ -51,6 +52,9 @@ export const env = {
   mailHostname: process.env.MAIL_HOSTNAME ?? "",
   mailPublicIp: process.env.MAIL_PUBLIC_IP ?? "",
   alertWebhookUrl: process.env.ALERT_WEBHOOK_URL ?? "",
+  prometheusScrapeToken: readSecret("PROMETHEUS_SCRAPE_TOKEN") ?? "",
+  eventSyslogBind: process.env.MAILCORE_EVENT_SYSLOG_BIND ?? "",
+  eventSyslogPort: Number(process.env.MAILCORE_EVENT_SYSLOG_PORT ?? 6514),
   dns: {
     mxPriority: Number(process.env.MX_PRIORITY ?? 10),
     spfRecord: process.env.SPF_RECORD ?? "v=spf1 mx ~all",
@@ -70,12 +74,13 @@ export const env = {
   services: {
     postfixHost: process.env.POSTFIX_HOST ?? "",
     postfixPort: Number(process.env.POSTFIX_PORT ?? 25),
+    postfixBridgeHost: process.env.POSTFIX_BRIDGE_HOST ?? process.env.POSTFIX_HOST ?? "",
     postfixBridgePort: Number(process.env.POSTFIX_BRIDGE_PORT ?? 2526),
     dovecotHost: process.env.DOVECOT_HOST ?? "",
     dovecotPort: Number(process.env.DOVECOT_PORT ?? 993),
-    spamassassinHost: process.env.SPAMASSASSIN_HOST ?? "",
-    spamassassinPort: Number(process.env.SPAMASSASSIN_PORT ?? 783),
-    clamavHost: process.env.CLAMAV_HOST ?? "",
+    rspamdHost: process.env.RSPAMD_HOST ?? "rspamd-admin",
+    rspamdPort: Number(process.env.RSPAMD_PORT ?? 11333),
+    clamavHost: process.env.CLAMAV_HOST ?? "clamav-scanner",
     clamavPort: Number(process.env.CLAMAV_PORT ?? 3310),
     redisHost: process.env.REDIS_HOST ?? "",
     redisPort: Number(process.env.REDIS_PORT ?? 6379),
@@ -101,6 +106,9 @@ if (!Number.isInteger(env.adminMaxSessions) || env.adminMaxSessions < 1 || env.a
 }
 if (!env.databaseUrl && (!env.databaseHost || !env.databaseName || !env.databaseUser || !env.databasePassword)) {
   required("DATABASE_URL or PGHOST/PGDATABASE/PGUSER/PGPASSWORD");
+}
+if (env.nodeEnv === "production" && !env.migrationMode && env.prometheusScrapeToken.length < 32) {
+  throw new Error("PROMETHEUS_SCRAPE_TOKEN_FILE must contain at least 32 characters");
 }
 if (env.nodeEnv === "production" && !env.sessionCookieSecure) {
   throw new Error("SESSION_COOKIE_SECURE must remain true in production");
@@ -132,9 +140,10 @@ for (const [name, value] of Object.entries({
   POSTFIX_PORT: env.services.postfixPort,
   POSTFIX_BRIDGE_PORT: env.services.postfixBridgePort,
   DOVECOT_PORT: env.services.dovecotPort,
-  SPAMASSASSIN_PORT: env.services.spamassassinPort,
+  RSPAMD_PORT: env.services.rspamdPort,
   CLAMAV_PORT: env.services.clamavPort,
   REDIS_PORT: env.services.redisPort,
+  MAILCORE_EVENT_SYSLOG_PORT: env.eventSyslogPort,
   IMAPS_PORT: env.client.imapPort,
   IMAP_STARTTLS_PORT: env.client.imapAlternativePort,
   POP3S_PORT: env.client.pop3Port,

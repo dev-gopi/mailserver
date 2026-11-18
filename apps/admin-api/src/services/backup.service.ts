@@ -13,6 +13,8 @@ const execFileAsync = promisify(execFile);
 
 export class BackupService {
   private schedulerTimer: NodeJS.Timeout | null = null;
+  private schedulerInFlight: Promise<void> | null = null;
+  private backupInProgress = false;
 
   public getBackupDirectory(): string {
     const candidateDirs = [
@@ -23,18 +25,23 @@ export class BackupService {
     ];
 
     for (const d of candidateDirs) {
-      if (fs.existsSync(d)) {
-        return d;
+      if (fs.existsSync(d) && fs.statSync(d).isDirectory()) {
+        try {
+          fs.accessSync(d, fs.constants.W_OK);
+          return d;
+        } catch {
+          // A host-owned archive directory may be readable by local tools but
+          // not writable by this process. Try the next safe candidate instead
+          // of making backup listing/tests fail before a usable directory is
+          // found.
+        }
       }
     }
 
     const defaultDir = path.resolve(process.cwd(), "backups");
-    try {
-      fs.mkdirSync(defaultDir, { recursive: true });
-      return defaultDir;
-    } catch {
-      return "/tmp";
-    }
+    fs.mkdirSync(defaultDir, { recursive: true, mode: 0o700 });
+    fs.accessSync(defaultDir, fs.constants.W_OK);
+    return defaultDir;
   }
 
   private formatBytes(bytes: number): string {
@@ -45,6 +52,26 @@ export class BackupService {
     if (mb < 1024) return `${mb.toFixed(1)} MB`;
     const gb = mb / 1024;
     return `${gb.toFixed(2)} GB`;
+  }
+
+  private getStorageCapacity(directory: string): {
+    totalBytes: number;
+    availableBytes: number;
+    usedPercent: number;
+  } | null {
+    try {
+      const stats = fs.statfsSync(directory);
+      const totalBytes = stats.blocks * stats.bsize;
+      const availableBytes = stats.bavail * stats.bsize;
+      if (!Number.isFinite(totalBytes) || !Number.isFinite(availableBytes) || totalBytes <= 0) return null;
+      return {
+        totalBytes,
+        availableBytes,
+        usedPercent: Math.round(((totalBytes - availableBytes) / totalBytes) * 100)
+      };
+    } catch {
+      return null;
+    }
   }
 
   async getSettings(): Promise<BackupSettingsEntity> {
@@ -121,6 +148,12 @@ export class BackupService {
       formattedTotalSize: string;
       lastBackupAt: string | null;
       storageDirectory: string;
+      storageCapacity: {
+        totalBytes: number;
+        availableBytes: number;
+        formattedAvailableBytes: string;
+        usedPercent: number;
+      } | null;
     };
     settings: BackupSettingsEntity;
   }> {
@@ -129,13 +162,15 @@ export class BackupService {
     const backups: BackupArchiveItem[] = [];
 
     if (fs.existsSync(dir)) {
-      const files = fs.readdirSync(dir);
-      for (const file of files) {
-        if (!file.startsWith("mail-") || !file.endsWith(".tar.gz")) continue;
+      const files = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of files) {
+        const file = entry.name;
+        if (!/^mail-\d{8}T\d{6}Z\.tar\.gz$/.test(file) || !entry.isFile() || entry.isSymbolicLink()) continue;
 
         try {
           const filePath = path.join(dir, file);
-          const stat = fs.statSync(filePath);
+          const stat = fs.lstatSync(filePath);
+          if (!stat.isFile() || stat.isSymbolicLink()) continue;
           const ageDays = Math.floor((Date.now() - stat.mtimeMs) / (1000 * 60 * 60 * 24));
 
           // Parse timestamp from standard naming convention mail-YYYYMMDDTHHMMSSZ.tar.gz
@@ -164,6 +199,7 @@ export class BackupService {
     backups.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     const totalSizeBytes = backups.reduce((sum, b) => sum + b.sizeBytes, 0);
+    const storageCapacity = this.getStorageCapacity(dir);
 
     return {
       backups,
@@ -172,22 +208,39 @@ export class BackupService {
         totalSizeBytes,
         formattedTotalSize: this.formatBytes(totalSizeBytes),
         lastBackupAt: backups[0]?.createdAt || (settings.last_backup_at ? new Date(settings.last_backup_at).toISOString() : null),
-        storageDirectory: dir
+        storageDirectory: dir,
+        storageCapacity: storageCapacity && {
+          ...storageCapacity,
+          formattedAvailableBytes: this.formatBytes(storageCapacity.availableBytes)
+        }
       },
       settings
     };
   }
 
   async createBackup(): Promise<BackupArchiveItem> {
-    const settings = await this.getSettings();
+    if (this.backupInProgress) throw new Error("A backup is already in progress");
     const dir = this.getBackupDirectory();
+    this.backupInProgress = true;
     const timestamp = new Date().toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
-    const workdir = `/tmp/mail-backup-${timestamp}`;
+    const workdirPrefix = `/tmp/mail-backup-${timestamp}-${process.pid}-`;
     const archiveName = `mail-${timestamp}.tar.gz`;
     const finalArchive = path.join(dir, archiveName);
+    const temporarySuffix = `${process.pid}-${Date.now()}`;
+    const temporaryArchive = `${finalArchive}.tmp-${temporarySuffix}`;
+    const temporaryChecksum = `${finalArchive}.sha256.tmp-${temporarySuffix}`;
+    let publishedArchive = false;
+    let publishedChecksum = false;
+    let workdir: string | null = null;
 
     try {
-      await fsPromises.mkdir(workdir, { recursive: true });
+      const settings = await this.getSettings();
+      // Never overwrite an existing timestamped backup (for example, after a
+      // rapid retry or a second API process starting the same job).
+      if (fs.existsSync(finalArchive) || fs.existsSync(`${finalArchive}.sha256`)) {
+        throw new Error(`Backup already exists for timestamp ${timestamp}; refusing to overwrite it`);
+      }
+      workdir = await fsPromises.mkdtemp(workdirPrefix);
 
       // 1. Dump database if enabled
       if (settings.include_database) {
@@ -201,15 +254,18 @@ export class BackupService {
 
           await execFileAsync(
             "pg_dump",
-            ["--format=custom", `--file=${dumpPath}`, `-h`, dbHost, `-p`, dbPort, `-U`, dbUser, dbName],
+            ["--format=custom", "--no-owner", "--no-acl", `--file=${dumpPath}`, `-h`, dbHost, `-p`, dbPort, `-U`, dbUser, dbName],
             {
               env: {
                 ...process.env,
                 PGPASSWORD: env.databasePassword || ""
               },
-              timeout: 60000
+              timeout: 30 * 60 * 1000
             }
           );
+          const dumpStat = await fsPromises.stat(dumpPath);
+          if (dumpStat.size === 0) throw new Error("Database dump is empty");
+          await execFileAsync("pg_restore", ["--list", dumpPath], { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
         } catch (error) {
           throw new Error(`pg_dump failed; no backup archive was created: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -218,29 +274,58 @@ export class BackupService {
       // 2. Archive maildata vhosts if enabled
       if (settings.include_maildata) {
         const maildataPath = path.join(workdir, "maildata.tar.gz");
-        const vhostsDir = fs.existsSync("/var/mail/vhosts") ? "/var/mail/vhosts" : path.resolve(process.cwd(), "services/postfix/maildata");
-
-        if (fs.existsSync(vhostsDir)) {
-          try {
-            await execFileAsync("tar", ["-C", vhostsDir, "-czf", maildataPath, "."], { timeout: 60000 });
-          } catch {
-            await fsPromises.writeFile(maildataPath, Buffer.from("EMPTY_MAILBOX_STORE"));
-          }
-        } else {
-          await fsPromises.writeFile(maildataPath, Buffer.from("EMPTY_MAILBOX_STORE"));
+        const vhostsDir = "/var/mail/vhosts";
+        if (!fs.existsSync(vhostsDir)) {
+          throw new Error(`Mailbox storage directory is missing: ${vhostsDir}; refusing to publish an incomplete backup`);
         }
+        await execFileAsync("tar", ["--numeric-owner", "-C", vhostsDir, "-czf", maildataPath, "."], { timeout: 30 * 60 * 1000 });
+        const maildataStat = await fsPromises.stat(maildataPath);
+        if (maildataStat.size === 0) throw new Error("Mailbox backup archive is empty");
+        await execFileAsync("tar", ["-tzf", maildataPath], { timeout: 30 * 60 * 1000, maxBuffer: 32 * 1024 * 1024 });
       }
 
       // 3. Compress workdir files into final archive
       const filesToPack = await fsPromises.readdir(workdir);
       if (filesToPack.length > 0) {
-        await execFileAsync("tar", ["-C", workdir, "-czf", finalArchive, ...filesToPack], { timeout: 60000 });
+        await execFileAsync("tar", ["-C", workdir, "-czf", temporaryArchive, ...filesToPack], { timeout: 30 * 60 * 1000 });
+      // The archive contains mailbox contents and a database dump. Never leave
+      // a world/group-readable temporary or published backup on the host.
+      await fsPromises.chmod(temporaryArchive, 0o600);
+      } else {
+        throw new Error("Backup has no payloads; refusing to publish an empty archive");
+      }
+
+      // Validate before atomically publishing the archive and its checksum.
+      await execFileAsync("tar", ["-tzf", temporaryArchive], { timeout: 30 * 60 * 1000, maxBuffer: 32 * 1024 * 1024 });
+      const archiveHash = await new Promise<string>((resolve, reject) => {
+        const hash = createHash("sha256");
+        fs.createReadStream(temporaryArchive).on("error", reject).on("data", (chunk) => hash.update(chunk)).on("end", () => resolve(hash.digest("hex")));
+      });
+      await fsPromises.writeFile(temporaryChecksum, `${archiveHash}  ${archiveName}\n`, { mode: 0o600, flag: "wx" });
+      // Hard-link publication is atomic and fails with EEXIST instead of
+      // overwriting a backup created by another process in the same second.
+      await fsPromises.link(temporaryArchive, finalArchive);
+      publishedArchive = true;
+      await fsPromises.unlink(temporaryArchive);
+      try {
+        await fsPromises.link(temporaryChecksum, `${finalArchive}.sha256`);
+        publishedChecksum = true;
+        await fsPromises.unlink(temporaryChecksum);
+      } catch (error) {
+        // An archive without its matching checksum must never be reported as
+        // a successful backup. Roll back only files created by this operation.
+        if (publishedArchive) await fsPromises.rm(finalArchive, { force: true });
+        publishedArchive = false;
+        throw error;
       }
 
       // Clean up temporary workspace
       await fsPromises.rm(workdir, { recursive: true, force: true });
 
       const stat = await fsPromises.stat(finalArchive);
+      if ((stat.mode & 0o077) !== 0) {
+        await fsPromises.chmod(finalArchive, 0o600);
+      }
 
       // 4. Update database status
       await db.query(
@@ -268,9 +353,17 @@ export class BackupService {
         hasMaildata: settings.include_maildata
       };
     } catch (err: any) {
-      if (fs.existsSync(workdir)) {
-        await fsPromises.rm(workdir, { recursive: true, force: true }).catch(() => {});
+      // A failed sidecar publication invalidates the paired archive. Remove
+      // only this operation's files; never touch a pre-existing backup.
+      if (publishedArchive && !publishedChecksum) {
+        await fsPromises.rm(finalArchive, { force: true }).catch(() => {});
       }
+      if (publishedChecksum && !fs.existsSync(finalArchive)) {
+        await fsPromises.rm(`${finalArchive}.sha256`, { force: true }).catch(() => {});
+      }
+      if (workdir) await fsPromises.rm(workdir, { recursive: true, force: true }).catch(() => {});
+      await fsPromises.rm(temporaryArchive, { force: true }).catch(() => {});
+      await fsPromises.rm(temporaryChecksum, { force: true }).catch(() => {});
 
       await db.query(
         `UPDATE backup_settings
@@ -282,12 +375,14 @@ export class BackupService {
       );
 
       throw err;
+    } finally {
+      this.backupInProgress = false;
     }
   }
 
   /**
-   * Non-destructive restore test. This verifies archive integrity, optional
-   * sidecar checksum, and that a PostgreSQL custom dump can be read. It never
+   * Non-destructive restore test. This verifies the required sidecar checksum,
+   * archive integrity and that a PostgreSQL custom dump can be read. It never
    * writes into the live database or mailbox volume.
    */
   async verifyRestoreReadiness(filename: string): Promise<{
@@ -307,16 +402,32 @@ export class BackupService {
       checks.push({ name: "Database payload", status: databaseDump ? "pass" : "fail", details: databaseDump ? "database.dump is present" : "database.dump is missing" });
       checks.push({ name: "Mailbox payload", status: maildata ? "pass" : "fail", details: maildata ? "maildata.tar.gz is present" : "maildata.tar.gz is missing" });
 
+      const verifyDir = `/tmp/mail-backup-verify-${process.pid}-${Date.now()}`;
+      await fsPromises.mkdir(verifyDir, { recursive: true, mode: 0o700 });
+      try {
+        if (databaseDump && maildata) {
+          await execFileAsync("tar", ["-xzf", filePath, "-C", verifyDir, "database.dump", "maildata.tar.gz"], { timeout: 30 * 60 * 1000 });
+          await execFileAsync("pg_restore", ["--list", path.join(verifyDir, "database.dump")], { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
+          await execFileAsync("tar", ["-tzf", path.join(verifyDir, "maildata.tar.gz")], { timeout: 30 * 60 * 1000, maxBuffer: 32 * 1024 * 1024 });
+          checks.push({ name: "Payload readability", status: "pass", details: "Database dump and nested mailbox archive are readable" });
+        } else {
+          checks.push({ name: "Payload readability", status: "fail", details: "Both database and mailbox payloads are required for a full restore drill" });
+        }
+      } finally {
+        await fsPromises.rm(verifyDir, { recursive: true, force: true });
+      }
+
       const checksumPath = `${filePath}.sha256`;
-      if (fs.existsSync(checksumPath)) {
+      if (fs.existsSync(checksumPath) && !fs.lstatSync(checksumPath).isSymbolicLink()) {
         const expected = (await fsPromises.readFile(checksumPath, "utf8")).trim().split(/\s+/)[0];
         const actual = await new Promise<string>((resolve, reject) => {
           const hash = createHash("sha256");
           fs.createReadStream(filePath).on("error", reject).on("data", (chunk) => hash.update(chunk)).on("end", () => resolve(hash.digest("hex")));
         });
-        checks.push({ name: "SHA-256 checksum", status: expected === actual ? "pass" : "fail", details: expected === actual ? "Sidecar checksum matches" : "Sidecar checksum does not match archive" });
+        const validDigest = /^[a-fA-F0-9]{64}$/.test(expected);
+        checks.push({ name: "SHA-256 checksum", status: validDigest && expected.toLowerCase() === actual ? "pass" : "fail", details: validDigest && expected.toLowerCase() === actual ? "Sidecar checksum matches" : "Sidecar checksum is missing, malformed or does not match archive" });
       } else {
-        checks.push({ name: "SHA-256 checksum", status: "fail", details: "Checksum sidecar is missing" });
+        checks.push({ name: "SHA-256 checksum", status: "fail", details: "Checksum sidecar is missing or is a symlink" });
       }
     } catch (error) {
       checks.push({ name: "Archive integrity", status: "fail", details: error instanceof Error ? error.message : "Unable to read archive" });
@@ -325,63 +436,59 @@ export class BackupService {
   }
 
   async pruneOldBackups(retentionDays = 14): Promise<number> {
+    if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) {
+      throw new Error("Backup retention must be an integer between 1 and 3650 days");
+    }
     const dir = this.getBackupDirectory();
     if (!fs.existsSync(dir)) return 0;
 
     let prunedCount = 0;
     const now = Date.now();
     const maxAgeMs = retentionDays * 24 * 60 * 60 * 1000;
-
-    const files = fs.readdirSync(dir);
-    for (const file of files) {
-      if (!file.startsWith("mail-") || !file.endsWith(".tar.gz")) continue;
-
+    for (const file of fs.readdirSync(dir)) {
+      if (!/^mail-\d{8}T\d{6}Z\.tar\.gz$/.test(file)) continue;
       try {
         const filePath = path.join(dir, file);
-        const stat = fs.statSync(filePath);
-        if (now - stat.mtimeMs > maxAgeMs) {
-          fs.unlinkSync(filePath);
-          prunedCount++;
-        }
+        const stat = fs.lstatSync(filePath);
+        // Ignore symlinks and non-regular files; backups are regular files only.
+        if (!stat.isFile() || stat.isSymbolicLink() || now - stat.mtimeMs <= maxAgeMs) continue;
+        fs.unlinkSync(filePath);
+        const checksumPath = `${filePath}.sha256`;
+        try {
+          const checksumStat = fs.lstatSync(checksumPath);
+          if (checksumStat.isFile() || checksumStat.isSymbolicLink()) fs.unlinkSync(checksumPath);
+        } catch { /* no checksum sidecar */ }
+        prunedCount++;
       } catch (err) {
         console.warn(`Failed to prune old backup ${file}:`, err);
       }
     }
-
     return prunedCount;
   }
 
   async deleteBackup(filename: string): Promise<void> {
-    // Sanitize filename against path traversal
-    const safeName = path.basename(filename);
-    if (!safeName.startsWith("mail-") || !safeName.endsWith(".tar.gz")) {
-      throw new Error("Invalid backup archive filename");
-    }
-
-    const dir = this.getBackupDirectory();
-    const targetPath = path.join(dir, safeName);
-
-    if (!fs.existsSync(targetPath)) {
-      throw new Error(`Backup archive "${safeName}" not found`);
-    }
-
+    const targetPath = this.getBackupFilePath(filename);
     fs.unlinkSync(targetPath);
+    const checksumPath = `${targetPath}.sha256`;
+    try {
+      const checksumStat = fs.lstatSync(checksumPath);
+      if (checksumStat.isFile() || checksumStat.isSymbolicLink()) fs.unlinkSync(checksumPath);
+    } catch { /* no checksum sidecar */ }
   }
 
   getBackupFilePath(filename: string): string {
-    const safeName = path.basename(filename);
-    if (!safeName.startsWith("mail-") || !safeName.endsWith(".tar.gz")) {
+    if (typeof filename !== "string" || !/^mail-\d{8}T\d{6}Z\.tar\.gz$/.test(filename)) {
       throw new Error("Invalid backup archive filename");
     }
-
-    const dir = this.getBackupDirectory();
-    const targetPath = path.join(dir, safeName);
-
-    if (!fs.existsSync(targetPath)) {
-      throw new Error(`Backup archive "${safeName}" not found`);
-    }
-
-    return targetPath;
+    const dir = fs.realpathSync(this.getBackupDirectory());
+    const targetPath = path.join(dir, filename);
+    let stat: fs.Stats;
+    try { stat = fs.lstatSync(targetPath); }
+    catch { throw new Error(`Backup archive "${filename}" not found`); }
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Backup archive must be a regular non-symlink file");
+    const resolvedPath = fs.realpathSync(targetPath);
+    if (path.dirname(resolvedPath) !== dir) throw new Error("Backup archive resolves outside the backup directory");
+    return resolvedPath;
   }
 
   startScheduler(intervalMinutes = 15): void {
@@ -390,25 +497,41 @@ export class BackupService {
       return await this.createBackup();
     });
 
+    // Register all current job handlers before Redis claims pending or recovered jobs.
+    taskQueue.start();
     if (this.schedulerTimer) clearInterval(this.schedulerTimer);
 
-    this.schedulerTimer = setInterval(async () => {
-      try {
-        const settings = await this.getSettings();
-        if (!settings.auto_backup_enabled) return;
-
-        const lastBackupTime = settings.last_backup_at ? new Date(settings.last_backup_at).getTime() : 0;
-        const intervalMs = settings.interval_seconds * 1000;
-
-        if (Date.now() - lastBackupTime >= intervalMs) {
-          console.log(`[BackupScheduler] Auto-backup is due. Enqueueing backup job...`);
-          await taskQueue.enqueue("backup.create", { triggeredBy: "scheduler" }, { maxAttempts: 2 });
+    const runCheck = async (): Promise<void> => {
+      if (this.schedulerInFlight) return;
+      const task = (async () => {
+        try {
+          const settings = await this.getSettings();
+          if (!settings.auto_backup_enabled) return;
+          const lastBackupTime = settings.last_backup_at ? new Date(settings.last_backup_at).getTime() : 0;
+          const intervalMs = settings.interval_seconds * 1000;
+          if (Date.now() - lastBackupTime >= intervalMs) {
+            console.log("[BackupScheduler] Auto-backup is due. Enqueueing backup job...");
+            await taskQueue.enqueue("backup.create", { triggeredBy: "scheduler" }, { maxAttempts: 2 });
+          }
+        } catch (err) {
+          console.error("[BackupScheduler] Periodic auto-backup failed:", err);
         }
-      } catch (err) {
-        console.error(`[BackupScheduler] Periodic auto-backup failed:`, err);
-      }
-    }, intervalMinutes * 60 * 1000);
+      })();
+      this.schedulerInFlight = task;
+      try { await task; }
+      finally { if (this.schedulerInFlight === task) this.schedulerInFlight = null; }
+    };
+
+    this.schedulerTimer = setInterval(() => { void runCheck(); }, intervalMinutes * 60 * 1000);
+    this.schedulerTimer.unref();
   }
+
+  async stopScheduler(): Promise<void> {
+    if (this.schedulerTimer) clearInterval(this.schedulerTimer);
+    this.schedulerTimer = null;
+    if (this.schedulerInFlight) await this.schedulerInFlight;
+  }
+
 }
 
 export const backupService = new BackupService();

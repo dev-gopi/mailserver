@@ -1,6 +1,9 @@
 import { Request } from "express";
 import { auditRepository } from "../repositories/audit.repository";
 import { taskQueue } from "../queue/task-queue";
+import { db } from "../db/pool";
+import { eventService } from "./event.service";
+import { categorizeAuditAction, sanitizeEventDetails, severityForAction } from "../utils/event.utils";
 
 export class AuditService {
   async log(
@@ -14,19 +17,48 @@ export class AuditService {
     const ip = req.ip || req.socket.remoteAddress || null;
     const eId = entityId !== undefined && entityId !== null ? String(entityId) : null;
 
-    // Persist via repository
-    await auditRepository.create(adminId, action, entityType, eId, ip, details);
+    // Persist the legacy audit record, searchable event and outbox row atomically.
+    // An administrator action must never commit without its corresponding event.
+    const safeDetails = sanitizeEventDetails(details);
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `INSERT INTO audit_log (admin_id, action, entity_type, entity_id, ip_address, details)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+        [adminId, action, entityType, eId, ip, JSON.stringify(safeDetails)]
+      );
+      await eventService.appendInTransaction(client, {
+        category: categorizeAuditAction(action),
+        severity: severityForAction(action),
+        source: "admin-api",
+        action,
+        summary: `${action} — ${entityType}${eId ? ` #${eId}` : ""}`.slice(0, 300),
+        actorAdminId: adminId,
+        entityType,
+        entityId: eId,
+        sourceIp: ip,
+        correlationId: req.correlationId ?? null,
+        details: safeDetails
+      });
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
 
-    // Also notify queue for live socket/broadcast subscribers
+    // Backward-compatible in-process event for existing subscribers.
     taskQueue.emit("audit.logged", {
-      adminId,
-      action,
-      entityType,
-      entityId: eId,
-      ip,
-      details,
+      adminId, action, entityType, entityId: eId, ip, details: safeDetails,
+      correlationId: req.correlationId ?? null,
       timestamp: new Date().toISOString()
     });
+  }
+
+  async getSecurityPolicyHistory(limit = 100) {
+    return auditRepository.findSecurityPolicyHistory(limit);
   }
 
   async getRecentLogs(limit = 100) {

@@ -4,10 +4,13 @@
 !.env.example
 apps/admin-api/.env
 !apps/admin-api/.env.example
+infrastructure/performance/load-test.env
 
 # TLS and DKIM private material
 secrets/tls/*.key
 secrets/tls/*.pem
+secrets/runtime/*
+!secrets/runtime/.gitkeep
 opendkim/keys/
 
 # Node build and dependency output
@@ -15,6 +18,15 @@ apps/admin-api/node_modules/
 apps/admin-api/dist/
 apps/admin-api/coverage/
 *.tsbuildinfo
+
+# Generated caches and temporary files
+__pycache__/
+*.py[cod]
+.cache/
+.pytest_cache/
+.mypy_cache/
+*.tmp
+*.bak
 
 # Local runtime data, logs, and editor files
 data/

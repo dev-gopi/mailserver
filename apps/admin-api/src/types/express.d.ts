@@ -10,6 +10,7 @@ declare global {
       adminSessionToken?: string;
       adminSessionAuthSource?: "cookie" | "bearer";
       adminSessionCsrfHash?: string;
+      correlationId?: string;
     }
   }
 }

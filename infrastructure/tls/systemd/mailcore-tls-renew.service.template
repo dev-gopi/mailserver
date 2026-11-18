@@ -1,0 +1,14 @@
+[Unit]
+Description=MailCore Certbot renewal and validated TLS deployment
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__PROJECT_ROOT__
+EnvironmentFile=/etc/mailcore/tls-renew.env
+ExecStart=/bin/bash __PROJECT_ROOT__/infrastructure/tls/renew.sh --renew
+User=root
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
