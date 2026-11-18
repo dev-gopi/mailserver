@@ -1013,6 +1013,13 @@ async function populateDomainSelectors() {
       ).join("");
   }
 
+  // Keep the visible default aligned with the API fallback used for diagnostic
+  // SMTP submissions. Do not overwrite an address the administrator entered.
+  const smtpSender = $("test-smtp-sender");
+  if (smtpSender && !smtpSender.value && virtualDomains.length > 0) {
+    smtpSender.value = `diagnostic@${virtualDomains[0].name}`;
+  }
+
   updateMailboxPreview();
 }
 
