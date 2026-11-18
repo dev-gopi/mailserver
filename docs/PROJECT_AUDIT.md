@@ -72,3 +72,34 @@ do not automatically expire. The current admin release path re-scans the exact
 message through Rspamd and ClamAV and verifies the queue-content SHA-256 before
 release; direct HOLD release is disabled. Operators must still operate a
 retention and review procedure.
+
+## Log review and operational observations
+
+Runtime logs are written beneath `var/log/mailcore/`. `admin-ui-access.log`
+and `admin-ui-error.log` are the HTTPS proxy logs; `postfix.log`,
+`dovecot.log`, and `dovecot-info.log` are mail-service logs. The mail-service
+logs are intentionally owner-readable only, so review them through the
+approved host or container administration path rather than weakening their
+permissions.
+
+The available access log snapshot from 18 November 2026 recorded these items:
+
+- `admin-ui-error.log` was empty.
+- The API returned 206 `429 Too Many Requests` responses, primarily while the
+  dashboard was rapidly refreshed. The application-wide limiter is 300
+  requests per 15 minutes per client IP, in addition to stricter authentication
+  and quarantine-release limits. A browser that is rate-limited should wait for
+  the window to reset rather than repeatedly retrying; operators should avoid
+  opening multiple dashboard tabs or aggressive auto-refreshing from the same
+  proxy/NAT address.
+- Four transient `500` responses for dashboard, queue, and quarantine reads
+  recovered on the following requests. Continue to investigate if they recur,
+  using the correlated API, Postfix, and Dovecot logs.
+- One quarantine re-scan-and-release request returned `503`. This is
+  fail-closed behavior: the message remains in HOLD until the scanner and
+  queue-control dependencies are healthy and a fresh scan succeeds. Do not
+  bypass the re-scan or release the item directly.
+
+The protected Postfix and Dovecot log contents could not be reviewed from an
+unprivileged workspace session. Complete that host-level review before treating
+this snapshot as a full mail-flow health assessment.

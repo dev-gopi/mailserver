@@ -35,6 +35,7 @@ infrastructure/
   tests/                     Runtime validation scripts
 scripts/                     Static Compose checks
 docs/                        Architecture and audit documentation
+var/log/mailcore/            Runtime admin UI, Postfix and Dovecot logs
 ```
 
 ## Runtime topology
@@ -107,3 +108,18 @@ The API also mounts the host `./backups` directory.
 - `apps/admin-ui/index.html` and `app.js`: Event Explorer, alert rules, notifications, retention and outbox recovery.
 
 `system_events` and `event_outbox` are durable PostgreSQL records. The in-process EventEmitter and SSE streams are only delivery mechanisms.
+
+## Runtime logs and request limits
+
+`var/log/mailcore/` is a host-mounted operational log directory. The admin UI
+access and error logs are written by Nginx. Postfix and Dovecot logs are
+written with owner-only permissions and must be inspected using the approved
+host/container administration path; do not make them world-readable for
+convenience.
+
+The API applies a shared per-client-IP limit of 300 requests per 15 minutes,
+with tighter limits on authentication, security-policy mutations, diagnostics,
+and quarantine re-scan/release operations. The UI already retries transient
+read failures, including `429` and `5xx`, so dashboard polling and browser
+reload behavior must remain bounded to avoid a retry loop exhausting the shared
+limit.

@@ -308,6 +308,20 @@ cd ../..
 docker compose down
 ~~~
 
+Persistent host logs are mounted under `var/log/mailcore/`:
+`admin-ui-access.log`, `admin-ui-error.log`, `postfix.log`, `dovecot.log`, and
+`dovecot-info.log`. The Postfix and Dovecot files are intentionally
+owner-readable only; inspect them through an approved host or container
+administration session rather than weakening their permissions. Correlate a
+diagnostic message ID, queue ID, or event ID across these logs and the Event
+Explorer when investigating delivery or authentication problems.
+
+The API has a shared limit of 300 requests per 15 minutes for each client IP,
+along with tighter limits for authentication, security-policy updates,
+diagnostics, and quarantine re-scans. If the dashboard receives `429 Too Many
+Requests`, wait for the limit window to reset and avoid multiple tabs or rapid
+manual refreshes from the same proxy/NAT address.
+
 | Volume | Contents |
 | --- | --- |
 | `dbdata` | PostgreSQL data |
@@ -344,6 +358,7 @@ services/
 infrastructure/
   database/init/   Schema and initial administrator seed
   monitor/         API-health monitor
+  security/        Host log preparation, Fail2ban and logrotate helpers
   tls/             Development certificate and renewal helpers
   tests/           Runtime validation scripts
 scripts/           Compose validation utilities
