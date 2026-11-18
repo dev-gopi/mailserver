@@ -757,6 +757,95 @@ code {
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.auth-card-compact {
+  max-width: 410px;
+  padding: 22px 26px;
+}
+
+.auth-card-compact .auth-brand {
+  margin-bottom: 12px;
+}
+
+.auth-card-compact .brand-badge {
+  width: 42px;
+  height: 42px;
+  margin-bottom: 6px;
+}
+
+.auth-card-compact .auth-brand h1 {
+  font-size: 1.22rem;
+  margin-bottom: 2px;
+}
+
+.auth-card-compact .auth-subtitle {
+  font-size: 0.78rem;
+}
+
+.auth-card-compact .form-group {
+  margin-bottom: 10px;
+}
+
+.auth-card-compact .form-group label {
+  font-size: 0.78rem;
+  margin-bottom: 3px;
+}
+
+.auth-card-compact .form-hint {
+  font-size: 0.72rem;
+  margin-top: 2px;
+}
+
+.tooltip-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: #3b82f6;
+  cursor: help;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+.tooltip-badge:hover {
+  color: #60a5fa;
+}
+
+.prompt-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+}
+
+.prompt-modal-footer button {
+  white-space: nowrap;
+}
+
+.prompt-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+@media (max-width: 560px) {
+  .prompt-modal-footer {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .prompt-modal-actions {
+    flex-direction: column;
+    width: 100%;
+    gap: 8px;
+  }
+  .prompt-modal-footer button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
 .auth-brand {
   text-align: center;
   margin-bottom: 28px;

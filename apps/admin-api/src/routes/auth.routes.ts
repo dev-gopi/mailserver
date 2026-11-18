@@ -5,6 +5,7 @@ import { validate } from "../validation/validate";
 import {
   loginSchema,
   changePasswordSchema,
+  mailboxChangePasswordSchema,
   mfaVerifySchema,
   resetPasswordSchema,
   totpEnableSchema,
@@ -49,6 +50,13 @@ authRouter.post(
   rejectCrossSiteRequest,
   validate({ body: passkeyLoginVerifySchema }),
   authController.verifyPasskeyLogin.bind(authController)
+);
+
+authRouter.post(
+  "/mailbox/change-password",
+  rejectCrossSiteRequest,
+  validate({ body: mailboxChangePasswordSchema }),
+  authController.changeMailboxPassword.bind(authController)
 );
 
 // Protected auth & security endpoints

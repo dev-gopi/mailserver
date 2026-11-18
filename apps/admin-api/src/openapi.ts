@@ -14,6 +14,7 @@ export const openapi = {
   paths: {
     "/health": { get: { summary: "Service health probe" } },
     "/auth/login": { post: { summary: "Administrator authentication" } },
+    "/auth/mailbox/change-password": { post: { summary: "Self-service mailbox password change for email users" } },
     "/auth/me": { get: { security: [{ bearerAuth: [] }], summary: "Get current administrator profile" } },
     "/auth/change-password": { post: { security: [{ bearerAuth: [] }], summary: "Rotate administrator password" } },
     "/auth/logout": { post: { security: [{ bearerAuth: [] }], summary: "Revoke current session" } },

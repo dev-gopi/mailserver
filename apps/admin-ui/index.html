@@ -69,6 +69,14 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3H9V7a3 3 0 0 1 3-3z"/></svg>
           <span>Sign in with Passkey</span>
         </button>
+
+        <div class="auth-alt-action" style="margin-top: 1.25rem; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 1.25rem;">
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.6rem;">Mailbox user? Change your email password:</p>
+          <button type="button" class="btn btn-secondary btn-block" onclick="showView('mailbox-password')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span>Change Mailbox Password</span>
+          </button>
+        </div>
       </form>
 
       <div class="auth-footer">
@@ -136,10 +144,20 @@
     <div class="auth-card">
       <div class="auth-brand">
         <div class="brand-badge warning">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         </div>
         <h1>Password Recovery</h1>
         <p class="auth-subtitle">Reset administrator credentials using your emergency recovery code.</p>
+      </div>
+
+      <div class="alert-box alert-info" style="margin-bottom: 16px; display: flex; gap: 12px; align-items: flex-start; text-align: left;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        <div>
+          <strong style="display: block; font-size: 0.84rem; margin-bottom: 2px;">Where to find your recovery code?</strong>
+          <span style="font-size: 0.8rem; line-height: 1.4; display: block;">
+            Emergency recovery codes are generated when Two-Factor Authentication is set up under <strong>Security & 2FA</strong> in the top menu of the dashboard.
+          </span>
+        </div>
       </div>
 
       <div id="forgot-form-error" class="form-inline-error hidden">
@@ -147,28 +165,28 @@
         <span id="forgot-form-error-text">Reset failed</span>
       </div>
 
-      <form id="forgot-form" class="auth-form" onsubmit="handleForgotPasswordSubmit(event)">
+      <form id="forgot-form" class="auth-form" onsubmit="handleForgotPasswordSubmit(event)" autocomplete="off">
         <div class="form-group">
           <label for="forgot-username">Administrator Username</label>
           <div class="input-with-icon">
-            <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <svg class="input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             <input id="forgot-username" type="text" placeholder="e.g. admin" required autocomplete="username">
           </div>
         </div>
 
         <div class="form-group">
           <label for="forgot-recovery-code">Emergency Recovery Code</label>
-          <input id="forgot-recovery-code" class="recovery-code-input" type="text" placeholder="XXXX-XXXX" required maxlength="12">
+          <input id="forgot-recovery-code" class="recovery-code-input" type="text" placeholder="XXXX-XXXX" required maxlength="12" autocomplete="off" spellcheck="false">
           <small class="form-hint">One of the emergency recovery codes saved during 2FA configuration.</small>
         </div>
 
         <div class="form-group">
           <label for="forgot-new-password">New Password (minimum 14 characters)</label>
           <div class="input-with-icon">
-            <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <input id="forgot-new-password" type="password" minlength="14" required placeholder="Minimum 14 characters">
+            <svg class="input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <input id="forgot-new-password" type="password" minlength="14" required placeholder="Minimum 14 characters" autocomplete="new-password">
             <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('forgot-new-password', this)">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
             </button>
           </div>
         </div>
@@ -179,12 +197,94 @@
 
         <!-- Emergency CLI Reset box -->
         <div style="margin-top: 16px;">
-          <div style="font-size: 0.78rem; font-weight: 600; color: #64748b; margin-bottom: 6px;">Need host terminal recovery? Run on server:</div>
+          <div style="font-size: 0.78rem; font-weight: 600; color: var(--text-muted); margin-bottom: 6px;">Need host terminal recovery? Run on server:</div>
           <div class="cli-command-box">
             <code>docker compose exec app node dist/scripts/reset-password.js admin &lt;new_password&gt;</code>
             <button type="button" class="btn btn-xs btn-secondary" onclick="copyCliRecoveryCommand()">Copy</button>
           </div>
         </div>
+
+        <div style="margin-top: 12px; text-align: center; font-size: 0.76rem; color: var(--text-muted);">
+          Don't have 2FA enabled? Ask an Owner administrator to update your account from the Administrator Accounts page.
+        </div>
+
+        <div style="text-align: center; margin-top: 14px;">
+          <a href="#" class="auth-link" onclick="showView('login'); return false;">&larr; Back to Administrator Sign In</a>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- AUTH: Mailbox User Change Password View -->
+  <section id="view-mailbox-password" class="auth-wrapper hidden">
+    <div class="auth-card auth-card-compact">
+      <div class="auth-brand">
+        <div class="brand-badge">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        </div>
+        <h1>Change Mailbox Password</h1>
+        <p class="auth-subtitle">Self-service password update for your email account.</p>
+      </div>
+
+      <div id="mailbox-password-error" class="form-inline-error hidden">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span id="mailbox-password-error-text">Failed to update password</span>
+      </div>
+
+      <div id="mailbox-password-success" class="alert-box alert-success hidden" style="margin-bottom: 1.25rem;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        <div>
+          <strong>Password Updated Successfully!</strong>
+          <p id="mailbox-password-success-text" style="margin: 4px 0 0; font-size: 0.85rem;">You can now use your new password with your email client (Thunderbird, Outlook, Apple Mail, etc.).</p>
+        </div>
+      </div>
+
+      <form id="mailbox-change-password-form" class="auth-form" onsubmit="handleMailboxChangePasswordSubmit(event)">
+        <div class="form-group">
+          <label for="mb-self-email">Mailbox Email Address</label>
+          <div class="input-with-icon">
+            <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            <input id="mb-self-email" type="email" placeholder="e.g. user@yourdomain.com" required autocomplete="username">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="mb-self-current-password">Current Password (provided by administrator)</label>
+          <div class="input-with-icon">
+            <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <input id="mb-self-current-password" type="password" placeholder="Current / Temporary Password" required autocomplete="current-password">
+            <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('mb-self-current-password', this)" title="Show/Hide password">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="mb-self-new-password">New Password (minimum 12 characters)</label>
+          <div class="input-with-icon">
+            <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <input id="mb-self-new-password" type="password" minlength="12" placeholder="New Password" required autocomplete="new-password">
+            <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('mb-self-new-password', this)" title="Show/Hide password">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+          <small class="form-hint">Must be at least 12 characters and different from current password.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="mb-self-confirm-password">Confirm New Password</label>
+          <div class="input-with-icon">
+            <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <input id="mb-self-confirm-password" type="password" minlength="12" placeholder="Confirm New Password" required autocomplete="new-password">
+            <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('mb-self-confirm-password', this)" title="Show/Hide password">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" id="btn-mb-self-submit" class="btn btn-primary btn-block">
+          <span>Update Mailbox Password</span>
+        </button>
 
         <div style="text-align: center; margin-top: 16px;">
           <a href="#" class="auth-link" onclick="showView('login'); return false;">&larr; Back to Administrator Sign In</a>
@@ -1980,6 +2080,7 @@
                 <span>Copy Password</span>
               </button>
             </div>
+            <small class="form-hint" style="margin-top: 6px;">After creation, users can change this password on their own at /#mailbox-password.</small>
           </div>
 
           <div class="form-group">
@@ -2039,6 +2140,7 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               </button>
             </div>
+            <small class="form-hint" style="margin-top: 6px;">After creation, users can change this password on their own at /#mailbox-password.</small>
           </div>
           <div class="form-group">
             <label>Storage Quota Limit</label>
@@ -2189,6 +2291,20 @@
               <span>Authentication:</span>
               <span>Same as Incoming (Required)</span>
             </div>
+          </div>
+        </div>
+
+        <div class="guide-card mt-4" style="background: rgba(59, 130, 246, 0.05); border: 1px solid rgba(59, 130, 246, 0.2);">
+          <div class="guide-card-head">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <div>
+              <strong>Self-Service Password Change URL</strong>
+              <span class="guide-card-caption">Give this link to mailbox users so they can set their own password</span>
+            </div>
+          </div>
+          <div class="guide-row">
+            <span>User Password Change Portal:</span>
+            <div class="val-copy"><code id="guide-self-service-url">—</code> <button class="btn-copy-sm" onclick="copyElementText('guide-self-service-url', this)">Copy Link</button></div>
           </div>
         </div>
 
@@ -2622,7 +2738,56 @@
     </div>
   </div>
 
+  <!-- MODAL: 2FA Enablement Prompt -->
+  <div id="modal-2fa-prompt" class="modal-backdrop hidden" onclick="handleBackdropClick(event, 'modal-2fa-prompt')">
+    <div class="modal-window" style="max-width: 580px; width: 100%;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div class="brand-badge warning" style="width: 40px; height: 40px;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <div>
+            <h3 style="margin: 0; font-size: 1.15rem;">Enable Two-Factor Authentication</h3>
+            <p class="modal-subtitle" style="margin: 2px 0 0;">Important Security Recommendation</p>
+          </div>
+        </div>
+        <button type="button" class="btn-close-modal" onclick="dismiss2FaPrompt(true)" title="Close">&times;</button>
+      </div>
+
+      <div class="modal-body" style="padding: 20px 24px;">
+        <div class="alert-box alert-warning" style="margin-bottom: 16px;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <div>
+            <strong>Why 2FA is required for Password Recovery:</strong>
+            <p style="margin: 4px 0 0; font-size: 0.85rem; line-height: 1.45;">
+              If 2FA is not set up, <strong>Emergency Recovery Codes are NOT generated</strong>. Without recovery codes, you will <strong>NOT be able to use the "Forgot Password" feature</strong> if you ever forget your administrator password.
+            </p>
+          </div>
+        </div>
+
+        <p style="font-size: 0.88rem; color: var(--text-secondary); margin-bottom: 8px; line-height: 1.5;">
+          Protect your mail server and ensure you never get locked out. Setting up takes less than 1 minute using Google Authenticator, 1Password, Authy, or Apple Keychain.
+        </p>
+      </div>
+
+      <div class="modal-footer prompt-modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="dismiss2FaPrompt(true)" title="Do not show this reminder again">
+          Don't show again
+        </button>
+        <div class="prompt-modal-actions">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="dismiss2FaPrompt(false)">
+            Remind Me Later
+          </button>
+          <button type="button" class="btn btn-primary btn-sm" onclick="enable2FaFromPrompt()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            <span>Enable 2FA Now</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Script logic -->
-  <script src="/app.js?v=20261118-m09"></script>
+  <script src="/app.js?v=20261118-m10"></script>
 </body>
 </html>

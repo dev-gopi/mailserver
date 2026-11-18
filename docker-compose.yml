@@ -629,7 +629,7 @@ services:
   # only; Grafana is the sole UI exposed on the host.
   loki:
     image: grafana/loki:3.4.3
-    command: ["-config.file=/etc/loki/config.yml"]
+    command: ["-config.file=/etc/loki/config.yml", "-reporting.enabled=false"]
     volumes:
       - ./infrastructure/monitoring/loki.yml:/etc/loki/config.yml:ro
       - lokidata:/loki

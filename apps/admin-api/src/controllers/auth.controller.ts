@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { authService } from "../services/auth.service";
+import { mailboxService } from "../services/mailbox.service";
 import { clearAdminSessionCookies, setAdminSessionCookies } from "../utils/session-cookie";
 
 export class AuthController {
@@ -42,6 +43,22 @@ export class AuthController {
       return res.json(result);
     } catch (err: any) {
       return res.status(400).json({ error: err.message || "Password reset failed" });
+    }
+  }
+
+  async changeMailboxPassword(req: Request, res: Response) {
+    try {
+      const { email, currentPassword, newPassword } = req.body;
+      const result = await mailboxService.changePasswordByMailboxUser(req, {
+        email,
+        currentPassword,
+        newPassword
+      });
+      return res.json(result);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to change mailbox password";
+      const status = message.includes("Invalid") ? 401 : 400;
+      return res.status(status).json({ error: message });
     }
   }
 

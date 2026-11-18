@@ -64,12 +64,17 @@ const sessionChannel = typeof BroadcastChannel === "function"
 // DOM Helper
 const $ = (id) => document.getElementById(id);
 
-function clearSubmittedPasswordFields(form) {
-  // A visibility toggle can temporarily change a password input to text, so
-  // include password-named fields as well as inputs currently typed password.
-  form.querySelectorAll('input[type="password"], input[id*="password" i], input[name*="password" i]').forEach((input) => {
+function clearSensitiveInputsInElement(container) {
+  if (!container) return;
+  container.querySelectorAll(
+    'input[type="password"], input[id*="password" i], input[name*="password" i], input[id*="recovery" i], input[name*="recovery" i], input[id*="code" i], input[name*="code" i], input[id*="secret" i], input[id*="totp" i], input[id*="otp" i], input.recovery-code-input, input.otp-code-input'
+  ).forEach((input) => {
     input.value = "";
   });
+}
+
+function clearSubmittedPasswordFields(form) {
+  clearSensitiveInputsInElement(form);
 }
 
 // Auth Header helper
@@ -279,11 +284,12 @@ function request(path, options = {}) {
             headers: getHeaders(options.headers || {}, method)
           });
 
-    // Don't auto-redirect to login if we are in the middle of auth / login / 2fa / reset
+    // Don't auto-redirect to login if we are in the middle of auth / login / 2fa / reset / mailbox self-service
     const isAuthRoute = path.includes("/auth/login") ||
                         path.includes("/auth/mfa/") ||
                         path.includes("/auth/reset-password") ||
-                        path.includes("/auth/passkey/");
+                        path.includes("/auth/passkey/") ||
+                        path.includes("/auth/mailbox/");
 
           if (response.status === 401 && !isAuthRoute) {
             notifyOtherTabsOfLogout();
@@ -438,13 +444,35 @@ function showToast(title, message, type = "info", duration = 4500) {
   resumeDismissTimer();
 }
 
-// View Switching: login, 2fa, forgot, setup, app
+// View Switching: login, 2fa, forgot, setup, mailbox-password, app
 function showView(name) {
+  // Clear any sensitive inputs from previously viewed screens
+  clearSensitiveInputsInElement(document);
+
   $("view-login")?.classList.toggle("hidden", name !== "login");
   $("view-2fa")?.classList.toggle("hidden", name !== "2fa");
   $("view-forgot")?.classList.toggle("hidden", name !== "forgot");
   $("view-setup")?.classList.toggle("hidden", name !== "setup");
+  $("view-mailbox-password")?.classList.toggle("hidden", name !== "mailbox-password");
   $("view-app")?.classList.toggle("hidden", name !== "app");
+
+  if (name === "mailbox-password") {
+    // Reset any previous state/messages
+    $("mailbox-password-error")?.classList.add("hidden");
+    $("mailbox-password-success")?.classList.add("hidden");
+    // Pre-populate email from URL hash or query if present
+    try {
+      const hash = window.location.hash || "";
+      if (hash.includes("email=")) {
+        const email = decodeURIComponent(hash.split("email=")[1]?.split("&")[0] || "");
+        if (email && $("mb-self-email")) {
+          $("mb-self-email").value = email;
+        }
+      }
+    } catch {
+      // Ignore malformed URL params
+    }
+  }
 
   if (name === "app") {
     updateUserInfo();
@@ -645,6 +673,7 @@ function closeModal(id) {
   const el = $(id);
   if (!el) return;
   el.classList.add("hidden");
+  clearSensitiveInputsInElement(el);
   lastModalTrigger?.focus?.();
   lastModalTrigger = null;
 }
@@ -864,6 +893,7 @@ async function refreshAllData() {
     if (dashboard.queue) renderQueueStats(dashboard.queue, dashboard.taskQueue);
 
     showToast("Synchronized", "Mail server records updated.", "info", 1500);
+    void checkAndPrompt2Fa();
   } catch (err) {
     if (!err.message.includes("Session expired")) {
       showToast("Sync Error", err.message, "error");
@@ -1196,6 +1226,9 @@ function renderMailboxes() {
                 <button class="btn-copy-sm" onclick="copyText('${m.address}', this)" title="Copy Email">Copy</button>
               </div>
               <div class="mailbox-name">${escapeHtml(m.display_name || "—")}</div>
+              ${m.password_changed_at
+                ? `<div class="text-muted" style="font-size: 0.72rem; color: #10b981;" title="Password updated on ${formatDate(m.password_changed_at)}">✓ Password updated</div>`
+                : `<div class="text-muted" style="font-size: 0.72rem; color: #f59e0b;" title="Still using initial password set by administrator">⚠ Initial password</div>`}
             </div>
           </div>
         </td>
@@ -1227,6 +1260,9 @@ function renderMailboxes() {
         <td>${formatDate(m.created_at)}</td>
         <td class="text-right">
           <div class="table-actions">
+            <button class="btn-action-icon" title="Copy User Password Change Link" onclick="copyPasswordChangeLink('${m.address}', this)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            </button>
             <button class="btn-action-icon" title="Mail Client Setup Guide" onclick="openClientGuide('${m.address}', '${m.domain_name}')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
             </button>
@@ -1583,6 +1619,8 @@ async function openClientGuide(address = "", domain = "") {
   $("guide-smtp-port").textContent = config.outgoing.port;
   $("guide-smtp-alt-port").textContent = config.outgoing.alternativePort;
   $("guide-smtp-plain-port").textContent = config.outgoing.plaintextPort;
+  const selfServiceUrl = `${window.location.origin}/#mailbox-password${userAddr ? `?email=${encodeURIComponent(userAddr)}` : ""}`;
+  if ($("guide-self-service-url")) $("guide-self-service-url").textContent = selfServiceUrl;
   openModal("modal-client-guide");
 }
 
@@ -3812,6 +3850,7 @@ $("login-form").onsubmit = async (event) => {
     });
     showToast("Authentication Failed", err.message, "error");
   } finally {
+    if ($("password")) $("password").value = "";
     btn.disabled = false;
   }
 };
@@ -3852,6 +3891,10 @@ async function handleMfaSubmit(event) {
   const isRecovery = state.mfaMode === "recovery";
   const code = $("mfa-totp-code")?.value.trim();
   const recoveryCode = $("mfa-recovery-code")?.value.trim();
+
+  // Clear sensitive 2FA inputs immediately for security
+  if ($("mfa-totp-code")) $("mfa-totp-code").value = "";
+  if ($("mfa-recovery-code")) $("mfa-recovery-code").value = "";
 
   try {
     const payload = {
@@ -3907,6 +3950,10 @@ async function handleForgotPasswordSubmit(event) {
   const recoveryCode = $("forgot-recovery-code").value.trim();
   const newPassword = $("forgot-new-password").value;
 
+  // Clear sensitive credential inputs immediately from memory and DOM
+  $("forgot-recovery-code").value = "";
+  $("forgot-new-password").value = "";
+
   try {
     const data = await request("/auth/reset-password", {
       method: "POST",
@@ -3914,8 +3961,6 @@ async function handleForgotPasswordSubmit(event) {
     });
 
     showToast("Password Reset Successful", data.message || "You can now sign in with your new password.", "success", 6000);
-    $("forgot-recovery-code").value = "";
-    $("forgot-new-password").value = "";
     $("username").value = username;
     $("password").value = "";
     showView("login");
@@ -3930,6 +3975,7 @@ async function handleForgotPasswordSubmit(event) {
     });
     showToast("Recovery Failed", err.message, "error");
   } finally {
+    clearSensitiveInputsInElement($("forgot-form"));
     btn.disabled = false;
   }
 }
@@ -3940,6 +3986,89 @@ function copyCliRecoveryCommand() {
     showToast("Copied to Clipboard", "Paste and replace <new_password> in terminal.", "info");
   }).catch(() => {
     prompt("Copy emergency recovery command:", cmd);
+  });
+}
+
+// Mailbox Self-Service Password Change Handler
+async function handleMailboxChangePasswordSubmit(event) {
+  event.preventDefault();
+  const btn = $("btn-mb-self-submit");
+  const errorDiv = $("mailbox-password-error");
+  const errorText = $("mailbox-password-error-text");
+  const successDiv = $("mailbox-password-success");
+  const successText = $("mailbox-password-success-text");
+
+  errorDiv?.classList.add("hidden");
+  successDiv?.classList.add("hidden");
+
+  const email = $("mb-self-email").value.trim().toLowerCase();
+  const currentPassword = $("mb-self-current-password").value;
+  const newPassword = $("mb-self-new-password").value;
+  const confirmPassword = $("mb-self-confirm-password").value;
+
+  // Clear sensitive credentials immediately from DOM
+  $("mb-self-current-password").value = "";
+  $("mb-self-new-password").value = "";
+  $("mb-self-confirm-password").value = "";
+
+  if (newPassword !== confirmPassword) {
+    if (errorText) errorText.textContent = "New password and confirm password do not match.";
+    errorDiv?.classList.remove("hidden");
+    return;
+  }
+
+  if (newPassword.length < 12) {
+    if (errorText) errorText.textContent = "New password must be at least 12 characters long.";
+    errorDiv?.classList.remove("hidden");
+    return;
+  }
+
+  if (newPassword === currentPassword) {
+    if (errorText) errorText.textContent = "New password must be different from the current password.";
+    errorDiv?.classList.remove("hidden");
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = "Updating Password...";
+
+  try {
+    const res = await request("/auth/mailbox/change-password", {
+      method: "POST",
+      body: JSON.stringify({ email, currentPassword, newPassword })
+    });
+
+    if (successText) {
+      successText.textContent = res.message || "Password updated successfully. You can now use your new password with your mail client.";
+    }
+    successDiv?.classList.remove("hidden");
+    $("mb-self-current-password").value = "";
+    $("mb-self-new-password").value = "";
+    $("mb-self-confirm-password").value = "";
+    showToast("Password Updated", `Mailbox password for ${email} has been changed.`, "success");
+  } catch (err) {
+    if (errorText) errorText.textContent = err.message || "Failed to update mailbox password.";
+    errorDiv?.classList.remove("hidden");
+    showToast("Update Failed", err.message, "error");
+  } finally {
+    clearSensitiveInputsInElement($("mailbox-change-password-form"));
+    btn.disabled = false;
+    btn.textContent = "Update Mailbox Password";
+  }
+}
+
+// Copy self-service password link for admin
+function copyPasswordChangeLink(address, btn) {
+  const url = `${window.location.origin}/#mailbox-password${address ? `?email=${encodeURIComponent(address)}` : ""}`;
+  navigator.clipboard?.writeText(url).then(() => {
+    showToast("Link Copied", `Self-service password link copied for ${address || "mailboxes"}.`, "success");
+    if (btn) {
+      const oldHtml = btn.innerHTML;
+      btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`;
+      setTimeout(() => { btn.innerHTML = oldHtml; }, 2000);
+    }
+  }).catch(() => {
+    prompt("Copy this self-service password change link:", url);
   });
 }
 
@@ -4089,6 +4218,48 @@ $("admin-create-form")?.addEventListener("submit", async (event) => {
     showToast("Creation Failed", err.message, "error");
   } finally { if (submit) submit.disabled = false; }
 });
+
+// 2FA Enablement Prompt Functions
+async function checkAndPrompt2Fa() {
+  if (!state.adminUser) return;
+  const username = state.adminUser.username || "admin";
+  const dismissedPermanently = localStorage.getItem(`mailAdminDismiss2FaPrompt_${username}`);
+  if (dismissedPermanently === "true") return;
+
+  const remindedThisSession = sessionStorage.getItem(`mailAdminRemind2FaLater_${username}`);
+  if (remindedThisSession === "true") return;
+
+  try {
+    const status = await request("/auth/security-status");
+    if (!status.totpEnabled) {
+      setTimeout(() => {
+        if (!state.adminUser) return;
+        const anyModalOpen = document.querySelector(".modal-backdrop:not(.hidden)");
+        if (!anyModalOpen) {
+          openModal("modal-2fa-prompt");
+        }
+      }, 800);
+    }
+  } catch {
+    // Ignore security status check errors on prompt
+  }
+}
+
+function dismiss2FaPrompt(neverShowAgain = false) {
+  closeModal("modal-2fa-prompt");
+  const username = state.adminUser?.username || "admin";
+  if (neverShowAgain) {
+    localStorage.setItem(`mailAdminDismiss2FaPrompt_${username}`, "true");
+    showToast("Preference Saved", "You won't be prompted to enable 2FA again.", "info");
+  } else {
+    sessionStorage.setItem(`mailAdminRemind2FaLater_${username}`, "true");
+  }
+}
+
+function enable2FaFromPrompt() {
+  closeModal("modal-2fa-prompt");
+  openAdminSecurityModal();
+}
 
 // Admin Security Modal & 2FA Setup Functions
 async function openAdminSecurityModal() {
@@ -4706,9 +4877,27 @@ window.addEventListener("online", () => {
     }
   } catch {
     state.adminUser = null;
-    showView("login");
+    if (window.location.hash.startsWith("#mailbox-password") || window.location.hash.startsWith("#change-password")) {
+      showView("mailbox-password");
+    } else if (window.location.hash === "#forgot") {
+      showView("forgot");
+    } else {
+      showView("login");
+    }
   }
 })();
+
+window.addEventListener("hashchange", () => {
+  if (!state.adminUser) {
+    if (window.location.hash.startsWith("#mailbox-password") || window.location.hash.startsWith("#change-password")) {
+      showView("mailbox-password");
+    } else if (window.location.hash === "#forgot") {
+      showView("forgot");
+    } else if (window.location.hash === "#login" || !window.location.hash) {
+      showView("login");
+    }
+  }
+});
 
 const mailAnalyticsPeriodHandler = () => request(`/api/analytics/mail?days=${Number($("mail-analytics-period")?.value || 30)}`).then((data) => { state.mailAnalytics = data; renderMailFlowAnalytics(data); }).catch((error) => showToast("Analytics unavailable", error.message, "error"));
 $("mail-analytics-period")?.addEventListener("change", mailAnalyticsPeriodHandler);
