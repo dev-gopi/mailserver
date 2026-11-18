@@ -55,6 +55,10 @@ let lastModalTrigger = null;
 const API_TIMEOUT_MS = 15000;
 const MAX_READ_ATTEMPTS = 3;
 const inFlightReadRequests = new Map();
+const CROSS_TAB_LOGOUT_KEY = "mailcore-admin:logout";
+const sessionChannel = typeof BroadcastChannel === "function"
+  ? new BroadcastChannel("mailcore-admin-session")
+  : null;
 
 // DOM Helper
 const $ = (id) => document.getElementById(id);
@@ -4445,14 +4449,45 @@ $("password-form").onsubmit = async (event) => {
   }
 };
 
+function endLocalAdminSession(message) {
+  state.adminUser = null;
+  showView("login");
+  if (message) showToast("Signed Out", message, "info");
+}
+
+// Broadcast only a non-sensitive logout event. BroadcastChannel reaches active
+// same-origin tabs immediately; the storage event covers older browsers.
+function notifyOtherTabsOfLogout() {
+  const event = { type: "logout", occurredAt: Date.now() };
+  sessionChannel?.postMessage(event);
+  try {
+    localStorage.setItem(CROSS_TAB_LOGOUT_KEY, JSON.stringify(event));
+    localStorage.removeItem(CROSS_TAB_LOGOUT_KEY);
+  } catch {
+    // BroadcastChannel remains available when storage is blocked.
+  }
+}
+
+function handleRemoteLogout() {
+  if (!state.adminUser) return;
+  endLocalAdminSession("You were signed out from another MailCore tab.");
+}
+
+sessionChannel?.addEventListener("message", (event) => {
+  if (event.data?.type === "logout") handleRemoteLogout();
+});
+
+window.addEventListener("storage", (event) => {
+  if (event.key === CROSS_TAB_LOGOUT_KEY && event.newValue) handleRemoteLogout();
+});
+
 // Logout
 async function signOut() {
   try {
     await request("/auth/logout", { method: "POST" });
   } catch {}
-  state.adminUser = null;
-  showView("login");
-  showToast("Signed Out", "Session ended securely.", "info");
+  notifyOtherTabsOfLogout();
+  endLocalAdminSession("Session ended securely.");
 }
 
 $("btn-logout").onclick = signOut;
