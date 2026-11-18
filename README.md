@@ -235,14 +235,21 @@ patching, or deliverability monitoring.
   this to a soft reject (temporary SMTP failure) so the sending MTA can retry.
   A detected virus is rejected by Rspamd and Postfix's Milter quarantine
   behavior places reject actions into its HOLD queue.
+- ClamAV enables PUA detection, malformed executable/media alerts, and
+  `AlertExceedsMax`. Content that cannot be fully scanned because it exceeds
+  the configured archive, recursion, file-count, or size limits is rejected
+  rather than accepted unscanned. This deliberately favors security over
+  delivery of unusually large or complex attachments.
 - Initial policy thresholds in `services/rspamd/local.d/actions.conf` are:
   score 4 for greylisting, score 6 for spam tagging, and score 15 for reject.
   Tagged mail receives `X-Spam-Status` and Dovecot Sieve files it into `Junk`.
   Tune these values only after measuring false positives and delivery impact.
 - Rspamd's Bayes classifier stores state in the password-protected Redis
   instance. OpenPhish feed support is enabled and requires outbound HTTPS for
-  feed updates. MIME/attachment extension signals add risk score; extension
-  alone does not constitute a malware verdict. The interactive scan endpoint is
+  feed updates. OpenPhish and PhishTank positive feed matches, plus DMARC
+  failures from domains that publish `p=reject`, are quarantine-eligible
+  rejects. MIME/attachment extension signals add risk score; extension alone
+  does not constitute a malware verdict. The interactive scan endpoint is
   owner/admin-only and rate-limited to 10 scans per minute per client. These
   policy thresholds are tracked in configuration; a dynamic policy editor is
   available in the administration console.

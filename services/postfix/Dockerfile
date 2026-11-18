@@ -1,8 +1,11 @@
 FROM ubuntu:24.04
 
+LABEL org.opencontainers.image.title="MailCore Postfix" org.opencontainers.image.base.name="ubuntu:24.04"
+
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
+    && apt-get upgrade -y \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     postfix \
     postfix-pgsql \
@@ -15,6 +18,7 @@ RUN apt-get update \
     net-tools \
     socat \
     jq \
+    curl \
     telnet \
     nano \
     && apt-get clean \

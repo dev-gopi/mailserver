@@ -2,8 +2,16 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Apache SpamAssassin 4.0.2 is newer than Ubuntu 24.04's packaged 4.0.0.
+# Keep the upstream source and checksum pinned so image rebuilds are
+# reproducible and the downloaded release is integrity-checked.
+ARG SPAMASSASSIN_VERSION=4.0.2
+ARG SPAMASSASSIN_SHA512=138ba8c4577173d0584d44757397af335e45d0f04a66834ef84c2a9065f33aec8f71c1685c6849ad048998915dd7bd1e6cb7e8be8363ef3652d695e15736aab6
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     spamassassin \
+    ca-certificates \
+    build-essential \
     spamd \
     libmail-spamassassin-perl \
     cron \
@@ -11,6 +19,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSLO "https://downloads.apache.org/spamassassin/source/Mail-SpamAssassin-${SPAMASSASSIN_VERSION}.tar.gz" \
+    && echo "${SPAMASSASSIN_SHA512}  Mail-SpamAssassin-${SPAMASSASSIN_VERSION}.tar.gz" | sha512sum -c - \
+    && tar -xzf "Mail-SpamAssassin-${SPAMASSASSIN_VERSION}.tar.gz" \
+    && cd "Mail-SpamAssassin-${SPAMASSASSIN_VERSION}" \
+    && perl Makefile.PL INSTALLDIRS=site --sysconfdir=/etc/spamassassin \
+    && make \
+    && make install \
+    && cd / \
+    && rm -rf "Mail-SpamAssassin-${SPAMASSASSIN_VERSION}" "Mail-SpamAssassin-${SPAMASSASSIN_VERSION}.tar.gz" \
+    && apt-get purge -y --auto-remove build-essential
 
 # Create spamd user and group with UID/GID 5000
 RUN groupadd -g 5000 spamd && \
