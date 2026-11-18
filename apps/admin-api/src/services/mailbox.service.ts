@@ -26,6 +26,10 @@ export class MailboxService {
     return mailboxRepository.findAll();
   }
 
+  async getMailboxesPage(limit: number, offset: number) {
+    return mailboxRepository.findPage(limit, offset);
+  }
+
   async getMailboxById(id: number) {
     const mb = await mailboxRepository.findById(id);
     if (!mb) throw new Error("Mailbox not found");

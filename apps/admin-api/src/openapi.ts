@@ -27,7 +27,7 @@ export const openapi = {
       put: { security: [{ bearerAuth: [] }], summary: "Update organization profile" }
     },
     "/api/domains": {
-      get: { security: [{ bearerAuth: [] }], summary: "List company domains" },
+      get: { security: [{ bearerAuth: [] }], summary: "List company domains; optional limit (1-100) and offset return a paginated response" },
       post: { security: [{ bearerAuth: [] }], summary: "Register a company domain" }
     },
     "/api/domains/{id}": {
@@ -37,7 +37,7 @@ export const openapi = {
     "/api/domains/{id}/verify": { post: { security: [{ bearerAuth: [] }], summary: "Verify _mail-admin.<domain> DNS TXT ownership token" } },
 
     "/api/mailboxes": {
-      get: { security: [{ bearerAuth: [] }], summary: "List mailboxes" },
+      get: { security: [{ bearerAuth: [] }], summary: "List mailboxes; optional limit (1-100) and offset return a paginated response" },
       post: { security: [{ bearerAuth: [] }], summary: "Create a mailbox" }
     },
     "/api/mailboxes/{id}": {
@@ -53,7 +53,7 @@ export const openapi = {
     },
 
     "/api/aliases": {
-      get: { security: [{ bearerAuth: [] }], summary: "List email aliases" },
+      get: { security: [{ bearerAuth: [] }], summary: "List email aliases; optional limit (1-100) and offset return a paginated response" },
       post: { security: [{ bearerAuth: [] }], summary: "Create email alias" }
     },
     "/api/aliases/{id}": {

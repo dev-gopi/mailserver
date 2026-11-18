@@ -63,6 +63,11 @@ export const aliasPatchSchema = z.object({
   active: z.boolean({ message: "active boolean is required" })
 });
 
+export const listPaginationQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).max(1_000_000).optional()
+});
+
 export const testSmtpSchema = z.object({
   recipient: z.string().email("Valid recipient email is required"),
   sender: z.string().email("Valid sender email is required").optional(),

@@ -7,6 +7,16 @@ export class AliasController {
   /** All aliases (admin view — includes inactive). */
   async list(req: Request, res: Response) {
     try {
+      const { limit, offset } = req.query as { limit?: number; offset?: number };
+      if (limit !== undefined || offset !== undefined) {
+        const pageLimit = limit ?? 25;
+        const pageOffset = offset ?? 0;
+        const page = await aliasService.getAliasesPage(pageLimit, pageOffset);
+        return res.json({
+          items: page.items,
+          pagination: { limit: pageLimit, offset: pageOffset, total: page.total, hasMore: pageOffset + page.items.length < page.total }
+        });
+      }
       const aliases = await aliasService.getAllAliases();
       return res.json(aliases);
     } catch (err: any) {

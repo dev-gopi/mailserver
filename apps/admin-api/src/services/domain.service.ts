@@ -121,6 +121,15 @@ export class DomainService {
     }));
   }
 
+  async getDomainsPage(limit: number, offset: number) {
+    const page = await domainRepository.findPage(limit, offset);
+    const items = await Promise.all(page.items.map(async (domain) => {
+      const withRecords = await this.withDnsRecords(domain);
+      return this.withoutVerificationToken(withRecords);
+    }));
+    return { items, total: page.total };
+  }
+
   /**
    * Mail-delivery-facing: returns only domains in virtual_domains (active +
    * verified) — the same set Postfix accepts mail for.

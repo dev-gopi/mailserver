@@ -6,6 +6,16 @@ const canWrite = (req: Request) => req.admin?.role !== "viewer";
 export class DomainController {
   async list(req: Request, res: Response) {
     try {
+      const { limit, offset } = req.query as { limit?: number; offset?: number };
+      if (limit !== undefined || offset !== undefined) {
+        const pageLimit = limit ?? 25;
+        const pageOffset = offset ?? 0;
+        const page = await domainService.getDomainsPage(pageLimit, pageOffset);
+        return res.json({
+          items: page.items,
+          pagination: { limit: pageLimit, offset: pageOffset, total: page.total, hasMore: pageOffset + page.items.length < page.total }
+        });
+      }
       const domains = await domainService.getAllDomains();
       return res.json(domains);
     } catch (err: any) {

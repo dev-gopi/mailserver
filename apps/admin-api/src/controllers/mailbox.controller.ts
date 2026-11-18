@@ -6,6 +6,16 @@ const canWrite = (req: Request) => req.admin?.role !== "viewer";
 export class MailboxController {
   async list(req: Request, res: Response) {
     try {
+      const { limit, offset } = req.query as { limit?: number; offset?: number };
+      if (limit !== undefined || offset !== undefined) {
+        const pageLimit = limit ?? 25;
+        const pageOffset = offset ?? 0;
+        const page = await mailboxService.getMailboxesPage(pageLimit, pageOffset);
+        return res.json({
+          items: page.items,
+          pagination: { limit: pageLimit, offset: pageOffset, total: page.total, hasMore: pageOffset + page.items.length < page.total }
+        });
+      }
       const mailboxes = await mailboxService.getAllMailboxes();
       return res.json(mailboxes);
     } catch (err: any) {

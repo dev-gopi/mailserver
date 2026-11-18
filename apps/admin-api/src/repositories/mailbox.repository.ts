@@ -40,6 +40,24 @@ export class MailboxRepository {
     })));
   }
 
+  async findPage(limit: number, offset: number): Promise<{ items: MailboxEntity[]; total: number }> {
+    const [rows, count] = await Promise.all([
+      db.query<MailboxEntity>(
+        `SELECT m.id, m.domain_id, d.name AS domain_name, m.address, m.display_name,
+                m.maildir, m.quota_bytes, m.active, m.created_at, m.updated_at
+         FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+         ORDER BY m.address ASC LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      ),
+      db.query<{ total: string }>("SELECT count(*)::text AS total FROM mailboxes")
+    ]);
+    const items = await Promise.all(rows.rows.map(async (mailbox) => ({
+      ...mailbox,
+      storage_used_bytes: await this.getStorageUsedBytes(mailbox.maildir)
+    })));
+    return { items, total: Number(count.rows[0]?.total || 0) };
+  }
+
   private async getStorageUsedBytes(maildir: string): Promise<number> {
     const root = path.resolve(env.mailStoragePath);
     const mailboxPath = path.resolve(root, maildir);

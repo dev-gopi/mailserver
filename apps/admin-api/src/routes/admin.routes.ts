@@ -11,6 +11,7 @@ import {
   mailboxTestAuthSchema,
   aliasCreateSchema,
   aliasPatchSchema,
+  listPaginationQuerySchema,
   testSmtpSchema,
   testSpamSchema,
   clientConfigQuerySchema,
@@ -95,7 +96,7 @@ adminRouter.get("/company", companyController.get);
 adminRouter.put("/company", requireRoles("owner"), validate({ body: companyUpdateSchema }), companyController.update);
 
 // ── Domains (admin view — all domains) ────────────────────────────────────────
-adminRouter.get("/domains", domainController.list);
+adminRouter.get("/domains", validate({ query: listPaginationQuerySchema }), domainController.list);
 // IMPORTANT: /domains/active must come BEFORE /domains/:id to avoid Express
 // matching "active" as an id parameter.
 adminRouter.get("/domains/active", domainController.listActive);
@@ -105,7 +106,7 @@ adminRouter.patch("/domains/:id", requireRoles("admin"), validate({ body: domain
 adminRouter.delete("/domains/:id", requireRoles("owner"), domainController.delete);
 
 // ── Mailboxes (virtual_users backed) ───────────────────────────────────────────
-adminRouter.get("/mailboxes", mailboxController.list);
+adminRouter.get("/mailboxes", validate({ query: listPaginationQuerySchema }), mailboxController.list);
 adminRouter.get("/mailboxes/client-config", validate({ query: clientConfigQuerySchema }), mailboxController.getClientConfig);
 adminRouter.get("/mailboxes/:id", mailboxController.get);
 adminRouter.post("/mailboxes", requireRoles("admin"), validate({ body: mailboxCreateSchema }), mailboxController.create);
@@ -119,7 +120,7 @@ adminRouter.post(
 );
 
 // ── Aliases (virtual_aliases backed for routing display) ───────────────────────
-adminRouter.get("/aliases", aliasController.list);
+adminRouter.get("/aliases", validate({ query: listPaginationQuerySchema }), aliasController.list);
 adminRouter.get("/aliases/active", aliasController.listActive);
 adminRouter.post("/aliases", requireRoles("admin"), validate({ body: aliasCreateSchema }), aliasController.create);
 adminRouter.patch("/aliases/:id", requireRoles("admin"), validate({ body: aliasPatchSchema }), aliasController.updateActive);

@@ -31,6 +31,19 @@ export class AliasRepository {
     return res.rows;
   }
 
+  async findPage(limit: number, offset: number): Promise<{ items: AliasEntity[]; total: number }> {
+    const [items, count] = await Promise.all([
+      db.query<AliasEntity>(
+        `SELECT a.id, a.domain_id, d.name AS domain_name, a.source, a.destination, a.active, a.created_at
+         FROM aliases a JOIN domains d ON d.id = a.domain_id
+         ORDER BY a.source ASC LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      ),
+      db.query<{ total: string }>("SELECT count(*)::text AS total FROM aliases")
+    ]);
+    return { items: items.rows, total: Number(count.rows[0]?.total || 0) };
+  }
+
   /**
    * Active routing list — mirrors exactly what Postfix sees via virtual_aliases.
    * Returns only active aliases joined with domain names.
