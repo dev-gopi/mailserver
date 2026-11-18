@@ -56,6 +56,7 @@ const API_TIMEOUT_MS = 15000;
 const MAX_READ_ATTEMPTS = 3;
 const inFlightReadRequests = new Map();
 const CROSS_TAB_LOGOUT_KEY = "mailcore-admin:logout";
+const CROSS_TAB_SESSION_KEY = "mailcore-admin:session-sync";
 const sessionChannel = typeof BroadcastChannel === "function"
   ? new BroadcastChannel("mailcore-admin-session")
   : null;
@@ -285,6 +286,7 @@ function request(path, options = {}) {
                         path.includes("/auth/passkey/");
 
           if (response.status === 401 && !isAuthRoute) {
+            notifyOtherTabsOfLogout();
             state.adminUser = null;
             showView("login");
             const error = new Error("Session expired. Please sign in again.");
@@ -2436,10 +2438,21 @@ async function pollMediumMetrics() {
   }
 }
 
-function handleVisibilityChange() {
-  if (!document.hidden && state.adminUser) {
+async function handleVisibilityChange() {
+  if (document.hidden) return;
+  if (state.adminUser) {
     void pollFastMetrics();
     void pollMediumMetrics();
+  } else {
+    // Check if user signed in from another tab while this tab was in the background
+    try {
+      const profile = await request("/auth/me");
+      if (profile?.admin) {
+        handleRemoteLogin(profile.admin);
+      }
+    } catch {
+      // Still unauthenticated
+    }
   }
 }
 
@@ -2457,15 +2470,11 @@ function startLiveMonitor() {
   mediumPollingTimer = setInterval(() => {
     if (!document.hidden) void pollMediumMetrics();
   }, 60000);
-
-  document.removeEventListener("visibilitychange", handleVisibilityChange);
-  document.addEventListener("visibilitychange", handleVisibilityChange);
 }
 
 function stopLiveMonitor() {
   if (fastPollingTimer) { clearInterval(fastPollingTimer); fastPollingTimer = null; }
   if (mediumPollingTimer) { clearInterval(mediumPollingTimer); mediumPollingTimer = null; }
-  document.removeEventListener("visibilitychange", handleVisibilityChange);
 }
 
 // 5b. Audit Log Renderer
@@ -2918,33 +2927,6 @@ function renderQueueStats(queue = {}, taskQueue = {}) {
       : `${queue.totalCount} messages awaiting delivery in spool`;
   }
 
-  async function runDeliverabilityCheck() {
-    const domain = $("deliverability-domain")?.value;
-    const result = $("deliverability-result");
-    if (!domain || !result) return;
-
-    result.innerHTML = `<p class="text-muted">Checking DNS and reverse DNS for ${escapeHtml(domain)}...</p>`;
-    try {
-      const report = await request(`/api/system/deliverability?domain=${encodeURIComponent(domain)}`);
-      const statusClass = report.status === "pass"
-        ? "alert-success"
-        : report.status === "warn" ? "alert-warning" : "alert-danger";
-      result.className = `alert-box ${statusClass}`;
-      result.innerHTML = `
-        <strong>Deliverability status: ${escapeHtml(report.status.toUpperCase())}</strong>
-        <div class="mt-3">${report.checks.map((check) => `
-          <div class="flex-between" style="gap: 12px; margin: 6px 0;">
-            <span>${escapeHtml(check.name)}</span>
-            <span><strong>${escapeHtml(check.status.toUpperCase())}</strong> — ${escapeHtml(check.details)}</span>
-          </div>
-        `).join("")}</div>
-      `;
-    } catch (err) {
-      result.className = "alert-box alert-danger";
-      result.textContent = err.message;
-    }
-  }
-
   if (taskQueue) {
     if ($("taskqueue-pending")) $("taskqueue-pending").textContent = taskQueue.pendingCount || 0;
     if ($("taskqueue-completed")) $("taskqueue-completed").textContent = taskQueue.completedCount || 0;
@@ -2956,6 +2938,38 @@ function renderQueueStats(queue = {}, taskQueue = {}) {
     }
   }
 }
+
+async function runDeliverabilityCheck() {
+  const domain = $("deliverability-domain")?.value;
+  const result = $("deliverability-result");
+  if (!result) return;
+  if (!domain) {
+    showToast("Domain Required", "Please select a domain from the dropdown to check deliverability.", "info");
+    return;
+  }
+
+  result.innerHTML = `<p class="text-muted">Checking DNS and reverse DNS for ${escapeHtml(domain)}...</p>`;
+  try {
+    const report = await request(`/api/system/deliverability?domain=${encodeURIComponent(domain)}`);
+    const statusClass = report.status === "pass"
+      ? "alert-success"
+      : report.status === "warn" ? "alert-warning" : "alert-danger";
+    result.className = `alert-box ${statusClass}`;
+    result.innerHTML = `
+      <strong>Deliverability status: ${escapeHtml(report.status.toUpperCase())}</strong>
+      <div class="mt-3">${report.checks.map((check) => `
+        <div class="flex-between" style="gap: 12px; margin: 6px 0;">
+          <span>${escapeHtml(check.name)}</span>
+          <span><strong>${escapeHtml(check.status.toUpperCase())}</strong> — ${escapeHtml(check.details)}</span>
+        </div>
+      `).join("")}</div>
+    `;
+  } catch (err) {
+    result.className = "alert-box alert-danger";
+    result.textContent = err.message;
+  }
+}
+window.runDeliverabilityCheck = runDeliverabilityCheck;
 
 async function runDiagnosticsNow() {
   try {
@@ -3784,6 +3798,7 @@ $("login-form").onsubmit = async (event) => {
       showView("setup");
     } else {
       showView("app");
+      notifyOtherTabsOfLogin(state.adminUser);
       await refreshAllData();
     }
   } catch (err) {
@@ -3863,6 +3878,7 @@ async function handleMfaSubmit(event) {
       showView("setup");
     } else {
       showView("app");
+      notifyOtherTabsOfLogin(state.adminUser);
       await refreshAllData();
     }
   } catch (err) {
@@ -3973,6 +3989,7 @@ async function handlePasskeyLogin() {
       showView("setup");
     } else {
       showView("app");
+      notifyOtherTabsOfLogin(state.adminUser);
       await refreshAllData();
     }
   } catch (err) {
@@ -4443,6 +4460,7 @@ $("password-form").onsubmit = async (event) => {
 
     showToast("Password Updated", "Security credential configured.", "success");
     showView("app");
+    notifyOtherTabsOfLogin(state.adminUser);
     await refreshAllData();
   } catch (err) {
     showToast("Setup Failed", err.message, "error");
@@ -4451,34 +4469,104 @@ $("password-form").onsubmit = async (event) => {
 
 function endLocalAdminSession(message) {
   state.adminUser = null;
+  state.pendingMfa = null;
   showView("login");
   if (message) showToast("Signed Out", message, "info");
 }
 
-// Broadcast only a non-sensitive logout event. BroadcastChannel reaches active
-// same-origin tabs immediately; the storage event covers older browsers.
-function notifyOtherTabsOfLogout() {
-  const event = { type: "logout", occurredAt: Date.now() };
+let isSyncingRemoteSession = false;
+
+// Broadcast non-sensitive session sync events. BroadcastChannel reaches active
+// same-origin tabs immediately; localStorage storage event covers older browsers or idle tabs.
+function notifyOtherTabsOfLogin(admin) {
+  const event = { type: "login", admin: admin || null, occurredAt: Date.now() };
   sessionChannel?.postMessage(event);
   try {
-    localStorage.setItem(CROSS_TAB_LOGOUT_KEY, JSON.stringify(event));
-    localStorage.removeItem(CROSS_TAB_LOGOUT_KEY);
+    localStorage.setItem(CROSS_TAB_SESSION_KEY, JSON.stringify(event));
+    setTimeout(() => {
+      try { localStorage.removeItem(CROSS_TAB_SESSION_KEY); } catch {}
+    }, 200);
   } catch {
     // BroadcastChannel remains available when storage is blocked.
   }
 }
 
+function notifyOtherTabsOfLogout() {
+  const event = { type: "logout", occurredAt: Date.now() };
+  sessionChannel?.postMessage(event);
+  try {
+    localStorage.setItem(CROSS_TAB_LOGOUT_KEY, JSON.stringify(event));
+    localStorage.setItem(CROSS_TAB_SESSION_KEY, JSON.stringify(event));
+    setTimeout(() => {
+      try {
+        localStorage.removeItem(CROSS_TAB_LOGOUT_KEY);
+        localStorage.removeItem(CROSS_TAB_SESSION_KEY);
+      } catch {}
+    }, 200);
+  } catch {
+    // BroadcastChannel remains available when storage is blocked.
+  }
+}
+
+async function handleRemoteLogin(admin) {
+  if (isSyncingRemoteSession) return;
+  // If this tab is already logged in and showing app view, nothing to do
+  if (state.adminUser && $("view-app") && !$("view-app").classList.contains("hidden")) {
+    return;
+  }
+  isSyncingRemoteSession = true;
+  try {
+    // Verify session with the backend using the shared cookie
+    const profile = await request("/auth/me");
+    state.adminUser = profile.admin || admin || null;
+    state.pendingMfa = null;
+
+    // Close any open auth/login modals
+    document.querySelectorAll(".modal-backdrop:not(.hidden)").forEach((m) => closeModal(m.id));
+
+    if (state.adminUser?.mustChangePassword) {
+      showView("setup");
+    } else {
+      showView("app");
+      await refreshAllData();
+      showToast("Signed In", "Session synchronized from another tab.", "success");
+    }
+  } catch {
+    // If backend returns 401 or network error, stay in login
+  } finally {
+    isSyncingRemoteSession = false;
+  }
+}
+
 function handleRemoteLogout() {
-  if (!state.adminUser) return;
+  if (!state.adminUser && $("view-login") && !$("view-login").classList.contains("hidden")) {
+    return;
+  }
+  // Close any open modals
+  document.querySelectorAll(".modal-backdrop:not(.hidden)").forEach((m) => closeModal(m.id));
   endLocalAdminSession("You were signed out from another MailCore tab.");
 }
 
+function handleSessionSyncEvent(eventData) {
+  if (!eventData || typeof eventData !== "object") return;
+  if (eventData.type === "logout") {
+    handleRemoteLogout();
+  } else if (eventData.type === "login") {
+    void handleRemoteLogin(eventData.admin);
+  }
+}
+
 sessionChannel?.addEventListener("message", (event) => {
-  if (event.data?.type === "logout") handleRemoteLogout();
+  handleSessionSyncEvent(event.data);
 });
 
 window.addEventListener("storage", (event) => {
-  if (event.key === CROSS_TAB_LOGOUT_KEY && event.newValue) handleRemoteLogout();
+  if ((event.key === CROSS_TAB_SESSION_KEY || event.key === CROSS_TAB_LOGOUT_KEY) && event.newValue) {
+    try {
+      const data = JSON.parse(event.newValue);
+      handleSessionSyncEvent(data);
+    } catch {}
+  }
 });
 
 // Logout
@@ -4603,6 +4691,9 @@ window.addEventListener("online", () => {
   const savedTheme = localStorage.getItem("mailAdminTheme") ||
     (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   applyTheme(savedTheme);
+
+  // Keep visibility listener active across views so returning to an idle/background tab syncs session
+  document.addEventListener("visibilitychange", handleVisibilityChange);
 
   try {
     const profile = await request("/auth/me");
