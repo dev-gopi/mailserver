@@ -52,6 +52,9 @@ let eventStream = null;
 let eventUiRefreshTimer = null;
 let eventLoadInProgress = false;
 let lastModalTrigger = null;
+const API_TIMEOUT_MS = 15000;
+const MAX_READ_ATTEMPTS = 3;
+const inFlightReadRequests = new Map();
 
 // DOM Helper
 const $ = (id) => document.getElementById(id);
@@ -204,18 +207,72 @@ function renderDashboardFailuresTable() {
   `).join("");
 }
 
-// Central API Request Handler
-async function request(path, options = {}) {
-  const url = path;
-  const method = String(options.method || "GET").toUpperCase();
-  const config = {
-    ...options,
-    credentials: "same-origin",
-    headers: getHeaders(options.headers || {}, method)
-  };
+function setApiConnectionStatus(status) {
+  const indicator = $("api-connection-status");
+  if (!indicator) return;
+  indicator.classList.toggle("hidden", status === "online");
+  indicator.classList.toggle("offline", status === "offline");
+  indicator.textContent = status === "offline" ? "Connection lost" : "Reconnecting…";
+}
 
-  try {
-    const res = await fetch(url, config);
+function wait(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function retryDelay(response, attempt) {
+  const retryAfter = Number(response?.headers?.get("Retry-After"));
+  if (Number.isFinite(retryAfter) && retryAfter >= 0) return Math.min(retryAfter * 1000, 6000);
+  return Math.min(350 * (2 ** attempt) + Math.random() * 150, 2500);
+}
+
+async function parseResponseBody(response) {
+  if (response.status === 204) return null;
+  const text = await response.text();
+  if (!text) return {};
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+function getApiError(response, data) {
+  if (typeof data === "string" && data.trim()) return data;
+  if (data && data.error) return data.error;
+  if (data && data.message) return data.message;
+  if (data && Array.isArray(data.details)) return data.details.map((detail) => detail.message || detail.field).filter(Boolean).join("; ");
+  if (data && typeof data.details === "string") return data.details;
+  return response.statusText || `Request failed with status ${response.status}`;
+}
+
+// Central API Request Handler. Reads can be safely shared and retried; mutations
+// are sent once so an unreliable connection cannot create duplicate changes.
+function request(path, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  const isRead = method === "GET" || method === "HEAD";
+  const requestKey = isRead && !options.signal ? `${method}:${path}` : null;
+  if (requestKey && inFlightReadRequests.has(requestKey)) return inFlightReadRequests.get(requestKey);
+
+  const execute = async () => {
+    const { signal: callerSignal, ...fetchOptions } = options;
+    let activeController = null;
+    const abortFromCaller = () => activeController?.abort();
+    callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+
+    try {
+      for (let attempt = 0; attempt < (isRead ? MAX_READ_ATTEMPTS : 1); attempt += 1) {
+        if (callerSignal?.aborted) throw new Error("Request cancelled.");
+        const controller = new AbortController();
+        activeController = controller;
+        let timedOut = false;
+        const timeoutId = window.setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, API_TIMEOUT_MS);
+
+        try {
+          const response = await fetch(path, {
+            ...fetchOptions,
+            credentials: "same-origin",
+            signal: controller.signal,
+            headers: getHeaders(options.headers || {}, method)
+          });
 
     // Don't auto-redirect to login if we are in the middle of auth / login / 2fa / reset
     const isAuthRoute = path.includes("/auth/login") ||
@@ -223,42 +280,63 @@ async function request(path, options = {}) {
                         path.includes("/auth/reset-password") ||
                         path.includes("/auth/passkey/");
 
-    if (res.status === 401 && !isAuthRoute) {
-      state.adminUser = null;
-      showView("login");
-      throw new Error("Session expired. Please sign in again.");
-    }
+          if (response.status === 401 && !isAuthRoute) {
+            state.adminUser = null;
+            showView("login");
+            const error = new Error("Session expired. Please sign in again.");
+            error.apiResponse = true;
+            throw error;
+          }
 
-    if (res.status === 204) {
-      return null;
-    }
+          if (response.ok) {
+            setApiConnectionStatus("online");
+            return parseResponseBody(response);
+          }
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      // Extract the most specific and accurate error message returned by the API
-      let errMsg = "";
-      if (typeof data === "string") {
-        errMsg = data;
-      } else if (data && data.error) {
-        errMsg = data.error;
-      } else if (data && data.message) {
-        errMsg = data.message;
-      } else if (data && Array.isArray(data.details)) {
-        errMsg = data.details.map((d) => d.message || d.field).join("; ");
-      } else if (data && typeof data.details === "string") {
-        errMsg = data.details;
-      } else if (res.statusText) {
-        errMsg = `${res.statusText} (${res.status})`;
-      } else {
-        errMsg = `Request failed with status ${res.status}`;
+          const retryable = isRead && [408, 429, 500, 502, 503, 504].includes(response.status);
+          if (retryable && attempt < MAX_READ_ATTEMPTS - 1) {
+            await wait(retryDelay(response, attempt));
+            continue;
+          }
+          const error = new Error(getApiError(response, await parseResponseBody(response)));
+          error.apiResponse = true;
+          throw error;
+        } catch (error) {
+          const wasAborted = controller.signal.aborted;
+          if (wasAborted && callerSignal?.aborted) throw new Error("Request cancelled.");
+          if (wasAborted && timedOut) {
+            if (isRead && attempt < MAX_READ_ATTEMPTS - 1) {
+              await wait(retryDelay(null, attempt));
+              continue;
+            }
+            setApiConnectionStatus("reconnecting");
+            throw new Error("The server did not respond in time. Please try again.");
+          }
+          if (error?.apiResponse) throw error;
+          if (isRead && attempt < MAX_READ_ATTEMPTS - 1 && !wasAborted) {
+            await wait(retryDelay(null, attempt));
+            continue;
+          }
+          if (error instanceof TypeError) {
+            setApiConnectionStatus(navigator.onLine ? "reconnecting" : "offline");
+            throw new Error(navigator.onLine ? "Unable to reach the server. Please try again." : "You appear to be offline. Check your connection and try again.");
+          }
+          throw error;
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
       }
-
-      throw new Error(errMsg);
+    } finally {
+      callerSignal?.removeEventListener("abort", abortFromCaller);
     }
-    return data;
-  } catch (err) {
-    throw err;
+  };
+
+  const pending = execute();
+  if (requestKey) {
+    inFlightReadRequests.set(requestKey, pending);
+    pending.finally(() => inFlightReadRequests.delete(requestKey)).catch(() => {});
   }
+  return pending;
 }
 
 // Toast Notifications
@@ -372,6 +450,79 @@ function showView(name) {
   }
 }
 
+// Per-Tab Live Loaders
+
+async function loadMailboxes() {
+  try {
+    const data = await request("/api/mailboxes");
+    state.mailboxes = Array.isArray(data) ? data : [];
+    if ($("badge-nav-mailboxes")) $("badge-nav-mailboxes").textContent = state.mailboxes.length;
+    renderMailboxes();
+  } catch (err) {
+    console.error("Failed to load mailboxes", err);
+  }
+}
+
+async function loadDomains() {
+  try {
+    const data = await request("/api/domains");
+    state.domains = Array.isArray(data) ? data : [];
+    if ($("badge-nav-domains")) $("badge-nav-domains").textContent = state.domains.length;
+    renderDomains();
+    populateDomainSelectors();
+  } catch (err) {
+    console.error("Failed to load domains", err);
+  }
+}
+
+async function loadAliases() {
+  try {
+    const data = await request("/api/aliases");
+    state.aliases = Array.isArray(data) ? data : [];
+    if ($("badge-nav-aliases")) $("badge-nav-aliases").textContent = state.aliases.length;
+    renderAliases();
+  } catch (err) {
+    console.error("Failed to load aliases", err);
+  }
+}
+
+async function loadOverview() {
+  try {
+    const [dashboard, clientConfig] = await Promise.all([
+      request("/api/dashboard"),
+      request("/api/mailboxes/client-config").catch(() => null)
+    ]);
+    state.dashboardData = dashboard;
+    if (clientConfig) state.clientConfig = clientConfig;
+    renderOverview();
+    if (dashboard.services) {
+      renderServicesHealth(dashboard.services);
+      renderInfrastructureSummary(dashboard.services);
+      renderServicesLatencyChart(dashboard.services);
+    }
+    if (dashboard.queue) renderQueueStats(dashboard.queue, dashboard.taskQueue);
+    renderOverviewConnectionReference(clientConfig);
+  } catch (err) {
+    console.error("Failed to load overview", err);
+  }
+}
+
+async function loadDashboard() {
+  try {
+    const periodDays = Number($("mail-analytics-period")?.value || 30);
+    const [dashboard, analytics] = await Promise.all([
+      request("/api/dashboard"),
+      request(`/api/analytics/mail?days=${periodDays}`).catch(() => null)
+    ]);
+    state.dashboardData = dashboard;
+    if (analytics) state.mailAnalytics = analytics;
+    renderDashboardVisuals();
+    if (state.mailAnalytics) renderMailFlowAnalytics(state.mailAnalytics);
+  } catch (err) {
+    console.error("Failed to load dashboard", err);
+  }
+}
+
 // Navigation Tabs
 function switchTab(tabId) {
   state.currentTab = tabId;
@@ -410,21 +561,23 @@ function switchTab(tabId) {
   };
   $("page-title").textContent = titles[tabId] || "Control Panel";
 
+  if (tabId === "overview") {
+    loadOverview();
+  }
   if (tabId === "dashboard") {
-    renderDashboardVisuals();
-    renderMailFlowAnalytics(state.mailAnalytics);
+    loadDashboard();
   }
-  if (tabId === "backups") {
-    renderBackupsView();
+  if (tabId === "mailboxes") {
+    loadMailboxes();
   }
-  if (tabId === "audit" && state.auditLogs.length === 0) {
-    loadAuditLogs();
+  if (tabId === "domains") {
+    loadDomains();
   }
-  if (tabId === "events") {
-    loadEvents();
+  if (tabId === "aliases") {
+    loadAliases();
   }
   if (tabId === "services") {
-    runDiagnosticsNow();
+    pollFastMetrics();
   }
   if (tabId === "quarantine") {
     loadQuarantine();
@@ -432,8 +585,21 @@ function switchTab(tabId) {
   if (tabId === "security-policies") {
     loadSecurityPolicies();
   }
+  if (tabId === "audit") {
+    loadAuditLogs();
+  }
+  if (tabId === "events") {
+    loadEvents();
+    loadEventNotifications();
+  }
+  if (tabId === "backups") {
+    refreshBackupsData();
+  }
   if (tabId === "administrators") {
     loadAdministrators();
+  }
+  if (tabId === "settings") {
+    request("/api/company").then((comp) => { state.company = comp; renderCompanyForm(); }).catch(() => {});
   }
 }
 
@@ -2139,16 +2305,14 @@ async function exportEventsCsv() {
 }
 
 function scheduleEventUiRefresh() {
-  // Coalesce bursts of Postfix lifecycle events so high-volume mail traffic
-  // does not trigger one REST refresh per recipient delivery log line.
+  // Coalesce bursts of Postfix lifecycle events (increased to 5s to prevent request storms)
   if (eventUiRefreshTimer) return;
   eventUiRefreshTimer = setTimeout(() => {
     eventUiRefreshTimer = null;
     void loadEventNotifications();
-    void pollFastMetrics();
     if (state.currentTab === "events") void loadEvents({ silent: true });
     if (state.currentTab === "quarantine") void loadQuarantine({ silent: true });
-  }, 600);
+  }, 5000);
 }
 
 function startEventStream() {
@@ -2245,27 +2409,21 @@ async function pollMediumMetrics() {
       );
     }
 
-    // Quietly refresh Overview / Dashboard data
-    if (state.currentTab === "overview" || state.currentTab === "dashboard") {
-      promises.push(
-        request("/api/dashboard").then((dashboard) => {
-          if (!dashboard) return;
-          state.dashboardData = dashboard;
-          renderOverview();
-          renderDashboardVisuals();
-        }).catch(() => null)
-      );
-    }
-
-    // Quietly refresh Mailboxes storage metrics
-    if (state.currentTab === "mailboxes") {
-      promises.push(
-        request("/api/mailboxes").then((mailboxes) => {
-          if (!mailboxes) return;
-          state.mailboxes = mailboxes;
-          renderMailboxes();
-        }).catch(() => null)
-      );
+    // Active tab dynamic sync
+    if (state.currentTab === "overview") {
+      promises.push(loadOverview().catch(() => null));
+    } else if (state.currentTab === "dashboard") {
+      promises.push(loadDashboard().catch(() => null));
+    } else if (state.currentTab === "mailboxes") {
+      promises.push(loadMailboxes().catch(() => null));
+    } else if (state.currentTab === "domains") {
+      promises.push(loadDomains().catch(() => null));
+    } else if (state.currentTab === "aliases") {
+      promises.push(loadAliases().catch(() => null));
+    } else if (state.currentTab === "events") {
+      promises.push(loadEvents({ silent: true }).catch(() => null));
+    } else if (state.currentTab === "backups") {
+      promises.push(refreshBackupsData().catch(() => null));
     }
 
     await Promise.all(promises);
@@ -2286,15 +2444,15 @@ function startLiveMonitor() {
   void pollFastMetrics();
   void pollMediumMetrics();
 
-  // Fast interval (10s): Services health, latency, Postfix mail queue
+  // Fast interval (30s): Services health, latency, Postfix mail queue
   fastPollingTimer = setInterval(() => {
     if (!document.hidden) void pollFastMetrics();
-  }, 10000);
+  }, 30000);
 
-  // Medium interval (25s): Quarantine counter, Notifications badge, Overview/Mailbox stats
+  // Medium interval (60s): Quarantine counter, Notifications badge, Active tab live data
   mediumPollingTimer = setInterval(() => {
     if (!document.hidden) void pollMediumMetrics();
-  }, 25000);
+  }, 60000);
 
   document.removeEventListener("visibilitychange", handleVisibilityChange);
   document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -4397,6 +4555,12 @@ document.addEventListener("submit", (event) => {
   if (!(form instanceof HTMLFormElement)) return;
   window.setTimeout(() => clearSubmittedPasswordFields(form), 0);
 }, true);
+
+window.addEventListener("offline", () => setApiConnectionStatus("offline"));
+window.addEventListener("online", () => {
+  setApiConnectionStatus("reconnecting");
+  if (state.adminUser) void refreshAllData();
+});
 
 // App Boot
 (async function init() {

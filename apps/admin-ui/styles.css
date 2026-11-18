@@ -1211,6 +1211,23 @@ input:focus, select:focus, textarea:focus {
   gap: 16px;
 }
 
+.api-connection-status {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--warning);
+  background: var(--warning-subtle);
+  border: 1px solid var(--warning-border);
+  border-radius: 20px;
+  padding: 5px 10px;
+  white-space: nowrap;
+}
+
+.api-connection-status.offline {
+  color: var(--danger);
+  background: var(--danger-subtle);
+  border-color: var(--danger-border);
+}
+
 .server-status-pill {
   display: flex;
   align-items: center;
