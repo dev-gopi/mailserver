@@ -26,6 +26,11 @@ const state = {
   mailboxStatusFilter: "",
   domainStatusFilter: "",
   aliasStatusFilter: "",
+  pagination: {
+    mailboxes: { limit: 25, offset: 0 },
+    domains: { limit: 25, offset: 0 },
+    aliases: { limit: 25, offset: 0 }
+  },
   sort: {
     mailboxes: { column: "created", order: "desc" },
     domains: { column: "name", order: "asc" },
@@ -269,16 +274,84 @@ function showToast(title, message, type = "info", duration = 4500) {
       <div class="toast-title">${escapeHtml(title)}</div>
       <div class="toast-msg">${escapeHtml(message)}</div>
     </div>
-    <button class="toast-close" type="button" aria-label="Dismiss notification" onclick="this.parentElement.remove()">&times;</button>
+    <div class="toast-actions">
+      <button class="toast-pin" type="button" aria-label="Keep notification open" aria-pressed="false" title="Keep notification open">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4v5l3 3v2H6v-2l3-3V4m2 10v6m-3-16h8"/></svg>
+      </button>
+      <button class="toast-close" type="button" aria-label="Dismiss notification">&times;</button>
+    </div>
+    <div class="toast-timer" aria-hidden="true"><span></span></div>
   `;
 
   container.appendChild(toast);
+  const closeButton = toast.querySelector(".toast-close");
+  const pinButton = toast.querySelector(".toast-pin");
+  const timerBar = toast.querySelector(".toast-timer span");
+  let timeoutId = null;
+  let timerStartedAt = 0;
+  let remaining = duration;
+  let isClosing = false;
+  let isPinned = false;
 
-  setTimeout(() => {
+  const dismiss = () => {
+    if (isClosing) return;
+    isClosing = true;
+    if (timeoutId) clearTimeout(timeoutId);
     toast.style.opacity = "0";
     toast.style.transform = "translateX(30px)";
     setTimeout(() => toast.remove(), 250);
-  }, duration);
+  };
+
+  const pauseDismissTimer = () => {
+    if (!timeoutId || isClosing) return;
+    remaining = Math.max(0, remaining - (Date.now() - timerStartedAt));
+    clearTimeout(timeoutId);
+    timeoutId = null;
+    toast.classList.add("toast-paused");
+    if (timerBar) {
+      timerBar.style.transition = "none";
+      timerBar.style.width = `${(remaining / duration) * 100}%`;
+    }
+  };
+
+  const resumeDismissTimer = () => {
+    if (timeoutId || isClosing || isPinned) return;
+    if (remaining <= 0) return dismiss();
+    toast.classList.remove("toast-paused");
+    timerStartedAt = Date.now();
+    if (timerBar) {
+      timerBar.style.transition = "none";
+      timerBar.style.width = `${(remaining / duration) * 100}%`;
+      void timerBar.offsetWidth;
+      timerBar.style.transition = `width ${remaining}ms linear`;
+      timerBar.style.width = "0";
+    }
+    timeoutId = setTimeout(dismiss, remaining);
+  };
+
+  closeButton?.addEventListener("click", dismiss);
+  pinButton?.addEventListener("click", () => {
+    isPinned = !isPinned;
+    toast.classList.toggle("toast-pinned", isPinned);
+    pinButton.setAttribute("aria-pressed", String(isPinned));
+    pinButton.setAttribute("aria-label", isPinned ? "Allow notification to dismiss automatically" : "Keep notification open");
+    pinButton.setAttribute("title", isPinned ? "Allow notification to dismiss automatically" : "Keep notification open");
+    if (isPinned) {
+      pauseDismissTimer();
+    } else if (!toast.matches(":hover") && !toast.contains(document.activeElement)) {
+      resumeDismissTimer();
+    }
+  });
+  toast.addEventListener("mouseenter", pauseDismissTimer);
+  toast.addEventListener("mouseleave", () => {
+    if (!toast.contains(document.activeElement)) resumeDismissTimer();
+  });
+  toast.addEventListener("focusin", pauseDismissTimer);
+  toast.addEventListener("focusout", (event) => {
+    if (!toast.contains(event.relatedTarget)) resumeDismissTimer();
+  });
+
+  resumeDismissTimer();
 }
 
 // View Switching: login, 2fa, forgot, setup, app
@@ -292,8 +365,10 @@ function showView(name) {
   if (name === "app") {
     updateUserInfo();
     startEventStream();
+    startLiveMonitor();
   } else {
     stopEventStream();
+    stopLiveMonitor();
   }
 }
 
@@ -740,6 +815,7 @@ function sortTable(table, column) {
     state.sort[table].column = column;
     state.sort[table].order = "asc";
   }
+  resetTablePagination(table);
 
   if (table === "mailboxes") renderMailboxes();
   else if (table === "domains") renderDomains();
@@ -755,6 +831,73 @@ function updateSortIndicators(table, sort) {
   if (activeEl) {
     activeEl.textContent = sort.order === "asc" ? "▲" : "▼";
   }
+}
+
+function resetTablePagination(table) {
+  if (state.pagination?.[table]) state.pagination[table].offset = 0;
+}
+
+function getTablePage(table, items) {
+  const pagination = state.pagination?.[table] || { limit: 25, offset: 0 };
+  const limit = Number(pagination.limit) || 25;
+  const lastOffset = Math.max(0, Math.floor((items.length - 1) / limit) * limit);
+  const offset = Math.min(Math.max(0, Number(pagination.offset) || 0), lastOffset);
+  state.pagination[table] = { limit, offset, total: items.length };
+  return { items: items.slice(offset, offset + limit), limit, offset };
+}
+
+function renderTablePagination(table, totalItems) {
+  const container = $(`table-pagination-${table}`);
+  if (!container) return;
+  if (totalItems === 0) {
+    container.innerHTML = "";
+    container.classList.add("hidden");
+    return;
+  }
+
+  const { limit, offset } = state.pagination[table];
+  const firstItem = offset + 1;
+  const lastItem = Math.min(offset + limit, totalItems);
+  const hasPrevious = offset > 0;
+  const hasNext = offset + limit < totalItems;
+  container.classList.remove("hidden");
+  container.innerHTML = `
+    <span class="table-pagination-summary">Showing ${firstItem}–${lastItem} of ${totalItems}</span>
+    <label class="table-page-size">Rows
+      <select aria-label="Rows per page" onchange="setTablePageSize('${table}', this.value)">
+        ${[25, 50, 100].map((size) => `<option value="${size}"${size === limit ? " selected" : ""}>${size}</option>`).join("")}
+      </select>
+    </label>
+    <div class="table-pagination-actions">
+      <button class="btn btn-secondary btn-sm" type="button" onclick="changeTablePage('${table}', 'first')" ${hasPrevious ? "" : "disabled"} aria-label="First page">«</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="changeTablePage('${table}', 'previous')" ${hasPrevious ? "" : "disabled"} aria-label="Previous page">‹</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="changeTablePage('${table}', 'next')" ${hasNext ? "" : "disabled"} aria-label="Next page">›</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="changeTablePage('${table}', 'last', ${totalItems})" ${hasNext ? "" : "disabled"} aria-label="Last page">»</button>
+    </div>
+  `;
+}
+
+function changeTablePage(table, direction, totalItems) {
+  const pagination = state.pagination?.[table];
+  if (!pagination) return;
+  const total = Number(totalItems) || pagination.total || ({ mailboxes: state.mailboxes, domains: state.domains, aliases: state.aliases }[table] || []).length;
+  const lastOffset = Math.max(0, Math.floor((total - 1) / pagination.limit) * pagination.limit);
+  if (direction === "first") pagination.offset = 0;
+  else if (direction === "previous") pagination.offset = Math.max(0, pagination.offset - pagination.limit);
+  else if (direction === "next") pagination.offset = Math.min(lastOffset, pagination.offset + pagination.limit);
+  else if (direction === "last") pagination.offset = lastOffset;
+  if (table === "mailboxes") renderMailboxes();
+  else if (table === "domains") renderDomains();
+  else if (table === "aliases") renderAliases();
+}
+
+function setTablePageSize(table, value) {
+  const limit = Number(value);
+  if (!state.pagination?.[table] || ![25, 50, 100].includes(limit)) return;
+  state.pagination[table] = { limit, offset: 0 };
+  if (table === "mailboxes") renderMailboxes();
+  else if (table === "domains") renderDomains();
+  else if (table === "aliases") renderAliases();
 }
 
 // 2. Mailbox Management
@@ -829,6 +972,7 @@ function renderMailboxes() {
   if (filtered.length === 0) {
     tbody.innerHTML = "";
     empty.classList.remove("hidden");
+    renderTablePagination("mailboxes", 0);
     return;
   }
 
@@ -859,7 +1003,9 @@ function renderMailboxes() {
     return 0;
   });
   updateSortIndicators("mailboxes", sort);
-  tbody.innerHTML = filtered.map((m) => {
+  const page = getTablePage("mailboxes", filtered);
+  renderTablePagination("mailboxes", filtered.length);
+  tbody.innerHTML = page.items.map((m) => {
     const isSuspended = !m.active;
     const usedBytes = Number(m.storage_used_bytes || 0);
     const quotaBytes = Number(m.quota_bytes || 0);
@@ -939,6 +1085,7 @@ function renderMailboxes() {
 }
 
 function filterMailboxes() {
+  resetTablePagination("mailboxes");
   renderMailboxes();
 }
 
@@ -1342,6 +1489,7 @@ function setDomainFilterStatus(status) {
 }
 
 function filterDomains() {
+  resetTablePagination("domains");
   renderDomains();
 }
 
@@ -1372,6 +1520,7 @@ function renderDomains() {
   if (filtered.length === 0) {
     tbody.innerHTML = "";
     empty.classList.remove("hidden");
+    renderTablePagination("domains", 0);
     return;
   }
 
@@ -1400,7 +1549,9 @@ function renderDomains() {
   });
   updateSortIndicators("domains", sort);
 
-  tbody.innerHTML = filtered.map((d) => {
+  const page = getTablePage("domains", filtered);
+  renderTablePagination("domains", filtered.length);
+  tbody.innerHTML = page.items.map((d) => {
     const isVerified = Boolean(d.verified_at);
     return `
       <tr>
@@ -1565,6 +1716,7 @@ function setAliasFilterStatus(status) {
 }
 
 function filterAliases() {
+  resetTablePagination("aliases");
   renderAliases();
 }
 
@@ -1598,6 +1750,7 @@ function renderAliases() {
   if (filtered.length === 0) {
     tbody.innerHTML = "";
     empty.classList.remove("hidden");
+    renderTablePagination("aliases", 0);
     return;
   }
 
@@ -1629,7 +1782,9 @@ function renderAliases() {
   });
   updateSortIndicators("aliases", sort);
 
-  tbody.innerHTML = filtered.map((a) => `
+  const page = getTablePage("aliases", filtered);
+  renderTablePagination("aliases", filtered.length);
+  tbody.innerHTML = page.items.map((a) => `
     <tr>
       <td>
         <strong class="font-mono">${escapeHtml(a.source)}</strong>
@@ -1990,7 +2145,9 @@ function scheduleEventUiRefresh() {
   eventUiRefreshTimer = setTimeout(() => {
     eventUiRefreshTimer = null;
     void loadEventNotifications();
+    void pollFastMetrics();
     if (state.currentTab === "events") void loadEvents({ silent: true });
+    if (state.currentTab === "quarantine") void loadQuarantine({ silent: true });
   }, 600);
 }
 
@@ -2021,6 +2178,132 @@ function stopEventStream() {
   if (eventStream) eventStream.close();
   eventStream = null;
   if ($("events-live-status")) { $("events-live-status").textContent = "Live stream disconnected"; $("events-live-status").className = "badge badge-secondary"; }
+}
+
+// --- LIVE BACKGROUND MONITOR ENGINE ---
+let fastPollingTimer = null;
+let mediumPollingTimer = null;
+
+async function pollFastMetrics() {
+  if (!state.adminUser || document.hidden) return;
+  try {
+    const [services, queue, taskQueue] = await Promise.all([
+      request("/api/system/services").catch(() => null),
+      request("/api/system/queue").catch(() => null),
+      request("/api/system/task-queue").catch(() => null)
+    ]);
+
+    if (services && Array.isArray(services)) {
+      renderServicesHealth(services);
+      renderInfrastructureSummary(services);
+      renderServicesLatencyChart(services);
+
+      // Update the topbar status pill dynamically
+      const pill = $("server-status-pill");
+      const text = $("server-status-text");
+      if (pill && text) {
+        const hasDown = services.some((s) => s.status === "down");
+        const hasDegraded = services.some((s) => s.status === "degraded");
+        if (hasDown) {
+          pill.className = "server-status-pill offline";
+          text.textContent = "Service Offline";
+        } else if (hasDegraded) {
+          pill.className = "server-status-pill degraded";
+          text.textContent = "Services Degraded";
+        } else {
+          pill.className = "server-status-pill";
+          text.textContent = "Mail Services Active";
+        }
+      }
+    }
+
+    if (queue) {
+      renderQueueStats(queue, taskQueue);
+    }
+  } catch (err) {
+    // Silent fail during background polling
+  }
+}
+
+async function pollMediumMetrics() {
+  if (!state.adminUser || document.hidden) return;
+  try {
+    const promises = [
+      loadEventNotifications().catch(() => null)
+    ];
+
+    if (["owner", "admin"].includes(state.adminUser.role)) {
+      promises.push(
+        request("/api/quarantine").then((res) => {
+          const items = Array.isArray(res?.items) ? res.items : [];
+          if ($("badge-nav-quarantine")) $("badge-nav-quarantine").textContent = String(items.length);
+          if ($("quarantine-count")) $("quarantine-count").textContent = `${items.length} held`;
+          if (state.currentTab === "quarantine") {
+            loadQuarantine({ silent: true });
+          }
+        }).catch(() => null)
+      );
+    }
+
+    // Quietly refresh Overview / Dashboard data
+    if (state.currentTab === "overview" || state.currentTab === "dashboard") {
+      promises.push(
+        request("/api/dashboard").then((dashboard) => {
+          if (!dashboard) return;
+          state.dashboardData = dashboard;
+          renderOverview();
+          renderDashboardVisuals();
+        }).catch(() => null)
+      );
+    }
+
+    // Quietly refresh Mailboxes storage metrics
+    if (state.currentTab === "mailboxes") {
+      promises.push(
+        request("/api/mailboxes").then((mailboxes) => {
+          if (!mailboxes) return;
+          state.mailboxes = mailboxes;
+          renderMailboxes();
+        }).catch(() => null)
+      );
+    }
+
+    await Promise.all(promises);
+  } catch (err) {
+    // Silent fail during background polling
+  }
+}
+
+function handleVisibilityChange() {
+  if (!document.hidden && state.adminUser) {
+    void pollFastMetrics();
+    void pollMediumMetrics();
+  }
+}
+
+function startLiveMonitor() {
+  stopLiveMonitor();
+  void pollFastMetrics();
+  void pollMediumMetrics();
+
+  // Fast interval (10s): Services health, latency, Postfix mail queue
+  fastPollingTimer = setInterval(() => {
+    if (!document.hidden) void pollFastMetrics();
+  }, 10000);
+
+  // Medium interval (25s): Quarantine counter, Notifications badge, Overview/Mailbox stats
+  mediumPollingTimer = setInterval(() => {
+    if (!document.hidden) void pollMediumMetrics();
+  }, 25000);
+
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+}
+
+function stopLiveMonitor() {
+  if (fastPollingTimer) { clearInterval(fastPollingTimer); fastPollingTimer = null; }
+  if (mediumPollingTimer) { clearInterval(mediumPollingTimer); mediumPollingTimer = null; }
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
 }
 
 // 5b. Audit Log Renderer
@@ -2555,9 +2838,12 @@ async function triggerFlushQueue() {
   }
 }
 
-async function loadQuarantine() {
+async function loadQuarantine(options = {}) {
+  const silent = Boolean(options && options.silent);
   const tbody = $("quarantine-tbody");
-  if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-muted">Loading held messages...</td></tr>';
+  if (tbody && !silent && (!tbody.children.length || tbody.querySelector(".text-muted"))) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-muted">Loading held messages...</td></tr>';
+  }
   try {
     const response = await request("/api/quarantine");
     const items = Array.isArray(response.items) ? response.items : [];
@@ -2587,8 +2873,10 @@ async function loadQuarantine() {
       </tr>`;
     }).join("");
   } catch (err) {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="text-danger">${escapeHtml(err.message)}</td></tr>`;
-    showToast("Quarantine Load Failed", err.message, "error");
+    if (!silent) {
+      if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="text-danger">${escapeHtml(err.message)}</td></tr>`;
+      showToast("Quarantine Load Failed", err.message, "error");
+    }
   }
 }
 
