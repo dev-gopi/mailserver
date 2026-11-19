@@ -2376,9 +2376,28 @@ function scheduleEventUiRefresh() {
 function setRealtimeStatus(status) {
   const badge = $("events-live-status");
   if (!badge) return;
-  const label = status === "connected" ? "Realtime connected" : status === "connecting" ? "Connecting…" : status === "reconnecting" ? "Reconnecting…" : "Realtime disconnected";
-  badge.textContent = label;
-  badge.className = `badge ${status === "connected" ? "badge-success" : status === "reconnecting" ? "badge-warning" : "badge-secondary"}`;
+  const statusCopy = {
+    connected: {
+      label: "Live alerts connected",
+      title: "Live in-app notifications are connected. Browser notification permission is not needed."
+    },
+    connecting: {
+      label: "Connecting to live alerts…",
+      title: "Opening the authenticated WebSocket for in-app notifications."
+    },
+    reconnecting: {
+      label: "Live alerts reconnecting…",
+      title: "The live WebSocket is reconnecting. Previously saved notifications remain available in this tab."
+    },
+    disconnected: {
+      label: "Live alerts disconnected",
+      title: "The live WebSocket is disconnected. Sign in again or refresh the page to reconnect."
+    }
+  };
+  const display = statusCopy[status] || statusCopy.disconnected;
+  badge.textContent = display.label;
+  badge.title = display.title;
+  badge.className = `badge ${status === "connected" ? "badge-success" : status === "reconnecting" || status === "connecting" ? "badge-warning" : "badge-secondary"}`;
 }
 
 function startRealtimeSocket() {
@@ -3945,14 +3964,47 @@ async function loadLoginCaptcha() {
     const data = await request("/auth/captcha");
     if (data && data.captchaId && data.svg) {
       currentLoginCaptchaId = data.captchaId;
-      const svgContainer = $("login-captcha-svg");
-      if (svgContainer) svgContainer.innerHTML = data.svg;
+      const canvas = $("login-captcha-canvas");
+      if (canvas) {
+        renderSvgToCanvas(data.svg, canvas);
+      }
       const input = $("login-captcha-input");
       if (input) input.value = "";
     }
   } catch (err) {
     console.warn("Could not load CAPTCHA:", err);
   }
+}
+
+function renderSvgToCanvas(svgString, canvas) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.onload = () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+  };
+  img.onerror = () => {
+    URL.revokeObjectURL(url);
+    try {
+      const dataUri = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgString)));
+      const fallbackImg = new Image();
+      fallbackImg.onload = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(fallbackImg, 0, 0, canvas.width, canvas.height);
+      };
+      fallbackImg.src = dataUri;
+    } catch {
+      // Ignore fallback encoding errors
+    }
+  };
+  img.src = url;
 }
 
 // Login form

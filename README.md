@@ -427,8 +427,14 @@ notification, service-health, and quarantine status updates. The endpoint checks
 admin session validity, role, origin, expiry, idle timeout, and revocation; it
 revalidates active sessions on its heartbeat and only sends event summaries to
 owner/admin sessions. PostgreSQL catch-up polling recovers temporary listener
-gaps before events are broadcast. Nginx proxies the WebSocket upgrade without
-buffering. Postfix syslog ingestion applies TCP backpressure, keeps idle rsyslog
+gaps before events are broadcast. Notifications are displayed inside the signed-in
+admin UI as live toasts, an unread Alerts badge, and persistent Event Explorer
+history; the app does not call the browser Notification API or request operating
+system notification permission. They are visible while the admin UI is open.
+Nginx proxies the WebSocket upgrade without buffering and explicitly preserves
+the public `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `Origin`, and upgrade
+headers in the WebSocket location (Nginx does not inherit parent `proxy_set_header`
+directives once a location defines its own). Postfix syslog ingestion applies TCP backpressure, keeps idle rsyslog
 connections alive, and retries database writes while the API is alive. Event
 retention archives older rows in PostgreSQL by default. The legacy `audit_log`
 remains separate and is not deleted by event retention.

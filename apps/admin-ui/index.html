@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MailCore Admin — Single-Tenant Mail Server Control Panel</title>
   <meta name="description" content="Single-tenant self-hosted mail server management console for domains, mailboxes, aliases, and security audit logs.">
-  <link rel="stylesheet" href="/styles.css?v=20261119-quarantine-preview">
+  <link rel="stylesheet" href="/styles.css?v=2.1.0">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -61,7 +61,9 @@
             </button>
           </label>
           <div class="captcha-row">
-            <div id="login-captcha-svg" class="captcha-preview" title="Click to refresh CAPTCHA" onclick="loadLoginCaptcha()"></div>
+            <div class="captcha-preview" title="Click to refresh CAPTCHA" onclick="loadLoginCaptcha()">
+              <canvas id="login-captcha-canvas" width="140" height="40" style="display: block; border-radius: 4px; cursor: pointer;"></canvas>
+            </div>
             <input id="login-captcha-input" type="text" placeholder="Enter code" required maxlength="8" autocomplete="off" spellcheck="false">
           </div>
         </div>
@@ -463,7 +465,7 @@
             <span class="alert-pulse"></span>
             <span id="topbar-alerts-text">0 Issues</span>
           </button>
-          <button id="btn-event-notifications" type="button" class="btn btn-secondary btn-sm" onclick="switchTab('events')" title="View event notifications">
+          <button id="btn-event-notifications" type="button" class="btn btn-secondary btn-sm" onclick="switchTab('events')" title="View in-app event notifications; browser permission is not required">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
             <span>Alerts</span><span id="badge-topbar-events" class="nav-pill hidden">0</span>
           </button>
@@ -1595,10 +1597,10 @@
           <div class="section-header">
             <div>
               <h2>Event Explorer & Notifications</h2>
-              <p class="section-desc">Searchable administrator, security and Postfix delivery events. Mail delivery acceptance means the next SMTP/LMTP hop accepted the message; it does not guarantee inbox placement.</p>
+              <p class="section-desc">Searchable administrator, security and Postfix delivery events. Live alerts appear as in-app messages and in the unread notification list below; browser notification permission is not required. Mail delivery acceptance means the next SMTP/LMTP hop accepted the message; it does not guarantee inbox placement.</p>
             </div>
             <div class="flex-row gap-2">
-              <span id="events-live-status" class="badge badge-secondary">Realtime disconnected</span>
+              <span id="events-live-status" class="badge badge-secondary" role="status" aria-live="polite" title="Live notifications use an authenticated same-origin WebSocket. No browser notification permission is requested.">Realtime disconnected</span>
               <button class="btn btn-secondary btn-sm" onclick="loadEvents()">Refresh</button>
               <button class="btn btn-secondary btn-sm" onclick="exportEventsCsv()">Export CSV</button>
             </div>
@@ -1657,7 +1659,7 @@
           <div class="overview-grid mb-4">
             <div class="card">
               <div class="card-header flex-between"><div><h3 class="card-title">Administrator Notifications</h3><p class="card-desc">Persistent alerts from enabled rules; critical and security-sensitive events are always retained.</p></div><button class="btn btn-secondary btn-xs" onclick="markAllEventNotificationsRead()">Mark all read</button></div>
-              <div id="event-notifications-list" class="recent-activity-list"><p class="text-muted">Loading notifications…</p></div>
+              <div id="event-notifications-list" class="recent-activity-list" aria-live="polite" aria-relevant="additions text"><p class="text-muted">Loading notifications…</p></div>
             </div>
             <div class="card">
               <div class="card-header"><div><h3 class="card-title">Alert Rules</h3><p class="card-desc">Owners define optional in-app notifications for active owners and administrators. Critical and security-sensitive events always generate notifications.</p></div></div>
@@ -2869,6 +2871,6 @@
   </div>
 
   <!-- Script logic -->
-  <script src="/app.js?v=20261119-captcha-genpw"></script>
+  <script src="/app.js?v=2.2.0-captcha-canvas"></script>
 </body>
 </html>
