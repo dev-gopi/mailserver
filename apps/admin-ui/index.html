@@ -1597,7 +1597,7 @@
           <div class="section-header">
             <div>
               <h2>Event Explorer & Notifications</h2>
-              <p class="section-desc">Searchable administrator, security and Postfix delivery events. Live alerts appear as in-app messages and in the unread notification list below; browser notification permission is not required. Mail delivery acceptance means the next SMTP/LMTP hop accepted the message; it does not guarantee inbox placement.</p>
+              <p class="section-desc">Searchable administrator, security and Postfix delivery events. Live alerts always appear in-app; desktop notifications are shown only when browser permission has already been granted. This app never requests notification permission automatically. Mail delivery acceptance means the next SMTP/LMTP hop accepted the message; it does not guarantee inbox placement.</p>
             </div>
             <div class="flex-row gap-2">
               <span id="events-live-status" class="badge badge-secondary" role="status" aria-live="polite" title="Live notifications use an authenticated same-origin WebSocket. No browser notification permission is requested.">Realtime disconnected</span>
@@ -2871,6 +2871,6 @@
   </div>
 
   <!-- Script logic -->
-  <script src="/app.js?v=2.2.0-captcha-canvas"></script>
+  <script src="/app.js?v=2.3.0"></script>
 </body>
 </html>

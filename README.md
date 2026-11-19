@@ -464,3 +464,13 @@ archives; CycloneDX SBOM and npm/Trivy/Syft scanning; and an incident ledger
 with evidence collection and HTTPS alert escalation. Live security certification
 requires host/provider evidence and controlled staging tests; repository checks
 alone do not certify a deployment.
+
+### Administrator desktop notifications
+
+The admin UI always provides in-app toast alerts and a persistent unread notification list. For critical events, security-sensitive events, and quarantine lifecycle alerts, it also creates an operating-system/browser notification **only when** the signed-in administrator's browser has already granted notification permission. The UI does not call `Notification.requestPermission()` and will never trigger a permission prompt automatically. If permission is `default` or `denied`, in-app alerts continue to work normally.
+
+Run the focused desktop-notification regression tests with:
+
+```bash
+node --test infrastructure/tests/desktop-notifications.test.cjs
+```

@@ -449,6 +449,37 @@ function showToast(title, message, type = "info", duration = 4500) {
   resumeDismissTimer();
 }
 
+/**
+ * Show an operating-system notification only when the user has already
+ * granted browser notification permission. This deliberately never asks the
+ * browser for permission; in-app toasts and the unread list remain the fallback
+ * when permission is absent or denied.
+ */
+function showDesktopNotification(title, body, tag = "mailcore-security-alert") {
+  if (!state.adminUser || !["owner", "admin"].includes(state.adminUser.role)) return null;
+  if (!("Notification" in window) || window.Notification.permission !== "granted") return null;
+
+  try {
+    const notification = new window.Notification(title, {
+      body: body || "A sensitive security event was detected.",
+      icon: "/favicon.ico",
+      tag,
+      renotify: false
+    });
+
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
+    return notification;
+  } catch (error) {
+    // Some browsers or embedded contexts can expose the API but reject
+    // construction. The in-app notification has already been displayed.
+    console.debug("Desktop notification could not be displayed", error);
+    return null;
+  }
+}
+
 // View Switching: login, 2fa, forgot, setup, mailbox-password, app
 function showView(name) {
   // Clear any sensitive inputs from previously viewed screens
@@ -2484,15 +2515,46 @@ function handleRealtimeEvent(event) {
   const securityEvent = ["security", "authentication"].includes(event.category) && ["warning", "critical"].includes(event.severity);
   const criticalEvent = event.severity === "critical";
   const quarantineEvent = String(event.action || "").startsWith("security.quarantine.");
-  if (criticalEvent || securityEvent) {
-    const title = event.action === "security.quarantine.message.held"
-      ? "New Quarantined Mail"
-      : event.action === "security.quarantine.service.down"
-        ? "Quarantine Service Down"
-        : event.action === "security.quarantine.service.degraded"
-          ? "Quarantine Service Degraded"
+  const quarantineAlertEvent = [
+    "security.quarantine.message.held",
+    "security.quarantine.service.down",
+    "security.quarantine.service.degraded",
+    "security.quarantine.service.recovered"
+  ].includes(event.action);
+  const notificationTitle = event.action === "security.quarantine.message.held"
+    ? "New Quarantined Mail"
+    : event.action === "security.quarantine.service.down"
+      ? "Quarantine Service Down"
+      : event.action === "security.quarantine.service.degraded"
+        ? "Quarantine Service Degraded"
+        : event.action === "security.quarantine.service.recovered"
+          ? "Quarantine Service Recovered"
           : criticalEvent ? "Critical System Event" : "Security Alert";
-    showToast(title, event.summary || event.action || "A security-sensitive event was recorded.", criticalEvent ? "error" : "warning", 8000);
+
+  if (criticalEvent || securityEvent || quarantineAlertEvent) {
+    const toastType = event.action === "security.quarantine.service.recovered"
+      ? "success"
+      : criticalEvent ? "error" : "warning";
+    showToast(notificationTitle, event.summary || event.action || "A security-sensitive event was recorded.", toastType, 8000);
+  }
+
+  // Desktop notifications are an optional enhancement. They are emitted only
+  // for critical/security events and quarantine lifecycle alerts, and only if
+  // permission was granted previously. Sensitive event details are kept out
+  // of OS notification bodies (which may appear on a locked screen).
+  if (criticalEvent || securityEvent || quarantineAlertEvent) {
+    const desktopBody = quarantineAlertEvent
+      ? event.action === "security.quarantine.message.held"
+        ? "A new message was placed in the quarantine queue."
+        : event.action === "security.quarantine.service.down"
+          ? "The quarantine service is unavailable. Administrator attention is required."
+          : event.action === "security.quarantine.service.degraded"
+            ? "The quarantine service is degraded and may be unavailable."
+            : "The quarantine service is available again."
+      : securityEvent
+        ? "A sensitive security event was detected."
+        : "A critical system event was detected.";
+    showDesktopNotification(notificationTitle, desktopBody, `mailcore-event-${eventId}`);
   }
   if (quarantineEvent && state.currentTab === "quarantine") void loadQuarantine({ silent: true });
   if (["system.service.down", "system.service.degraded", "system.service.recovered"].includes(event.action)) {
