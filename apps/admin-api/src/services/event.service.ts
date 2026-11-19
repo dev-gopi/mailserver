@@ -227,7 +227,7 @@ export class EventService extends EventEmitter {
         if (backlog.length < 250) break;
       }
     } catch (error) {
-      console.error("Could not catch up event stream after notification gap:", error instanceof Error ? error.message : "unknown error");
+      console.error("Could not catch up realtime events after notification gap:", error instanceof Error ? error.message : "unknown error");
     } finally {
       this.eventCatchupProcessing = false;
     }
@@ -258,7 +258,12 @@ export class EventService extends EventEmitter {
           severityRank(event.severity) >= severityRank(rule.min_severity) &&
           (!rule.action_prefix || event.action.startsWith(rule.action_prefix))
         );
-        if (matchingRule && admins.rowCount) await eventRepository.createNotifications(client, event);
+        const sensitiveEvent = event.severity === "critical" ||
+          (["security", "authentication"].includes(event.category) && severityRank(event.severity) >= severityRank("warning"));
+        // Critical and security-sensitive events must remain visible even if an
+        // administrator disables a configurable alert rule. Rules still govern
+        // ordinary operational/info notifications.
+        if ((matchingRule || sensitiveEvent) && admins.rowCount) await eventRepository.createNotifications(client, event);
         await client.query("SELECT pg_notify($1, $2)", [NOTIFY_CHANNEL, event.event_id]);
         await client.query(
           "UPDATE event_outbox SET published_at = now(), attempt_count = attempt_count + 1, last_error = NULL WHERE id = $1",

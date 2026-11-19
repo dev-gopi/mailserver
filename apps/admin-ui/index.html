@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MailCore Admin — Single-Tenant Mail Server Control Panel</title>
   <meta name="description" content="Single-tenant self-hosted mail server management console for domains, mailboxes, aliases, and security audit logs.">
-  <link rel="stylesheet" href="/styles.css?v=20261117-3">
+  <link rel="stylesheet" href="/styles.css?v=20261119-quarantine-preview">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -51,7 +51,22 @@
           </div>
         </div>
 
-        <div class="auth-links-row">
+        <!-- Security Verification (CAPTCHA) -->
+        <div class="form-group captcha-group" style="margin-top: 14px;">
+          <label for="login-captcha-input" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span>Security Verification (CAPTCHA)</span>
+            <button type="button" class="btn-refresh-captcha" onclick="loadLoginCaptcha()" title="Refresh verification code" aria-label="Refresh CAPTCHA">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              <span>Refresh</span>
+            </button>
+          </label>
+          <div class="captcha-row">
+            <div id="login-captcha-svg" class="captcha-preview" title="Click to refresh CAPTCHA" onclick="loadLoginCaptcha()"></div>
+            <input id="login-captcha-input" type="text" placeholder="Enter code" required maxlength="8" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+
+        <div class="auth-links-row" style="margin-top: 8px;">
           <div></div>
           <a href="#" id="link-goto-forgot" class="auth-link" onclick="showView('forgot'); return false;">Forgot password?</a>
         </div>
@@ -1385,14 +1400,15 @@
           <div class="section-header">
             <div>
               <h2>Security Quarantine</h2>
-              <p class="section-desc">Review messages held by the Rspamd Postfix Milter. This view exposes queue metadata only; message bodies and attachments are never returned by the admin API.</p>
+              <p class="section-desc">Review messages held by the Rspamd Postfix Milter. Preview safe text content and attachment metadata without downloading attachments or rendering email HTML.</p>
             </div>
             <div class="header-actions">
               <button class="btn btn-secondary btn-sm" onclick="loadQuarantine()">Refresh Quarantine</button>
             </div>
           </div>
+          <div id="quarantine-service-status" class="alert-box alert-danger mb-4 hidden" role="alert" aria-live="assertive">Quarantine queue service is unavailable. Held-message listing and previews are temporarily disabled.</div>
           <div class="alert-box alert-warning mb-4">
-            <strong>Release safety:</strong> Messages remain held until the API retrieves the exact queue content, scans it again through Rspamd and ClamAV, checks the strictest recipient policy, and confirms the queue content has not changed. A scanner outage, malware detection, spam verdict or hash mismatch prevents release.
+            <strong>Release safety:</strong> Messages remain held until the API retrieves the exact queue content, scans it again through Rspamd and ClamAV, checks the strictest recipient policy, and confirms the queue content has not changed. A scanner outage, malware detection, spam verdict or hash mismatch prevents release. Preview displays text only; attachments are never downloadable from this screen.
           </div>
           <div class="card">
             <div class="card-header flex-between">
@@ -1582,7 +1598,7 @@
               <p class="section-desc">Searchable administrator, security and Postfix delivery events. Mail delivery acceptance means the next SMTP/LMTP hop accepted the message; it does not guarantee inbox placement.</p>
             </div>
             <div class="flex-row gap-2">
-              <span id="events-live-status" class="badge badge-secondary">Live stream disconnected</span>
+              <span id="events-live-status" class="badge badge-secondary">Realtime disconnected</span>
               <button class="btn btn-secondary btn-sm" onclick="loadEvents()">Refresh</button>
               <button class="btn btn-secondary btn-sm" onclick="exportEventsCsv()">Export CSV</button>
             </div>
@@ -1640,11 +1656,11 @@
 
           <div class="overview-grid mb-4">
             <div class="card">
-              <div class="card-header flex-between"><div><h3 class="card-title">Administrator Notifications</h3><p class="card-desc">Persistent alerts generated from enabled alert rules.</p></div><button class="btn btn-secondary btn-xs" onclick="markAllEventNotificationsRead()">Mark all read</button></div>
+              <div class="card-header flex-between"><div><h3 class="card-title">Administrator Notifications</h3><p class="card-desc">Persistent alerts from enabled rules; critical and security-sensitive events are always retained.</p></div><button class="btn btn-secondary btn-xs" onclick="markAllEventNotificationsRead()">Mark all read</button></div>
               <div id="event-notifications-list" class="recent-activity-list"><p class="text-muted">Loading notifications…</p></div>
             </div>
             <div class="card">
-              <div class="card-header"><div><h3 class="card-title">Alert Rules</h3><p class="card-desc">Owners define which event severities generate in-app notifications for active owners and administrators.</p></div></div>
+              <div class="card-header"><div><h3 class="card-title">Alert Rules</h3><p class="card-desc">Owners define optional in-app notifications for active owners and administrators. Critical and security-sensitive events always generate notifications.</p></div></div>
               <div id="event-alert-rule-owner-controls" class="form-grid" style="margin-bottom:16px;">
                 <div class="form-group"><label for="event-rule-name">Rule name</label><input id="event-rule-name" class="form-control" maxlength="80" placeholder="Example: Outbound delivery warnings"></div>
                 <div class="form-group"><label for="event-rule-category">Category</label><select id="event-rule-category" class="form-control"><option value="">All categories</option><option>authentication</option><option>mail</option><option>mailboxes</option><option>domains</option><option>security</option><option>backup</option><option>system</option><option>administration</option></select></div>
@@ -1902,7 +1918,13 @@
                   <input id="admin-create-username" type="text" minlength="3" maxlength="64" pattern="[A-Za-z0-9._-]+" autocomplete="off" required>
                 </div>
                 <div class="form-group">
-                  <label for="admin-create-password">Initial password (14–128 characters)</label>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <label for="admin-create-password" style="margin-bottom: 0;">Initial password (14–128 characters)</label>
+                    <button type="button" class="btn btn-secondary btn-xs" onclick="generatePasswordFor('admin-create-password')" style="padding: 2px 8px; font-size: 0.75rem; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                      <span>Generate</span>
+                    </button>
+                  </div>
                   <input id="admin-create-password" type="password" minlength="14" maxlength="128" autocomplete="new-password" required>
                 </div>
                 <div class="form-group">
@@ -2064,9 +2086,15 @@
           </div>
 
           <div class="form-group">
-            <label for="mb-password">Mailbox Password</label>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label for="mb-password" style="margin-bottom: 0;">Mailbox Password</label>
+              <button type="button" class="btn btn-secondary btn-xs" onclick="generatePasswordFor('mb-password')" style="padding: 2px 8px; font-size: 0.75rem; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                <span>Generate</span>
+              </button>
+            </div>
             <div class="input-with-icon">
-              <input id="mb-password" type="password" minlength="14" required placeholder="Minimum 14 characters" autocomplete="new-password">
+              <input id="mb-password" type="password" minlength="12" required placeholder="Minimum 12 characters" autocomplete="new-password">
               <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('mb-password', this)" title="Show/Hide">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               </button>
@@ -2133,11 +2161,26 @@
             <input id="create-user-display-name" type="text" placeholder="e.g. John Doe">
           </div>
           <div class="form-group">
-            <label for="user-password">Mailbox Password</label>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label for="user-password" style="margin-bottom: 0;">Mailbox Password</label>
+              <button type="button" class="btn btn-secondary btn-xs" onclick="generatePasswordFor('user-password')" style="padding: 2px 8px; font-size: 0.75rem; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                <span>Generate</span>
+              </button>
+            </div>
             <div class="input-with-icon">
-              <input id="user-password" type="password" minlength="14" required placeholder="Minimum 12 characters" autocomplete="new-password">
+              <input id="user-password" type="password" minlength="12" required placeholder="Minimum 12 characters" autocomplete="new-password">
               <button type="button" class="btn-toggle-pw" onclick="togglePasswordVisibility('user-password', this)" title="Show/Hide">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+            <div class="pw-generator-row" style="margin-top: 6px;">
+              <button type="button" class="btn btn-secondary btn-xs" onclick="generatePasswordFor('user-password')">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                <span>Generate Strong Password</span>
+              </button>
+              <button type="button" class="btn btn-secondary btn-xs" onclick="copyPasswordFrom('user-password', this)">
+                <span>Copy Password</span>
               </button>
             </div>
             <small class="form-hint" style="margin-top: 6px;">After creation, users can change this password on their own at /#mailbox-password.</small>
@@ -2738,6 +2781,44 @@
     </div>
   </div>
 
+  <!-- MODAL: Quarantined Mail Preview -->
+  <div id="modal-quarantine-preview" class="modal-backdrop hidden" onclick="handleBackdropClick(event, 'modal-quarantine-preview')">
+    <div class="modal-window" style="max-width: 900px; width: 100%;">
+      <div class="modal-header">
+        <div>
+          <h3 style="margin:0;">Quarantined Mail Preview</h3>
+          <p class="modal-subtitle" style="margin:3px 0 0;">Text-only preview · attachments are not opened or downloaded</p>
+        </div>
+        <button type="button" class="btn-close-modal" onclick="closeModal('modal-quarantine-preview')" title="Close">&times;</button>
+      </div>
+      <div class="modal-body" style="padding:20px 24px;">
+        <div class="quarantine-preview-meta">
+          <div><span>Queue ID</span><strong id="quarantine-preview-queue-id">—</strong></div>
+          <div><span>Subject</span><strong id="quarantine-preview-subject">Loading…</strong></div>
+          <div><span>From</span><strong id="quarantine-preview-from">—</strong></div>
+          <div><span>To</span><strong id="quarantine-preview-to">—</strong></div>
+          <div><span>Date</span><strong id="quarantine-preview-date">—</strong></div>
+          <div><span>Content type</span><strong id="quarantine-preview-content-type">—</strong></div>
+        </div>
+        <div class="card" style="margin-top:16px;">
+          <div class="card-header"><h4 class="card-title" style="margin:0;">Message body</h4></div>
+          <div class="card-body" style="padding:12px 16px;">
+            <pre id="quarantine-preview-body" class="quarantine-preview-body">Loading message preview…</pre>
+            <p id="quarantine-preview-truncated" class="text-muted hidden" style="margin:8px 0 0;">Preview shortened for safety. The original message remains unchanged in quarantine.</p>
+          </div>
+        </div>
+        <div class="card" style="margin-top:16px;">
+          <div class="card-header"><h4 class="card-title" style="margin:0;">Attachments</h4><span id="quarantine-preview-attachment-count" class="badge badge-secondary">0</span></div>
+          <div id="quarantine-preview-attachments" class="quarantine-attachment-list" style="padding:12px 16px;">No attachment metadata loaded.</div>
+        </div>
+        <p class="text-muted" style="font-size:.78rem; margin:12px 0 0;">Untrusted email content is displayed as plain text. This preview does not load remote images, execute scripts, render HTML, or expose attachment bytes.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-quarantine-preview')">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL: 2FA Enablement Prompt -->
   <div id="modal-2fa-prompt" class="modal-backdrop hidden" onclick="handleBackdropClick(event, 'modal-2fa-prompt')">
     <div class="modal-window" style="max-width: 580px; width: 100%;">
@@ -2788,6 +2869,6 @@
   </div>
 
   <!-- Script logic -->
-  <script src="/app.js?v=20261118-m10"></script>
+  <script src="/app.js?v=20261119-captcha-genpw"></script>
 </body>
 </html>

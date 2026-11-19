@@ -49,6 +49,7 @@ app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: "draf
 // Auth endpoints are separately throttled; this in-memory limiter is intended
 // for the single API replica used by this deployment. Use a shared Redis store
 // before scaling the API horizontally.
+app.use("/auth/captcha", rateLimit({ windowMs: 15 * 60 * 1000, limit: 60, standardHeaders: "draft-7", legacyHeaders: false }));
 app.use("/auth/login", rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: "draft-7", legacyHeaders: false }));
 app.use("/auth/mfa/verify", rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: "draft-7", legacyHeaders: false }));
 app.use("/auth/reset-password", rateLimit({ windowMs: 15 * 60 * 1000, limit: 3, standardHeaders: "draft-7", legacyHeaders: false }));

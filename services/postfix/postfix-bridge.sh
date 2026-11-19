@@ -16,7 +16,12 @@ case "$command" in
   FLUSH) exec postqueue -f ;;
   # Return metadata for at most 500 held messages. Message bodies are only
   # exposed through HOLD_FETCH to the private admin-control network.
-  HOLD_LIST) postqueue -j | jq -c 'select(.queue_name == "hold")' | sed -n '1,500p' ;;
+  HOLD_LIST)
+    postqueue -j | jq -c 'select(.queue_name == "hold")' | sed -n '1,500p'
+    # Explicit sentinel distinguishes a healthy empty queue from a command
+    # failure that would otherwise look like a successful empty response.
+    printf '%s\n' '{"bridge_status":"ok"}'
+    ;;
   HOLD_FETCH:*)
     queue_id=${command#HOLD_FETCH:}
     valid_queue_id "$queue_id" || { printf '%s\n' 'Invalid queue ID' >&2; exit 64; }

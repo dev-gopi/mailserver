@@ -68,6 +68,14 @@ const securityPolicyMutationLimit = rateLimit({
   message: { error: "Security policy changes are limited to 30 operations per 15 minutes" }
 });
 
+const quarantinePreviewLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Quarantine previews are limited to 20 requests per minute" }
+});
+
 const quarantineRescanLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 4,
@@ -136,7 +144,6 @@ adminRouter.get("/events/metrics", requireRoles("admin"), eventController.metric
 adminRouter.get("/events/outbox", requireRoles("admin"), eventController.outboxStatus);
 adminRouter.post("/events/outbox/:id/retry", requireRoles("owner"), validate({ params: eventOutboxIdParamSchema }), eventController.retryOutbox);
 adminRouter.get("/events/export", requireRoles("admin"), validate({ query: eventExportQuerySchema }), eventController.exportCsv);
-adminRouter.get("/events/stream", requireRoles("admin"), eventController.stream);
 adminRouter.get("/events/notifications", requireRoles("admin"), validate({ query: eventNotificationQuerySchema }), eventController.notifications);
 adminRouter.patch("/events/notifications/:id/read", requireRoles("admin"), validate({ params: eventNotificationIdParamSchema }), eventController.markNotificationRead);
 adminRouter.post("/events/notifications/:id/acknowledge", requireRoles("admin"), validate({ params: eventNotificationIdParamSchema }), eventController.acknowledgeNotification);
@@ -157,6 +164,7 @@ adminRouter.post("/system/queue/flush", requireRoles("admin"), systemController.
 adminRouter.post("/system/test-smtp", requireRoles("admin"), validate({ body: testSmtpSchema }), systemController.testSmtp);
 adminRouter.post("/system/test-spam", requireRoles("owner", "admin"), scannerDiagnosticLimit, validate({ body: testSpamSchema }), systemController.testSpam);
 adminRouter.get("/quarantine", requireRoles("owner", "admin"), systemController.getQuarantine);
+adminRouter.get("/quarantine/:queueId/preview", requireRoles("owner", "admin"), quarantinePreviewLimit, validate({ params: quarantineQueueIdParamSchema }), systemController.previewQuarantine);
 adminRouter.post("/quarantine/:queueId/rescan-release", requireRoles("owner", "admin"), quarantineRescanLimit, validate({ params: quarantineQueueIdParamSchema }), systemController.rescanReleaseQuarantine);
 adminRouter.delete("/quarantine/:queueId", requireRoles("owner"), validate({ params: quarantineQueueIdParamSchema }), systemController.deleteQuarantine);
 
