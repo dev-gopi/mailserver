@@ -12,6 +12,7 @@ import { randomUUID } from "crypto";
 import net from "net";
 import { env } from "../config/env";
 import { securityPolicyService } from "./security-policy.service";
+import { parseQuarantineMessagePreview } from "../utils/quarantine-preview";
 
 export class SystemService {
   /**
@@ -411,6 +412,31 @@ export class SystemService {
 
   async getQuarantineMessages() {
     return systemRepository.getQuarantineMessages();
+  }
+
+  async previewQuarantinedMessage(queueId: string) {
+    if (!/^[A-Za-z0-9]{5,64}$/.test(queueId)) {
+      const error = new Error("Invalid Postfix queue ID") as Error & { statusCode?: number };
+      error.statusCode = 400;
+      throw error;
+    }
+    try {
+      const held = await systemRepository.getQuarantineMessages();
+      if (!held.some((entry) => entry.queueId === queueId)) {
+        const notFound = new Error("Quarantine item was not found or is no longer held") as Error & { statusCode?: number };
+        notFound.statusCode = 404;
+        throw notFound;
+      }
+      const { message } = await systemRepository.getHeldMessageForRescan(queueId);
+      // Only parsed, bounded text and attachment metadata leave the API. Raw
+      // RFC 822 content and attachment bytes are never returned to the UI.
+      return parseQuarantineMessagePreview(queueId, message);
+    } catch (cause) {
+      if (cause && typeof cause === "object" && "statusCode" in cause && [400, 404].includes(Number(cause.statusCode))) throw cause;
+      const error = new Error("Quarantined message preview is temporarily unavailable; the message remains held.") as Error & { statusCode?: number };
+      error.statusCode = 503;
+      throw error;
+    }
   }
 
   async rescanAndReleaseQuarantinedMessage(req: Request, queueId: string) {

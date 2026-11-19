@@ -87,6 +87,17 @@ export class SystemController {
     }
   }
 
+  async previewQuarantine(req: Request, res: Response) {
+    try {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
+      res.setHeader("Pragma", "no-cache");
+      return res.json(await systemService.previewQuarantinedMessage(req.params.queueId));
+    } catch (err: any) {
+      const status = err.statusCode || 503;
+      return res.status(status).json({ error: err.message || "Failed to preview quarantined message" });
+    }
+  }
+
   async rescanReleaseQuarantine(req: Request, res: Response) {
     if (!canWrite(req)) return res.status(403).json({ error: "Read-only administrator" });
     try {

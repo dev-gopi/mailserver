@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { app } from "./app";
 import { env } from "./config/env";
 import { db } from "./db/pool";
@@ -5,9 +6,13 @@ import { backupService } from "./services/backup.service";
 import { securityPolicyService } from "./services/security-policy.service";
 import { eventService } from "./services/event.service";
 import { taskQueue } from "./queue/task-queue";
+import { WebSocketHub } from "./realtime/websocket";
+import { realtimeMonitorService } from "./services/realtime-monitor.service";
 
 const HTTP_DRAIN_TIMEOUT_MS = Number(process.env.HTTP_DRAIN_TIMEOUT_MS ?? 30_000);
 const QUEUE_DRAIN_TIMEOUT_MS = Number(process.env.QUEUE_DRAIN_TIMEOUT_MS ?? 25_000);
+const server = createServer(app);
+const realtimeHub = new WebSocketHub(server);
 
 function closeHttpServer(server: ReturnType<typeof app.listen>, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -34,7 +39,11 @@ async function boot(): Promise<void> {
   await securityPolicyService.syncRspamdMaps();
   await eventService.start();
   backupService.startScheduler();
-  const server = app.listen(env.port, "0.0.0.0", () => console.log(`Mail admin API listening on ${env.port}`));
+  realtimeHub.start();
+  server.listen(env.port, "0.0.0.0", () => {
+    console.log(`Mail admin API listening on ${env.port}`);
+    realtimeMonitorService.start(realtimeHub);
+  });
   let shuttingDown = false;
 
   const shutdown = async (signal: string) => {
@@ -42,6 +51,11 @@ async function boot(): Promise<void> {
     shuttingDown = true;
     console.log(`MailCore API received ${signal}; beginning graceful shutdown.`);
     let cleanupFailed = false;
+
+    // Stop realtime probes and close authenticated websocket sessions before
+    // draining the shared HTTP listener.
+    realtimeMonitorService.stop();
+    realtimeHub.stop();
 
     try {
       // Stop future scheduled backup ticks before closing the HTTP listener.

@@ -48,7 +48,11 @@ const state = {
   securityPolicyHistory: []
 };
 
-let eventStream = null;
+let realtimeSocket = null;
+let realtimeSocketRetryTimer = null;
+let realtimeSocketRetryAttempt = 0;
+let realtimeSocketStopped = true;
+const seenRealtimeEventIds = new Set();
 let eventUiRefreshTimer = null;
 let eventLoadInProgress = false;
 let lastModalTrigger = null;
@@ -67,7 +71,7 @@ const $ = (id) => document.getElementById(id);
 function clearSensitiveInputsInElement(container) {
   if (!container) return;
   container.querySelectorAll(
-    'input[type="password"], input[id*="password" i], input[name*="password" i], input[id*="recovery" i], input[name*="recovery" i], input[id*="code" i], input[name*="code" i], input[id*="secret" i], input[id*="totp" i], input[id*="otp" i], input.recovery-code-input, input.otp-code-input'
+    'input[type="password"], input[id*="password" i], input[name*="password" i], input[id*="recovery" i], input[name*="recovery" i], input[id*="code" i], input[name*="code" i], input[id*="secret" i], input[id*="totp" i], input[id*="otp" i], input#login-captcha-input, input.recovery-code-input, input.otp-code-input'
   ).forEach((input) => {
     input.value = "";
   });
@@ -286,6 +290,7 @@ function request(path, options = {}) {
 
     // Don't auto-redirect to login if we are in the middle of auth / login / 2fa / reset / mailbox self-service
     const isAuthRoute = path.includes("/auth/login") ||
+                        path.includes("/auth/captcha") ||
                         path.includes("/auth/mfa/") ||
                         path.includes("/auth/reset-password") ||
                         path.includes("/auth/passkey/") ||
@@ -444,6 +449,37 @@ function showToast(title, message, type = "info", duration = 4500) {
   resumeDismissTimer();
 }
 
+/**
+ * Show an operating-system notification only when the user has already
+ * granted browser notification permission. This deliberately never asks the
+ * browser for permission; in-app toasts and the unread list remain the fallback
+ * when permission is absent or denied.
+ */
+function showDesktopNotification(title, body, tag = "mailcore-security-alert") {
+  if (!state.adminUser || !["owner", "admin"].includes(state.adminUser.role)) return null;
+  if (!("Notification" in window) || window.Notification.permission !== "granted") return null;
+
+  try {
+    const notification = new window.Notification(title, {
+      body: body || "A sensitive security event was detected.",
+      icon: "/favicon.ico",
+      tag,
+      renotify: false
+    });
+
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
+    return notification;
+  } catch (error) {
+    // Some browsers or embedded contexts can expose the API but reject
+    // construction. The in-app notification has already been displayed.
+    console.debug("Desktop notification could not be displayed", error);
+    return null;
+  }
+}
+
 // View Switching: login, 2fa, forgot, setup, mailbox-password, app
 function showView(name) {
   // Clear any sensitive inputs from previously viewed screens
@@ -455,6 +491,10 @@ function showView(name) {
   $("view-setup")?.classList.toggle("hidden", name !== "setup");
   $("view-mailbox-password")?.classList.toggle("hidden", name !== "mailbox-password");
   $("view-app")?.classList.toggle("hidden", name !== "app");
+
+  if (name === "login") {
+    loadLoginCaptcha();
+  }
 
   if (name === "mailbox-password") {
     // Reset any previous state/messages
@@ -476,10 +516,15 @@ function showView(name) {
 
   if (name === "app") {
     updateUserInfo();
-    startEventStream();
+    // Load the durable unread count even if a realtime connection is briefly
+    // unavailable; subsequent changes are pushed over the WebSocket.
+    if (["owner", "admin"].includes(state.adminUser?.role)) {
+      void loadEventNotifications().catch(() => null);
+    }
+    startRealtimeSocket();
     startLiveMonitor();
   } else {
-    stopEventStream();
+    stopRealtimeSocket();
     stopLiveMonitor();
   }
 }
@@ -2074,7 +2119,7 @@ async function deleteAlias(id, source) {
   }
 }
 
-// 5. Event Management, Search, Notifications & Live Stream
+// 5. Event Management, Search, Notifications & Realtime WebSocket
 function buildEventQuery(includeCursor = false) {
   const params = new URLSearchParams();
   params.set("limit", "50");
@@ -2220,7 +2265,7 @@ function renderEventNotifications() {
   const container = $("event-notifications-list");
   if (!container) return;
   if (!state.eventNotifications.length) {
-    container.innerHTML = '<p class="text-muted" style="padding:12px">No notifications. Enabled alert rules will create notifications for matching events.</p>';
+    container.innerHTML = '<p class="text-muted" style="padding:12px">No notifications yet. Critical and security-sensitive events are always retained; enabled alert rules add other matching events.</p>';
     return;
   }
   container.innerHTML = state.eventNotifications.map((notification) => {
@@ -2359,33 +2404,204 @@ function scheduleEventUiRefresh() {
   }, 5000);
 }
 
-function startEventStream() {
-  if (!state.adminUser || !["owner", "admin"].includes(state.adminUser.role) || eventStream) return;
-  try {
-    eventStream = new EventSource("/api/events/stream");
-    eventStream.addEventListener("ready", () => {
-      if ($("events-live-status")) { $("events-live-status").textContent = "Live stream connected"; $("events-live-status").className = "badge badge-success"; }
-    });
-    eventStream.addEventListener("mailcore.event", (message) => {
-      let event;
-      try { event = JSON.parse(message.data); } catch { return; }
-      scheduleEventUiRefresh();
-      if (event.severity === "critical" || (event.category === "security" && event.severity === "warning") || (event.category === "authentication" && event.severity === "warning")) {
-        showToast(event.severity === "critical" ? "Critical Event" : "Security Alert", event.summary || event.action, event.severity === "critical" ? "error" : "warning", 7000);
-      }
-    });
-    eventStream.onerror = () => {
-      if ($("events-live-status")) { $("events-live-status").textContent = "Reconnecting…"; $("events-live-status").className = "badge badge-warning"; }
-    };
-  } catch (err) {
-    if ($("events-live-status")) $("events-live-status").textContent = "Live stream unavailable";
+function setRealtimeStatus(status) {
+  const badge = $("events-live-status");
+  if (!badge) return;
+  const statusCopy = {
+    connected: {
+      label: "Live alerts connected",
+      title: "Live in-app notifications are connected. Browser notification permission is not needed."
+    },
+    connecting: {
+      label: "Connecting to live alerts…",
+      title: "Opening the authenticated WebSocket for in-app notifications."
+    },
+    reconnecting: {
+      label: "Live alerts reconnecting…",
+      title: "The live WebSocket is reconnecting. Previously saved notifications remain available in this tab."
+    },
+    disconnected: {
+      label: "Live alerts disconnected",
+      title: "The live WebSocket is disconnected. Sign in again or refresh the page to reconnect."
+    }
+  };
+  const display = statusCopy[status] || statusCopy.disconnected;
+  badge.textContent = display.label;
+  badge.title = display.title;
+  badge.className = `badge ${status === "connected" ? "badge-success" : status === "reconnecting" || status === "connecting" ? "badge-warning" : "badge-secondary"}`;
+}
+
+function startRealtimeSocket() {
+  if (!state.adminUser || !["owner", "admin"].includes(state.adminUser.role)) return;
+  realtimeSocketStopped = false;
+  if (realtimeSocket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(realtimeSocket.readyState)) return;
+  if (realtimeSocketRetryTimer) {
+    clearTimeout(realtimeSocketRetryTimer);
+    realtimeSocketRetryTimer = null;
+  }
+  connectRealtimeSocket();
+}
+
+function connectRealtimeSocket() {
+  if (realtimeSocketStopped || !state.adminUser || !["owner", "admin"].includes(state.adminUser.role)) return;
+  const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(`${scheme}//${window.location.host}/realtime/events`);
+  realtimeSocket = socket;
+  setRealtimeStatus("connecting");
+
+  socket.addEventListener("open", () => {
+    if (realtimeSocket !== socket) return;
+    realtimeSocketRetryAttempt = 0;
+    setRealtimeStatus("connected");
+    void loadEventNotifications().catch(() => null);
+  });
+
+  socket.addEventListener("message", (message) => {
+    if (realtimeSocket !== socket) return;
+    let envelope;
+    try { envelope = JSON.parse(message.data); } catch { return; }
+    if (!envelope || typeof envelope.event !== "string") return;
+    const payload = envelope.data || {};
+    if (envelope.event === "mailcore:connected") {
+      setRealtimeStatus("connected");
+    } else if (envelope.event === "mailcore:event") {
+      handleRealtimeEvent(payload);
+    } else if (envelope.event === "mailcore:services") {
+      renderLiveServiceSnapshot(payload);
+    } else if (envelope.event === "mailcore:quarantine") {
+      renderLiveQuarantineStatus(payload);
+    }
+  });
+
+  socket.addEventListener("error", () => {
+    if (realtimeSocket === socket) setRealtimeStatus("reconnecting");
+  });
+
+  socket.addEventListener("close", () => {
+    if (realtimeSocket !== socket) return;
+    realtimeSocket = null;
+    if (realtimeSocketStopped || !state.adminUser) {
+      setRealtimeStatus("disconnected");
+      return;
+    }
+    setRealtimeStatus("reconnecting");
+    const delay = Math.min(30_000, 1_000 * (2 ** Math.min(realtimeSocketRetryAttempt, 5)));
+    realtimeSocketRetryAttempt += 1;
+    if (realtimeSocketRetryTimer) clearTimeout(realtimeSocketRetryTimer);
+    realtimeSocketRetryTimer = setTimeout(() => {
+      realtimeSocketRetryTimer = null;
+      connectRealtimeSocket();
+    }, delay);
+  });
+}
+
+function stopRealtimeSocket() {
+  realtimeSocketStopped = true;
+  if (realtimeSocketRetryTimer) clearTimeout(realtimeSocketRetryTimer);
+  realtimeSocketRetryTimer = null;
+  const socket = realtimeSocket;
+  realtimeSocket = null;
+  if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, "Admin session ended");
+  setRealtimeStatus("disconnected");
+}
+
+function handleRealtimeEvent(event) {
+  const eventId = String(event?.id || "");
+  if (!eventId || seenRealtimeEventIds.has(eventId)) return;
+  seenRealtimeEventIds.add(eventId);
+  if (seenRealtimeEventIds.size > 500) seenRealtimeEventIds.delete(seenRealtimeEventIds.values().next().value);
+
+  scheduleEventUiRefresh();
+  const securityEvent = ["security", "authentication"].includes(event.category) && ["warning", "critical"].includes(event.severity);
+  const criticalEvent = event.severity === "critical";
+  const quarantineEvent = String(event.action || "").startsWith("security.quarantine.");
+  const quarantineAlertEvent = [
+    "security.quarantine.message.held",
+    "security.quarantine.service.down",
+    "security.quarantine.service.degraded",
+    "security.quarantine.service.recovered"
+  ].includes(event.action);
+  const notificationTitle = event.action === "security.quarantine.message.held"
+    ? "New Quarantined Mail"
+    : event.action === "security.quarantine.service.down"
+      ? "Quarantine Service Down"
+      : event.action === "security.quarantine.service.degraded"
+        ? "Quarantine Service Degraded"
+        : event.action === "security.quarantine.service.recovered"
+          ? "Quarantine Service Recovered"
+          : criticalEvent ? "Critical System Event" : "Security Alert";
+
+  if (criticalEvent || securityEvent || quarantineAlertEvent) {
+    const toastType = event.action === "security.quarantine.service.recovered"
+      ? "success"
+      : criticalEvent ? "error" : "warning";
+    showToast(notificationTitle, event.summary || event.action || "A security-sensitive event was recorded.", toastType, 8000);
+  }
+
+  // Desktop notifications are an optional enhancement. They are emitted only
+  // for critical/security events and quarantine lifecycle alerts, and only if
+  // permission was granted previously. Sensitive event details are kept out
+  // of OS notification bodies (which may appear on a locked screen).
+  if (criticalEvent || securityEvent || quarantineAlertEvent) {
+    const desktopBody = quarantineAlertEvent
+      ? event.action === "security.quarantine.message.held"
+        ? "A new message was placed in the quarantine queue."
+        : event.action === "security.quarantine.service.down"
+          ? "The quarantine service is unavailable. Administrator attention is required."
+          : event.action === "security.quarantine.service.degraded"
+            ? "The quarantine service is degraded and may be unavailable."
+            : "The quarantine service is available again."
+      : securityEvent
+        ? "A sensitive security event was detected."
+        : "A critical system event was detected.";
+    showDesktopNotification(notificationTitle, desktopBody, `mailcore-event-${eventId}`);
+  }
+  if (quarantineEvent && state.currentTab === "quarantine") void loadQuarantine({ silent: true });
+  if (["system.service.down", "system.service.degraded", "system.service.recovered"].includes(event.action)) {
+    void pollFastMetrics();
   }
 }
 
-function stopEventStream() {
-  if (eventStream) eventStream.close();
-  eventStream = null;
-  if ($("events-live-status")) { $("events-live-status").textContent = "Live stream disconnected"; $("events-live-status").className = "badge badge-secondary"; }
+function renderLiveServiceSnapshot(services) {
+  if (!Array.isArray(services)) return;
+  renderServicesHealth(services);
+  renderInfrastructureSummary(services);
+  renderServicesLatencyChart(services);
+  const pill = $("server-status-pill");
+  const text = $("server-status-text");
+  if (!pill || !text) return;
+  const hasDown = services.some((service) => service.status === "down");
+  const hasDegraded = services.some((service) => service.status === "degraded");
+  if (hasDown) {
+    pill.className = "server-status-pill offline";
+    text.textContent = "Service Offline";
+  } else if (hasDegraded) {
+    pill.className = "server-status-pill degraded";
+    text.textContent = "Services Degraded";
+  } else {
+    pill.className = "server-status-pill";
+    text.textContent = "Mail Services Active";
+  }
+}
+
+function renderLiveQuarantineStatus(status) {
+  const warning = $("quarantine-service-status");
+  if (warning) {
+    warning.classList.toggle("hidden", status?.available !== false);
+    if (status?.available === false) {
+      warning.textContent = "Quarantine queue service is unavailable. Held-message listing and previews are temporarily disabled; messages remain held until the bridge is healthy.";
+    }
+  }
+  if (status?.available === false) {
+    if ($("badge-nav-quarantine")) $("badge-nav-quarantine").textContent = "!";
+    if ($("quarantine-count")) $("quarantine-count").textContent = "Unavailable";
+  }
+  if (status?.available === true && Number.isFinite(Number(status.count))) {
+    const count = Number(status.count);
+    if ($("badge-nav-quarantine")) $("badge-nav-quarantine").textContent = String(count);
+    if ($("quarantine-count")) $("quarantine-count").textContent = `${count} held`;
+    if (state.currentTab === "quarantine") void loadQuarantine({ silent: true });
+  }
 }
 
 // --- LIVE BACKGROUND MONITOR ENGINE ---
@@ -2395,39 +2611,13 @@ let mediumPollingTimer = null;
 async function pollFastMetrics() {
   if (!state.adminUser || document.hidden) return;
   try {
-    const [services, queue, taskQueue] = await Promise.all([
-      request("/api/system/services").catch(() => null),
+    // Service health arrives through the authenticated WebSocket. Only the
+    // mail queue and task queue retain their existing lightweight REST reads.
+    const [queue, taskQueue] = await Promise.all([
       request("/api/system/queue").catch(() => null),
       request("/api/system/task-queue").catch(() => null)
     ]);
-
-    if (services && Array.isArray(services)) {
-      renderServicesHealth(services);
-      renderInfrastructureSummary(services);
-      renderServicesLatencyChart(services);
-
-      // Update the topbar status pill dynamically
-      const pill = $("server-status-pill");
-      const text = $("server-status-text");
-      if (pill && text) {
-        const hasDown = services.some((s) => s.status === "down");
-        const hasDegraded = services.some((s) => s.status === "degraded");
-        if (hasDown) {
-          pill.className = "server-status-pill offline";
-          text.textContent = "Service Offline";
-        } else if (hasDegraded) {
-          pill.className = "server-status-pill degraded";
-          text.textContent = "Services Degraded";
-        } else {
-          pill.className = "server-status-pill";
-          text.textContent = "Mail Services Active";
-        }
-      }
-    }
-
-    if (queue) {
-      renderQueueStats(queue, taskQueue);
-    }
+    if (queue) renderQueueStats(queue, taskQueue);
   } catch (err) {
     // Silent fail during background polling
   }
@@ -2436,22 +2626,7 @@ async function pollFastMetrics() {
 async function pollMediumMetrics() {
   if (!state.adminUser || document.hidden) return;
   try {
-    const promises = [
-      loadEventNotifications().catch(() => null)
-    ];
-
-    if (["owner", "admin"].includes(state.adminUser.role)) {
-      promises.push(
-        request("/api/quarantine").then((res) => {
-          const items = Array.isArray(res?.items) ? res.items : [];
-          if ($("badge-nav-quarantine")) $("badge-nav-quarantine").textContent = String(items.length);
-          if ($("quarantine-count")) $("quarantine-count").textContent = `${items.length} held`;
-          if (state.currentTab === "quarantine") {
-            loadQuarantine({ silent: true });
-          }
-        }).catch(() => null)
-      );
-    }
+    const promises = [];
 
     // Active tab dynamic sync
     if (state.currentTab === "overview") {
@@ -2504,7 +2679,7 @@ function startLiveMonitor() {
     if (!document.hidden) void pollFastMetrics();
   }, 30000);
 
-  // Medium interval (60s): Quarantine counter, Notifications badge, Active tab live data
+  // Medium interval (60s): Active tab live data (socket drives alerts and quarantine status)
   mediumPollingTimer = setInterval(() => {
     if (!document.hidden) void pollMediumMetrics();
   }, 60000);
@@ -3081,6 +3256,7 @@ async function loadQuarantine(options = {}) {
         <td>${escapeHtml(recipients || "No recipient metadata")}</td>
         <td>${escapeHtml(size)}</td>
         <td class="table-actions">
+          <button class="btn btn-secondary btn-xs" onclick="previewQuarantinedMessage('${escapeHtml(queueId)}')" title="Preview message safely">Preview</button>
           <button class="btn btn-primary btn-xs" onclick="rescanAndReleaseQuarantinedMessage('${escapeHtml(queueId)}')">Rescan &amp; Release</button>
           ${owner ? `<button class="btn btn-danger btn-xs" onclick="deleteQuarantinedMessage('${escapeHtml(queueId)}')">Delete</button>` : ""}
         </td>
@@ -3091,6 +3267,54 @@ async function loadQuarantine(options = {}) {
       if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="text-danger">${escapeHtml(err.message)}</td></tr>`;
       showToast("Quarantine Load Failed", err.message, "error");
     }
+  }
+}
+
+async function previewQuarantinedMessage(queueId) {
+  if (!/^[A-Za-z0-9]{5,64}$/.test(queueId)) return showToast("Invalid Queue ID", "The queue ID format is not valid.", "error");
+  const fields = {
+    "quarantine-preview-queue-id": queueId,
+    "quarantine-preview-subject": "Loading message preview…",
+    "quarantine-preview-from": "—",
+    "quarantine-preview-to": "—",
+    "quarantine-preview-date": "—",
+    "quarantine-preview-content-type": "—"
+  };
+  Object.entries(fields).forEach(([id, value]) => { if ($(id)) $(id).textContent = value; });
+  if ($("quarantine-preview-body")) $("quarantine-preview-body").textContent = "Loading message preview…";
+  if ($("quarantine-preview-attachments")) $("quarantine-preview-attachments").textContent = "Loading attachment metadata…";
+  if ($("quarantine-preview-attachment-count")) $("quarantine-preview-attachment-count").textContent = "0";
+  $("quarantine-preview-truncated")?.classList.add("hidden");
+  openModal("modal-quarantine-preview");
+
+  try {
+    const preview = await request(`/api/quarantine/${encodeURIComponent(queueId)}/preview`);
+    const values = {
+      "quarantine-preview-queue-id": preview.queueId || queueId,
+      "quarantine-preview-subject": preview.subject || "(No subject)",
+      "quarantine-preview-from": preview.from || "(No sender header)",
+      "quarantine-preview-to": preview.to || "(No recipient header)",
+      "quarantine-preview-date": preview.date || "(No date header)",
+      "quarantine-preview-content-type": preview.contentType || "Unknown"
+    };
+    Object.entries(values).forEach(([id, value]) => { if ($(id)) $(id).textContent = String(value); });
+    if ($("quarantine-preview-body")) $("quarantine-preview-body").textContent = preview.bodyText || "No safe text body was found in this message.";
+    $("quarantine-preview-truncated")?.classList.toggle("hidden", !preview.bodyTruncated);
+    const attachments = Array.isArray(preview.attachments) ? preview.attachments : [];
+    if ($("quarantine-preview-attachment-count")) $("quarantine-preview-attachment-count").textContent = String(attachments.length);
+    const attachmentList = $("quarantine-preview-attachments");
+    if (attachmentList) {
+      attachmentList.innerHTML = attachments.length ? attachments.map((attachment) => `
+        <div class="quarantine-attachment-item">
+          <div><strong>${escapeHtml(attachment.fileName || "Unnamed attachment")}</strong><small>${escapeHtml(attachment.contentType || "application/octet-stream")}</small></div>
+          <span class="text-muted">${formatBytes(Number(attachment.sizeBytes || 0))}</span>
+        </div>
+      `).join("") : "No attachments were detected.";
+    }
+  } catch (err) {
+    if ($("quarantine-preview-subject")) $("quarantine-preview-subject").textContent = "Preview unavailable";
+    if ($("quarantine-preview-body")) $("quarantine-preview-body").textContent = err.message || "The message preview could not be loaded.";
+    if ($("quarantine-preview-attachments")) $("quarantine-preview-attachments").textContent = "Attachment metadata unavailable.";
   }
 }
 
@@ -3796,6 +4020,55 @@ function base64urlToBuffer(base64url) {
    Authentication & Initial Startup
    ========================================================================== */
 
+let currentLoginCaptchaId = null;
+async function loadLoginCaptcha() {
+  try {
+    const data = await request("/auth/captcha");
+    if (data && data.captchaId && data.svg) {
+      currentLoginCaptchaId = data.captchaId;
+      const canvas = $("login-captcha-canvas");
+      if (canvas) {
+        renderSvgToCanvas(data.svg, canvas);
+      }
+      const input = $("login-captcha-input");
+      if (input) input.value = "";
+    }
+  } catch (err) {
+    console.warn("Could not load CAPTCHA:", err);
+  }
+}
+
+function renderSvgToCanvas(svgString, canvas) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.onload = () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+  };
+  img.onerror = () => {
+    URL.revokeObjectURL(url);
+    try {
+      const dataUri = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgString)));
+      const fallbackImg = new Image();
+      fallbackImg.onload = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(fallbackImg, 0, 0, canvas.width, canvas.height);
+      };
+      fallbackImg.src = dataUri;
+    } catch {
+      // Ignore fallback encoding errors
+    }
+  };
+  img.src = url;
+}
+
 // Login form
 $("login-form").onsubmit = async (event) => {
   event.preventDefault();
@@ -3803,12 +4076,23 @@ $("login-form").onsubmit = async (event) => {
   btn.disabled = true;
   $("login-form-error")?.classList.add("hidden");
 
+  const captchaAnswer = $("login-captcha-input")?.value?.trim() || "";
+  if (!captchaAnswer) {
+    if ($("login-form-error-text")) $("login-form-error-text").textContent = "Please enter the CAPTCHA verification code.";
+    $("login-form-error")?.classList.remove("hidden");
+    $("login-captcha-input")?.focus();
+    btn.disabled = false;
+    return;
+  }
+
   try {
     const data = await request("/auth/login", {
       method: "POST",
       body: JSON.stringify({
         username: $("username").value.trim(),
-        password: $("password").value
+        password: $("password").value,
+        captchaId: currentLoginCaptchaId,
+        captchaAnswer
       })
     });
 
@@ -3840,6 +4124,7 @@ $("login-form").onsubmit = async (event) => {
       await refreshAllData();
     }
   } catch (err) {
+    await loadLoginCaptcha();
     if ($("login-form-error-text")) $("login-form-error-text").textContent = err.message;
     $("login-form-error")?.classList.remove("hidden");
     recordFailureAlert({

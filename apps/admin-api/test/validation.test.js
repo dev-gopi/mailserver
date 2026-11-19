@@ -7,6 +7,16 @@ test("login validation rejects empty credentials", () => {
   assert.throws(() => loginSchema.parse({ username: "", password: "" }));
 });
 
+test("login validation requires captcha fields", () => {
+  assert.throws(() => loginSchema.parse({ username: "admin", password: "password" }));
+  assert.doesNotThrow(() => loginSchema.parse({
+    username: "admin",
+    password: "password",
+    captchaId: "test-captcha-uuid",
+    captchaAnswer: "ABCDE"
+  }));
+});
+
 test("password policy requires a long new password", () => {
   assert.throws(() => changePasswordSchema.parse({ currentPassword: "old", newPassword: "a".repeat(13) }));
   assert.doesNotThrow(() => changePasswordSchema.parse({ currentPassword: "old", newPassword: "a".repeat(14) }));

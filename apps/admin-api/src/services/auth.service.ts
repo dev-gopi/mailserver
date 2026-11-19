@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import { randomUUID, randomBytes } from "crypto";
+import { randomUUID, randomBytes, randomInt } from "crypto";
 import { Request } from "express";
 import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
 import { env } from "../config/env";
@@ -29,9 +29,15 @@ interface PasskeyPendingChallenge {
   expiresAt: number;
 }
 
+interface CaptchaChallenge {
+  answer: string;
+  expiresAt: number;
+}
+
 export class AuthService {
   private mfaPendingSessions = new Map<string, MfaPendingSession>();
   private passkeyChallenges = new Map<string, PasskeyPendingChallenge>();
+  private captchaChallenges = new Map<string, CaptchaChallenge>();
 
   private getWebAuthnRpId(req: Request): string {
     const origin = req.header("origin");
@@ -82,6 +88,75 @@ export class AuthService {
     }
     for (const [key, ch] of this.passkeyChallenges.entries()) {
       if (ch.expiresAt <= now) this.passkeyChallenges.delete(key);
+    }
+    for (const [key, cap] of this.captchaChallenges.entries()) {
+      if (cap.expiresAt <= now) this.captchaChallenges.delete(key);
+    }
+  }
+
+  getCaptcha(): { captchaId: string; svg: string } {
+    this.cleanupExpiredSessions();
+    const chars = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+    let text = "";
+    for (let i = 0; i < 5; i++) {
+      text += chars[randomInt(chars.length)];
+    }
+
+    const width = 140;
+    const height = 40;
+    const colors = ["#38bdf8", "#818cf8", "#a78bfa", "#f472b6", "#34d399", "#fbbf24"];
+
+    let lines = "";
+    for (let i = 0; i < 4; i++) {
+      const x1 = randomInt(width);
+      const y1 = randomInt(height);
+      const x2 = randomInt(width);
+      const y2 = randomInt(height);
+      const color = colors[randomInt(colors.length)];
+      lines += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="1.2" stroke-opacity="0.35"/>`;
+    }
+
+    let dots = "";
+    for (let i = 0; i < 18; i++) {
+      const cx = randomInt(width);
+      const cy = randomInt(height);
+      const r = (randomInt(15) / 10 + 0.5).toFixed(1);
+      const color = colors[randomInt(colors.length)];
+      dots += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" fill-opacity="0.3"/>`;
+    }
+
+    let charElements = "";
+    const charSpacing = width / (text.length + 1);
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      const x = Math.floor(charSpacing * (i + 0.75));
+      const y = Math.floor(height / 2 + (randomInt(7) - 3));
+      const rot = randomInt(28) - 14;
+      const color = colors[randomInt(colors.length)];
+      charElements += `<text x="${x}" y="${y}" fill="${color}" font-family="monospace, sans-serif" font-size="22" font-weight="bold" text-anchor="middle" dominant-baseline="central" transform="rotate(${rot}, ${x}, ${y})">${char}</text>`;
+    }
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="display:block;background:#0f172a;border-radius:4px;">${lines}${dots}${charElements}</svg>`;
+    const captchaId = randomUUID();
+    this.captchaChallenges.set(captchaId, {
+      answer: text.toLowerCase(),
+      expiresAt: Date.now() + 5 * 60 * 1000
+    });
+
+    return { captchaId, svg };
+  }
+
+  verifyCaptcha(captchaId?: string, answer?: string): void {
+    this.cleanupExpiredSessions();
+    if (!captchaId || !answer) {
+      throw new Error("CAPTCHA verification is required.");
+    }
+    const challenge = takeOneTimeValue(this.captchaChallenges, captchaId);
+    if (!challenge || challenge.expiresAt < Date.now()) {
+      throw new Error("CAPTCHA code has expired or was already used. Please refresh.");
+    }
+    if (answer.trim().toLowerCase() !== challenge.answer) {
+      throw new Error("Incorrect CAPTCHA verification code. Please try again.");
     }
   }
 

@@ -251,6 +251,36 @@ export class SystemRepository {
     });
   }
 
+  private async probePostfixBridge(): Promise<ServiceHealthStatus> {
+    const started = Date.now();
+    const checkedAt = new Date().toISOString();
+    try {
+      // HOLD_LIST is read-only and exercises the same private bridge command
+      // used by quarantine listing and preview/re-scan operations. Its explicit
+      // marker distinguishes a healthy empty queue from a failed postqueue/jq.
+      const output = await this.postfixBridge("HOLD_LIST", 4 * 1024 * 1024, 3500);
+      this.assertHealthyQuarantineBridgeResponse(output);
+      return {
+        service: "postfix-bridge",
+        displayName: "Postfix Quarantine Queue Bridge",
+        port: env.services.postfixBridgePort,
+        status: "healthy",
+        latencyMs: Date.now() - started,
+        lastChecked: checkedAt
+      };
+    } catch (error) {
+      return {
+        service: "postfix-bridge",
+        displayName: "Postfix Quarantine Queue Bridge",
+        port: env.services.postfixBridgePort,
+        status: "down",
+        latencyMs: Date.now() - started,
+        error: error instanceof Error ? error.message.slice(0, 240) : "Quarantine bridge unavailable",
+        lastChecked: checkedAt
+      };
+    }
+  }
+
   async checkAllServices(): Promise<ServiceHealthStatus[]> {
     const dbStart = Date.now();
     let dbStatus: ServiceHealthStatus;
@@ -282,6 +312,7 @@ export class SystemRepository {
       this.probeTcp("dovecot", "Dovecot MDA (IMAP)", env.services.dovecotHost, env.services.dovecotPort, undefined, true, true),
       this.probeRspamd(),
       this.probeClamAV(),
+      this.probePostfixBridge(),
       this.probeTcp(
         "redis",
         "Redis Queue & Cache",
@@ -356,10 +387,23 @@ export class SystemRepository {
     });
   }
 
+  private assertHealthyQuarantineBridgeResponse(output: string): void {
+    const healthy = output.split(/\r?\n/).some((line) => {
+      try {
+        const item = JSON.parse(line) as Record<string, unknown>;
+        return item.bridge_status === "ok";
+      } catch {
+        return false;
+      }
+    });
+    if (!healthy) throw new Error("Postfix quarantine bridge did not return its health marker");
+  }
+
   async getQuarantineMessages(): Promise<Array<{
     queueId: string; arrivalTime: string | null; sizeBytes: number; sender: string; recipients: string[];
   }>> {
     const output = await this.postfixBridge("HOLD_LIST");
+    this.assertHealthyQuarantineBridgeResponse(output);
     const held: Array<{ queueId: string; arrivalTime: string | null; sizeBytes: number; sender: string; recipients: string[] }> = [];
     for (const line of output.split(/\r?\n/).filter(Boolean)) {
       try {
