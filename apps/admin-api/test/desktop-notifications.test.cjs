@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const appPath = path.resolve(__dirname, '../../apps/admin-ui/app.js');
+const appPath = path.resolve(__dirname, '../../admin-ui/app.js');
 const appSource = fs.readFileSync(appPath, 'utf8');
 
 function extractFunctionSection(name, nextMarker) {

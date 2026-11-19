@@ -546,6 +546,8 @@ code {
 .mt-4 { margin-top: 1.25rem; }
 .mb-4 { margin-bottom: 1.25rem; }
 .flex-between { display: flex; justify-content: space-between; align-items: center; }
+.flex-row { display: flex; flex-direction: row; align-items: center; }
+.gap-2 { gap: 0.5rem; }
 
 /* ==========================================================================
    Toasts Container & Toasts

@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { systemService } from "../services/system.service";
+import { systemRepository } from "../repositories/system.repository";
 
 const canWrite = (req: Request) => req.admin?.role !== "viewer";
 
@@ -80,8 +81,10 @@ export class SystemController {
 
   async getQuarantine(req: Request, res: Response) {
     try {
-      const messages = await systemService.getQuarantineMessages();
-      return res.json({ items: messages, count: messages.length });
+      const offset = Number(req.query.offset ?? 0);
+      const limit = Number(req.query.limit ?? 50);
+      const page = await systemRepository.getQuarantineMessagesPage(offset, limit);
+      return res.json(page);
     } catch (err: any) {
       return res.status(500).json({ error: err.message || "Failed to inspect quarantine" });
     }

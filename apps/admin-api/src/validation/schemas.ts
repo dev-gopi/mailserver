@@ -171,6 +171,11 @@ export const quarantineQueueIdParamSchema = z.object({
   queueId: z.string().min(5).max(64).regex(/^[A-Za-z0-9]+$/, "Invalid Postfix queue ID")
 });
 
+export const quarantineListQuerySchema = z.object({
+  offset: z.coerce.number().int().min(0).max(1_000_000_000).default(0),
+  limit: z.coerce.number().int().min(1).max(100).default(50)
+});
+
 
 export const globalSecurityPolicySchema = z.object({
   spamTagScore: z.number().min(2).max(20),

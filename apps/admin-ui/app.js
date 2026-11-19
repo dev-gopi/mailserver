@@ -45,7 +45,8 @@ const state = {
   adminSessions: [],
   administrators: [],
   securityPolicies: null,
-  securityPolicyHistory: []
+  securityPolicyHistory: [],
+  quarantinePagination: { offset: 0, limit: 50, totalCount: 0 }
 };
 
 let realtimeSocket = null;
@@ -3230,14 +3231,31 @@ async function triggerFlushQueue() {
 async function loadQuarantine(options = {}) {
   const silent = Boolean(options && options.silent);
   const tbody = $("quarantine-tbody");
+  const pagination = state.quarantinePagination;
   if (tbody && !silent && (!tbody.children.length || tbody.querySelector(".text-muted"))) {
     tbody.innerHTML = '<tr><td colspan="6" class="text-muted">Loading held messages...</td></tr>';
   }
   try {
-    const response = await request("/api/quarantine");
+    const query = new URLSearchParams({
+      offset: String(pagination.offset),
+      limit: String(pagination.limit)
+    });
+    const response = await request(`/api/quarantine?${query.toString()}`);
     const items = Array.isArray(response.items) ? response.items : [];
-    if ($("quarantine-count")) $("quarantine-count").textContent = `${items.length} held`;
-    if ($("badge-nav-quarantine")) $("badge-nav-quarantine").textContent = String(items.length);
+    const totalCount = Number.isSafeInteger(Number(response.count)) ? Math.max(0, Number(response.count)) : items.length;
+    pagination.totalCount = totalCount;
+
+    // If the last row on the last page was removed, step back to the new last page.
+    if (!items.length && pagination.offset > 0 && (totalCount === 0 || pagination.offset >= totalCount)) {
+      pagination.offset = totalCount === 0
+        ? 0
+        : Math.max(0, Math.floor((totalCount - 1) / pagination.limit) * pagination.limit);
+      if (pagination.offset !== Number(query.get("offset"))) return loadQuarantine(options);
+    }
+
+    if ($("quarantine-count")) $("quarantine-count").textContent = `${totalCount} held`;
+    if ($("badge-nav-quarantine")) $("badge-nav-quarantine").textContent = String(totalCount);
+    renderQuarantinePagination(items.length);
     if (!tbody) return;
     if (!items.length) {
       tbody.innerHTML = '<tr><td colspan="6" class="text-muted">No messages are currently held in the Postfix quarantine queue.</td></tr>';
@@ -3269,6 +3287,31 @@ async function loadQuarantine(options = {}) {
     }
   }
 }
+
+function renderQuarantinePagination(visibleCount = 0) {
+  const pagination = state.quarantinePagination;
+  const totalPages = Math.max(1, Math.ceil(pagination.totalCount / pagination.limit));
+  const currentPage = Math.min(totalPages, Math.floor(pagination.offset / pagination.limit) + 1);
+  const first = pagination.totalCount === 0 ? 0 : pagination.offset + 1;
+  const last = Math.min(pagination.offset + visibleCount, pagination.totalCount);
+  if ($("quarantine-page-summary")) {
+    $("quarantine-page-summary").textContent = `Showing ${first}–${last} of ${pagination.totalCount} held messages`;
+  }
+  if ($("quarantine-page-number")) $("quarantine-page-number").textContent = `Page ${currentPage} of ${totalPages}`;
+  const previous = $("quarantine-page-prev");
+  const next = $("quarantine-page-next");
+  if (previous) previous.disabled = pagination.offset <= 0;
+  if (next) next.disabled = pagination.offset + pagination.limit >= pagination.totalCount;
+}
+
+async function changeQuarantinePage(direction) {
+  const pagination = state.quarantinePagination;
+  const nextOffset = pagination.offset + (Math.sign(direction) * pagination.limit);
+  const lastOffset = Math.max(0, Math.floor(Math.max(0, pagination.totalCount - 1) / pagination.limit) * pagination.limit);
+  pagination.offset = Math.min(lastOffset, Math.max(0, nextOffset));
+  await loadQuarantine();
+}
+window.changeQuarantinePage = changeQuarantinePage;
 
 async function previewQuarantinedMessage(queueId) {
   if (!/^[A-Za-z0-9]{5,64}$/.test(queueId)) return showToast("Invalid Queue ID", "The queue ID format is not valid.", "error");

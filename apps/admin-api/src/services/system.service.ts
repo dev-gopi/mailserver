@@ -421,8 +421,8 @@ export class SystemService {
       throw error;
     }
     try {
-      const held = await systemRepository.getQuarantineMessages();
-      if (!held.some((entry) => entry.queueId === queueId)) {
+      const held = await systemRepository.findQuarantineMessage(queueId);
+      if (!held) {
         const notFound = new Error("Quarantine item was not found or is no longer held") as Error & { statusCode?: number };
         notFound.statusCode = 404;
         throw notFound;
@@ -440,8 +440,7 @@ export class SystemService {
   }
 
   async rescanAndReleaseQuarantinedMessage(req: Request, queueId: string) {
-    const held = await systemRepository.getQuarantineMessages();
-    const item = held.find((entry) => entry.queueId === queueId);
+    const item = await systemRepository.findQuarantineMessage(queueId);
     if (!item) {
       const error = new Error("Quarantine item was not found or is no longer held") as Error & { statusCode?: number };
       error.statusCode = 404;

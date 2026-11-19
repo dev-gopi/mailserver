@@ -262,7 +262,7 @@ patching, or deliverability monitoring.
   them. The API and private Postfix bridge verify the scanned content hash before
   releasing a held message.
   Postfix HOLD items do not automatically expire, so define and operate a
-  manual retention/review process; the UI lists at most 500 entries per view.
+  manual retention/review process; the UI uses server-side pagination, displays the full queue count, and fetches at most 100 entries per view.
 - Dovecot stores Maildir data in `maildata` and reads virtual mailbox/alias
   configuration from PostgreSQL. OpenDKIM signs mail with per-domain keys
   managed by the administration service.
@@ -429,8 +429,10 @@ revalidates active sessions on its heartbeat and only sends event summaries to
 owner/admin sessions. PostgreSQL catch-up polling recovers temporary listener
 gaps before events are broadcast. Notifications are displayed inside the signed-in
 admin UI as live toasts, an unread Alerts badge, and persistent Event Explorer
-history; the app does not call the browser Notification API or request operating
-system notification permission. They are visible while the admin UI is open.
+history. As an optional enhancement, the browser Notification constructor is
+used only when permission is already `granted`; the app never calls
+`Notification.requestPermission()` or triggers a permission prompt. In-app
+notifications remain available when permission is `default` or `denied`.
 Nginx proxies the WebSocket upgrade without buffering and explicitly preserves
 the public `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `Origin`, and upgrade
 headers in the WebSocket location (Nginx does not inherit parent `proxy_set_header`
@@ -469,8 +471,21 @@ alone do not certify a deployment.
 
 The admin UI always provides in-app toast alerts and a persistent unread notification list. For critical events, security-sensitive events, and quarantine lifecycle alerts, it also creates an operating-system/browser notification **only when** the signed-in administrator's browser has already granted notification permission. The UI does not call `Notification.requestPermission()` and will never trigger a permission prompt automatically. If permission is `default` or `denied`, in-app alerts continue to work normally.
 
-Run the focused desktop-notification regression tests with:
+Run the API build and complete regression suite (including desktop-notification,
+password-reset, and Postfix quarantine pagination tests) from `apps/admin-api`:
 
 ```bash
-node --test infrastructure/tests/desktop-notifications.test.cjs
+npm test
 ```
+
+The Docker image compiles the hardened administrator reset utility to
+`/app/dist/scripts/reset-password.js`. Reset a password from the project root
+with:
+
+```bash
+docker compose exec app node dist/scripts/reset-password.js admin "YOUR_NEW_PASSWORD"
+```
+
+The command enforces the shared 14–128 character administrator password policy,
+rejects reuse of the current password, clears lockout/reset-token state, revokes
+active administrator sessions, and writes a metadata-only audit record.

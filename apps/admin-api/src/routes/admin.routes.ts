@@ -21,6 +21,7 @@ import {
   administratorUpdateSchema,
   administratorIdParamSchema,
   quarantineQueueIdParamSchema,
+  quarantineListQuerySchema,
   globalSecurityPolicySchema,
   scopedSecurityPolicySchema,
   securityPolicyListEntrySchema,
@@ -163,7 +164,7 @@ adminRouter.get("/system/certificate", systemController.getCertificateHealth);
 adminRouter.post("/system/queue/flush", requireRoles("admin"), systemController.flushMailQueue);
 adminRouter.post("/system/test-smtp", requireRoles("admin"), validate({ body: testSmtpSchema }), systemController.testSmtp);
 adminRouter.post("/system/test-spam", requireRoles("owner", "admin"), scannerDiagnosticLimit, validate({ body: testSpamSchema }), systemController.testSpam);
-adminRouter.get("/quarantine", requireRoles("owner", "admin"), systemController.getQuarantine);
+adminRouter.get("/quarantine", requireRoles("owner", "admin"), validate({ query: quarantineListQuerySchema }), systemController.getQuarantine);
 adminRouter.get("/quarantine/:queueId/preview", requireRoles("owner", "admin"), quarantinePreviewLimit, validate({ params: quarantineQueueIdParamSchema }), systemController.previewQuarantine);
 adminRouter.post("/quarantine/:queueId/rescan-release", requireRoles("owner", "admin"), quarantineRescanLimit, validate({ params: quarantineQueueIdParamSchema }), systemController.rescanReleaseQuarantine);
 adminRouter.delete("/quarantine/:queueId", requireRoles("owner"), validate({ params: quarantineQueueIdParamSchema }), systemController.deleteQuarantine);

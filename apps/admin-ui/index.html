@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MailCore Admin — Single-Tenant Mail Server Control Panel</title>
   <meta name="description" content="Single-tenant self-hosted mail server management console for domains, mailboxes, aliases, and security audit logs.">
-  <link rel="stylesheet" href="/styles.css?v=2.1.0">
+  <link rel="stylesheet" href="/styles.css?v=2.3.0">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -1428,7 +1428,17 @@
                 </tbody>
               </table>
             </div>
-            <div class="card-footer text-muted" style="font-size:0.8rem;">Only owners and administrators can view/release items. Permanent deletion is restricted to the owner role and is recorded in the audit log.</div>
+            <div class="card-footer flex-between" style="gap:12px;flex-wrap:wrap;">
+              <div>
+                <div id="quarantine-page-summary" class="text-muted" style="font-size:0.8rem;">Showing 0 of 0 held messages</div>
+                <div class="text-muted" style="font-size:0.75rem;">Only owners and administrators can view/release items. Permanent deletion is restricted to the owner role and is recorded in the audit log.</div>
+              </div>
+              <div class="flex-row gap-2" aria-label="Quarantine pages">
+                <button id="quarantine-page-prev" class="btn btn-secondary btn-sm" type="button" onclick="changeQuarantinePage(-1)" disabled>Previous</button>
+                <span id="quarantine-page-number" class="text-muted" style="align-self:center;font-size:0.8rem;">Page 1 of 1</span>
+                <button id="quarantine-page-next" class="btn btn-secondary btn-sm" type="button" onclick="changeQuarantinePage(1)" disabled>Next</button>
+              </div>
+            </div>
           </div>
         </section>
 
