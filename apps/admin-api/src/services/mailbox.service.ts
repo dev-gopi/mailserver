@@ -26,6 +26,10 @@ export class MailboxService {
     return mailboxRepository.findAll();
   }
 
+  async getMailboxesPage(limit: number, offset: number) {
+    return mailboxRepository.findPage(limit, offset);
+  }
+
   async getMailboxById(id: number) {
     const mb = await mailboxRepository.findById(id);
     if (!mb) throw new Error("Mailbox not found");
@@ -222,6 +226,70 @@ export class MailboxService {
       message: matches
         ? "Credentials valid! Mailbox can authenticate via Thunderbird / IMAP (993 SSL) and SMTP (587 STARTTLS)."
         : "Invalid password. IMAP/SMTP login rejected (Dovecot BLF-CRYPT mismatch)."
+    };
+  }
+
+  /**
+   * Allows a mailbox user to change their own password using their existing password
+   * (e.g. the initial password created by the administrator).
+   */
+  async changePasswordByMailboxUser(
+    req: Request,
+    input: {
+      email: string;
+      currentPassword: string;
+      newPassword: string;
+    }
+  ) {
+    const address = input.email.toLowerCase().trim();
+    const mailbox = await mailboxRepository.findByAddress(address);
+    if (!mailbox) {
+      throw new Error("Invalid email address or current password");
+    }
+
+    if (!mailbox.active) {
+      throw new Error("Account is suspended. Please contact your system administrator.");
+    }
+
+    const storedHash = await mailboxRepository.getPasswordHash(mailbox.id);
+    if (!storedHash) {
+      throw new Error("Invalid email address or current password");
+    }
+
+    const cleanHash = storedHash.replace(/^\{BLF-CRYPT\}/i, "");
+    const matches = await bcrypt.compare(input.currentPassword, cleanHash);
+
+    if (!matches) {
+      await auditService.log(req, "mailbox.self_password_change.failed", "mailbox", mailbox.id, {
+        address: mailbox.address,
+        reason: "Invalid current password"
+      });
+      throw new Error("Invalid email address or current password");
+    }
+
+    if (input.currentPassword === input.newPassword) {
+      throw new Error("New password must be different from current password");
+    }
+
+    if (input.newPassword.length < 12) {
+      throw new Error("New password must be at least 12 characters");
+    }
+
+    const bcryptHash = await bcrypt.hash(input.newPassword, 12);
+    const passwordHash = `{BLF-CRYPT}${bcryptHash}`;
+
+    await mailboxRepository.update(mailbox.id, {
+      passwordHash
+    });
+
+    await auditService.log(req, "mailbox.self_password_change.success", "mailbox", mailbox.id, {
+      address: mailbox.address
+    });
+
+    return {
+      success: true,
+      address: mailbox.address,
+      message: "Mailbox password successfully updated. You can now use your new password with your mail client."
     };
   }
 

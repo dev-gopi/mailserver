@@ -9,6 +9,10 @@ export class AliasService {
     return aliasRepository.findAll();
   }
 
+  async getAliasesPage(limit: number, offset: number) {
+    return aliasRepository.findPage(limit, offset);
+  }
+
   /** Mail-routing view — only active aliases (mirrors virtual_aliases). */
   async getActiveAliases() {
     return aliasRepository.findAllActive();

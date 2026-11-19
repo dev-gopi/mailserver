@@ -1,13 +1,16 @@
 FROM ubuntu:24.04
 
+LABEL org.opencontainers.image.title="MailCore OpenDKIM" org.opencontainers.image.base.name="ubuntu:24.04"
+
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     opendkim \
     opendkim-tools \
     postgresql-client \
     netcat-openbsd \
     openssl \
+    ca-certificates \
     tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && usermod -u 10001 opendkim \

@@ -235,14 +235,21 @@ patching, or deliverability monitoring.
   this to a soft reject (temporary SMTP failure) so the sending MTA can retry.
   A detected virus is rejected by Rspamd and Postfix's Milter quarantine
   behavior places reject actions into its HOLD queue.
+- ClamAV enables PUA detection, malformed executable/media alerts, and
+  `AlertExceedsMax`. Content that cannot be fully scanned because it exceeds
+  the configured archive, recursion, file-count, or size limits is rejected
+  rather than accepted unscanned. This deliberately favors security over
+  delivery of unusually large or complex attachments.
 - Initial policy thresholds in `services/rspamd/local.d/actions.conf` are:
   score 4 for greylisting, score 6 for spam tagging, and score 15 for reject.
   Tagged mail receives `X-Spam-Status` and Dovecot Sieve files it into `Junk`.
   Tune these values only after measuring false positives and delivery impact.
 - Rspamd's Bayes classifier stores state in the password-protected Redis
   instance. OpenPhish feed support is enabled and requires outbound HTTPS for
-  feed updates. MIME/attachment extension signals add risk score; extension
-  alone does not constitute a malware verdict. The interactive scan endpoint is
+  feed updates. OpenPhish and PhishTank positive feed matches, plus DMARC
+  failures from domains that publish `p=reject`, are quarantine-eligible
+  rejects. MIME/attachment extension signals add risk score; extension alone
+  does not constitute a malware verdict. The interactive scan endpoint is
   owner/admin-only and rate-limited to 10 scans per minute per client. These
   policy thresholds are tracked in configuration; a dynamic policy editor is
   available in the administration console.
@@ -308,6 +315,20 @@ cd ../..
 docker compose down
 ~~~
 
+Persistent host logs are mounted under `var/log/mailcore/`:
+`admin-ui-access.log`, `admin-ui-error.log`, `postfix.log`, `dovecot.log`, and
+`dovecot-info.log`. The Postfix and Dovecot files are intentionally
+owner-readable only; inspect them through an approved host or container
+administration session rather than weakening their permissions. Correlate a
+diagnostic message ID, queue ID, or event ID across these logs and the Event
+Explorer when investigating delivery or authentication problems.
+
+The API has a shared limit of 300 requests per 15 minutes for each client IP,
+along with tighter limits for authentication, security-policy updates,
+diagnostics, and quarantine re-scans. If the dashboard receives `429 Too Many
+Requests`, wait for the limit window to reset and avoid multiple tabs or rapid
+manual refreshes from the same proxy/NAT address.
+
 | Volume | Contents |
 | --- | --- |
 | `dbdata` | PostgreSQL data |
@@ -344,6 +365,7 @@ services/
 infrastructure/
   database/init/   Schema and initial administrator seed
   monitor/         API-health monitor
+  security/        Host log preparation, Fail2ban and logrotate helpers
   tls/             Development certificate and renewal helpers
   tests/           Runtime validation scripts
 scripts/           Compose validation utilities

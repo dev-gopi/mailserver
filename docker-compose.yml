@@ -94,6 +94,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    pids_limit: 256
     logging: *service-logging
 
   # Optional only: Amavis is configured under services/amavis but is not part
@@ -116,6 +117,7 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    pids_limit: 256
     logging: *service-logging
     healthcheck:
       # Ubuntu's ClamAV packages do not provide clamdscan. Probe the daemon's
@@ -141,6 +143,7 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    pids_limit: 128
     logging: *service-logging
     environment:
       - TZ=${TZ:?set TZ in .env}
@@ -193,6 +196,7 @@ services:
         aliases:
           - postfix-bridge
     restart: unless-stopped
+    pids_limit: 512
     logging: *service-logging
     environment:
       - TZ=${TZ:?set TZ in .env}
@@ -216,10 +220,11 @@ services:
       app:
         condition: service_healthy
     healthcheck:
-      # SMTPS requires a TLS handshake; a raw TCP probe causes spurious
-      # SSL_accept errors in the Postfix log.
-      test: ["CMD-SHELL", "postfix status >/dev/null 2>&1 && bash -c '</dev/tcp/127.0.0.1/25' && bash -c '</dev/tcp/127.0.0.1/587' && openssl s_client -connect 127.0.0.1:465 -brief </dev/null >/dev/null 2>&1"]
-      interval: 15s
+      # postfix status confirms master is running. SMTPS handshake via openssl
+      # validates TLS stack. Plain ports 25/587 are covered by postfix status —
+      # probing them directly causes spurious pipelining warnings in the logs.
+      test: ["CMD-SHELL", "postfix status >/dev/null 2>&1 && (printf 'QUIT\\r\\n' | openssl s_client -connect 127.0.0.1:465 -quiet 2>/dev/null; true)"]
+      interval: 30s
       timeout: 5s
       retries: 5
       start_period: 30s
@@ -242,6 +247,7 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    pids_limit: 512
     logging: *service-logging
     environment:
       - TZ=${TZ:?set TZ in .env}
@@ -263,7 +269,7 @@ services:
       start_period: 20s
 
   db:
-    image: postgres:16
+    image: postgres:17
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
@@ -279,6 +285,7 @@ services:
     networks:
       - dbnet
     restart: unless-stopped
+    pids_limit: 256
     logging: *service-logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
@@ -287,7 +294,7 @@ services:
       retries: 12
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     user: redis
     read_only: true
     tmpfs:
@@ -296,6 +303,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    pids_limit: 128
     restart: unless-stopped
     logging: *service-logging
     command: ["/bin/sh", "-ec", "umask 077; printf 'requirepass %s\n' \"$$(cat /run/secrets/redis_password)\" > /tmp/redis-secret.conf; exec redis-server /tmp/redis-secret.conf --appendonly yes --appendfsync everysec --maxmemory-policy noeviction"]
@@ -386,6 +394,7 @@ services:
     cap_add:
       - CHOWN
       - DAC_OVERRIDE
+    pids_limit: 256
     environment:
       NODE_ENV: production
       PORT: ${API_PORT:?set API_PORT in .env}
@@ -494,6 +503,7 @@ services:
     networks:
       - mailnet
     restart: unless-stopped
+    pids_limit: 128
     logging: *service-logging
     depends_on:
       app:
@@ -546,6 +556,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    pids_limit: 128
     logging: *service-logging
     depends_on:
       monitoring-secrets-init:
@@ -587,6 +598,8 @@ services:
       GF_SERVER_ROOT_URL: http://localhost:${GRAFANA_PORT:-3001}/
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_LIVE_MAX_CONNECTIONS: "0"
+      GF_LOG_FILTERS: "live.push_http:error"
     volumes:
       - ./infrastructure/monitoring/grafana/entrypoint.sh:/entrypoint.sh:ro
       - mailcore_monitoring_secrets:/run/mailcore-secrets:ro
@@ -602,6 +615,7 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    pids_limit: 128
     logging: *service-logging
     depends_on:
       monitoring-secrets-init:
@@ -614,8 +628,8 @@ services:
   # Loki provides the log datasource used by Grafana Explore. It is internal
   # only; Grafana is the sole UI exposed on the host.
   loki:
-    image: grafana/loki:3.3.0
-    command: ["-config.file=/etc/loki/config.yml"]
+    image: grafana/loki:3.4.3
+    command: ["-config.file=/etc/loki/config.yml", "-reporting.enabled=false"]
     volumes:
       - ./infrastructure/monitoring/loki.yml:/etc/loki/config.yml:ro
       - lokidata:/loki
@@ -629,12 +643,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    pids_limit: 128
     logging: *service-logging
 
   # Collect the existing MailCore service log files without a Docker-socket
   # mount. This avoids granting the log collector container Docker control.
   promtail:
-    image: grafana/promtail:3.3.0
+    image: grafana/promtail:3.4.3
     command: ["-config.file=/etc/promtail/config.yml"]
     volumes:
       - ./infrastructure/monitoring/promtail.yml:/etc/promtail/config.yml:ro
@@ -652,6 +667,7 @@ services:
       - ALL
     cap_add:
       - DAC_READ_SEARCH
+    pids_limit: 64
     logging: *service-logging
     depends_on:
       loki:

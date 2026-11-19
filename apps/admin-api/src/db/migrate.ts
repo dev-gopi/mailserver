@@ -13,6 +13,7 @@ export async function runMigrations(): Promise<void> {
       ALTER TABLE admins ADD COLUMN IF NOT EXISTS reset_token_hash TEXT;
       ALTER TABLE admins ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMPTZ;
       ALTER TABLE admin_sessions ADD COLUMN IF NOT EXISTS csrf_token_hash CHAR(64);
+      ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ;
 
       CREATE INDEX IF NOT EXISTS idx_admin_sessions_active_idle_admin
         ON admin_sessions (admin_id, last_seen_at DESC, created_at DESC)

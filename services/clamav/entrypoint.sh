@@ -11,9 +11,17 @@ fi
 # FreshClam drops privileges to DatabaseOwner=clamav.
 chown clamav:clamav /var/lib/clamav /var/run/clamav /var/log/clamav
 
-# Refresh once during startup, then keep signatures updated in the background.
-# The persistent clamavdata volume retains signatures across container restarts.
-freshclam --quiet || echo "[WARN] Initial ClamAV signature update failed; retaining existing database." >&2
+# Refresh once during startup without attempting to notify clamd (clamd has not
+# started yet; it will load the fresh database directly from disk on startup).
+# This avoids the misleading "ERROR: NotifyClamd: Can't connect to clamd on ...: Connection refused"
+# during initial container bootstrap.
+sed '/^[[:space:]]*NotifyClamd/d' /etc/clamav/freshclam.conf > /tmp/freshclam-init.conf
+chown clamav:clamav /tmp/freshclam-init.conf
+freshclam --config-file=/tmp/freshclam-init.conf --quiet || echo "[WARN] Initial ClamAV signature update failed; retaining existing database." >&2
+rm -f /tmp/freshclam-init.conf
+
+# Keep signatures updated in the background using the primary configuration
+# which will notify clamd to reload signatures once new updates are downloaded.
 freshclam -d --pid=/var/run/clamav/freshclam.pid || echo "[WARN] FreshClam background updater failed to start." >&2
 
 # Keep clamd in the foreground so Docker observes its exit and restarts the

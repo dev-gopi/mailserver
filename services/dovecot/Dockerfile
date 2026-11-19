@@ -1,9 +1,12 @@
 FROM ubuntu:24.04
 
+LABEL org.opencontainers.image.title="MailCore Dovecot" org.opencontainers.image.base.name="ubuntu:24.04"
+
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt update && \
-    DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
+RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
+    apt-get install -y --no-install-recommends \
     dovecot-core \
     dovecot-imapd \
     dovecot-lmtpd \

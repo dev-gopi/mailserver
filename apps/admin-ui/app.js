@@ -26,6 +26,11 @@ const state = {
   mailboxStatusFilter: "",
   domainStatusFilter: "",
   aliasStatusFilter: "",
+  pagination: {
+    mailboxes: { limit: 25, offset: 0 },
+    domains: { limit: 25, offset: 0 },
+    aliases: { limit: 25, offset: 0 }
+  },
   sort: {
     mailboxes: { column: "created", order: "desc" },
     domains: { column: "name", order: "asc" },
@@ -47,16 +52,29 @@ let eventStream = null;
 let eventUiRefreshTimer = null;
 let eventLoadInProgress = false;
 let lastModalTrigger = null;
+const API_TIMEOUT_MS = 15000;
+const MAX_READ_ATTEMPTS = 3;
+const inFlightReadRequests = new Map();
+const CROSS_TAB_LOGOUT_KEY = "mailcore-admin:logout";
+const CROSS_TAB_SESSION_KEY = "mailcore-admin:session-sync";
+const sessionChannel = typeof BroadcastChannel === "function"
+  ? new BroadcastChannel("mailcore-admin-session")
+  : null;
 
 // DOM Helper
 const $ = (id) => document.getElementById(id);
 
-function clearSubmittedPasswordFields(form) {
-  // A visibility toggle can temporarily change a password input to text, so
-  // include password-named fields as well as inputs currently typed password.
-  form.querySelectorAll('input[type="password"], input[id*="password" i], input[name*="password" i]').forEach((input) => {
+function clearSensitiveInputsInElement(container) {
+  if (!container) return;
+  container.querySelectorAll(
+    'input[type="password"], input[id*="password" i], input[name*="password" i], input[id*="recovery" i], input[name*="recovery" i], input[id*="code" i], input[name*="code" i], input[id*="secret" i], input[id*="totp" i], input[id*="otp" i], input.recovery-code-input, input.otp-code-input'
+  ).forEach((input) => {
     input.value = "";
   });
+}
+
+function clearSubmittedPasswordFields(form) {
+  clearSensitiveInputsInElement(form);
 }
 
 // Auth Header helper
@@ -199,61 +217,138 @@ function renderDashboardFailuresTable() {
   `).join("");
 }
 
-// Central API Request Handler
-async function request(path, options = {}) {
-  const url = path;
+function setApiConnectionStatus(status) {
+  const indicator = $("api-connection-status");
+  if (!indicator) return;
+  indicator.classList.toggle("hidden", status === "online");
+  indicator.classList.toggle("offline", status === "offline");
+  indicator.textContent = status === "offline" ? "Connection lost" : "Reconnecting…";
+}
+
+function wait(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function retryDelay(response, attempt) {
+  const retryAfter = Number(response?.headers?.get("Retry-After"));
+  if (Number.isFinite(retryAfter) && retryAfter >= 0) return Math.min(retryAfter * 1000, 6000);
+  return Math.min(350 * (2 ** attempt) + Math.random() * 150, 2500);
+}
+
+async function parseResponseBody(response) {
+  if (response.status === 204) return null;
+  const text = await response.text();
+  if (!text) return {};
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+function getApiError(response, data) {
+  if (typeof data === "string" && data.trim()) return data;
+  if (data && data.error) return data.error;
+  if (data && data.message) return data.message;
+  if (data && Array.isArray(data.details)) return data.details.map((detail) => detail.message || detail.field).filter(Boolean).join("; ");
+  if (data && typeof data.details === "string") return data.details;
+  return response.statusText || `Request failed with status ${response.status}`;
+}
+
+// Central API Request Handler. Reads can be safely shared and retried; mutations
+// are sent once so an unreliable connection cannot create duplicate changes.
+function request(path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
-  const config = {
-    ...options,
-    credentials: "same-origin",
-    headers: getHeaders(options.headers || {}, method)
-  };
+  const isRead = method === "GET" || method === "HEAD";
+  const requestKey = isRead && !options.signal ? `${method}:${path}` : null;
+  if (requestKey && inFlightReadRequests.has(requestKey)) return inFlightReadRequests.get(requestKey);
 
-  try {
-    const res = await fetch(url, config);
+  const execute = async () => {
+    const { signal: callerSignal, ...fetchOptions } = options;
+    let activeController = null;
+    const abortFromCaller = () => activeController?.abort();
+    callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
 
-    // Don't auto-redirect to login if we are in the middle of auth / login / 2fa / reset
+    try {
+      for (let attempt = 0; attempt < (isRead ? MAX_READ_ATTEMPTS : 1); attempt += 1) {
+        if (callerSignal?.aborted) throw new Error("Request cancelled.");
+        const controller = new AbortController();
+        activeController = controller;
+        let timedOut = false;
+        const timeoutId = window.setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, API_TIMEOUT_MS);
+
+        try {
+          const response = await fetch(path, {
+            ...fetchOptions,
+            credentials: "same-origin",
+            signal: controller.signal,
+            headers: getHeaders(options.headers || {}, method)
+          });
+
+    // Don't auto-redirect to login if we are in the middle of auth / login / 2fa / reset / mailbox self-service
     const isAuthRoute = path.includes("/auth/login") ||
                         path.includes("/auth/mfa/") ||
                         path.includes("/auth/reset-password") ||
-                        path.includes("/auth/passkey/");
+                        path.includes("/auth/passkey/") ||
+                        path.includes("/auth/mailbox/");
 
-    if (res.status === 401 && !isAuthRoute) {
-      state.adminUser = null;
-      showView("login");
-      throw new Error("Session expired. Please sign in again.");
-    }
+          if (response.status === 401 && !isAuthRoute) {
+            notifyOtherTabsOfLogout();
+            state.adminUser = null;
+            showView("login");
+            const error = new Error("Session expired. Please sign in again.");
+            error.apiResponse = true;
+            throw error;
+          }
 
-    if (res.status === 204) {
-      return null;
-    }
+          if (response.ok) {
+            setApiConnectionStatus("online");
+            return parseResponseBody(response);
+          }
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      // Extract the most specific and accurate error message returned by the API
-      let errMsg = "";
-      if (typeof data === "string") {
-        errMsg = data;
-      } else if (data && data.error) {
-        errMsg = data.error;
-      } else if (data && data.message) {
-        errMsg = data.message;
-      } else if (data && Array.isArray(data.details)) {
-        errMsg = data.details.map((d) => d.message || d.field).join("; ");
-      } else if (data && typeof data.details === "string") {
-        errMsg = data.details;
-      } else if (res.statusText) {
-        errMsg = `${res.statusText} (${res.status})`;
-      } else {
-        errMsg = `Request failed with status ${res.status}`;
+          const retryable = isRead && [408, 429, 500, 502, 503, 504].includes(response.status);
+          if (retryable && attempt < MAX_READ_ATTEMPTS - 1) {
+            await wait(retryDelay(response, attempt));
+            continue;
+          }
+          const error = new Error(getApiError(response, await parseResponseBody(response)));
+          error.apiResponse = true;
+          throw error;
+        } catch (error) {
+          const wasAborted = controller.signal.aborted;
+          if (wasAborted && callerSignal?.aborted) throw new Error("Request cancelled.");
+          if (wasAborted && timedOut) {
+            if (isRead && attempt < MAX_READ_ATTEMPTS - 1) {
+              await wait(retryDelay(null, attempt));
+              continue;
+            }
+            setApiConnectionStatus("reconnecting");
+            throw new Error("The server did not respond in time. Please try again.");
+          }
+          if (error?.apiResponse) throw error;
+          if (isRead && attempt < MAX_READ_ATTEMPTS - 1 && !wasAborted) {
+            await wait(retryDelay(null, attempt));
+            continue;
+          }
+          if (error instanceof TypeError) {
+            setApiConnectionStatus(navigator.onLine ? "reconnecting" : "offline");
+            throw new Error(navigator.onLine ? "Unable to reach the server. Please try again." : "You appear to be offline. Check your connection and try again.");
+          }
+          throw error;
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
       }
-
-      throw new Error(errMsg);
+    } finally {
+      callerSignal?.removeEventListener("abort", abortFromCaller);
     }
-    return data;
-  } catch (err) {
-    throw err;
+  };
+
+  const pending = execute();
+  if (requestKey) {
+    inFlightReadRequests.set(requestKey, pending);
+    pending.finally(() => inFlightReadRequests.delete(requestKey)).catch(() => {});
   }
+  return pending;
 }
 
 // Toast Notifications
@@ -269,31 +364,196 @@ function showToast(title, message, type = "info", duration = 4500) {
       <div class="toast-title">${escapeHtml(title)}</div>
       <div class="toast-msg">${escapeHtml(message)}</div>
     </div>
-    <button class="toast-close" type="button" aria-label="Dismiss notification" onclick="this.parentElement.remove()">&times;</button>
+    <div class="toast-actions">
+      <button class="toast-pin" type="button" aria-label="Keep notification open" aria-pressed="false" title="Keep notification open">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4v5l3 3v2H6v-2l3-3V4m2 10v6m-3-16h8"/></svg>
+      </button>
+      <button class="toast-close" type="button" aria-label="Dismiss notification">&times;</button>
+    </div>
+    <div class="toast-timer" aria-hidden="true"><span></span></div>
   `;
 
   container.appendChild(toast);
+  const closeButton = toast.querySelector(".toast-close");
+  const pinButton = toast.querySelector(".toast-pin");
+  const timerBar = toast.querySelector(".toast-timer span");
+  let timeoutId = null;
+  let timerStartedAt = 0;
+  let remaining = duration;
+  let isClosing = false;
+  let isPinned = false;
 
-  setTimeout(() => {
+  const dismiss = () => {
+    if (isClosing) return;
+    isClosing = true;
+    if (timeoutId) clearTimeout(timeoutId);
     toast.style.opacity = "0";
     toast.style.transform = "translateX(30px)";
     setTimeout(() => toast.remove(), 250);
-  }, duration);
+  };
+
+  const pauseDismissTimer = () => {
+    if (!timeoutId || isClosing) return;
+    remaining = Math.max(0, remaining - (Date.now() - timerStartedAt));
+    clearTimeout(timeoutId);
+    timeoutId = null;
+    toast.classList.add("toast-paused");
+    if (timerBar) {
+      timerBar.style.transition = "none";
+      timerBar.style.width = `${(remaining / duration) * 100}%`;
+    }
+  };
+
+  const resumeDismissTimer = () => {
+    if (timeoutId || isClosing || isPinned) return;
+    if (remaining <= 0) return dismiss();
+    toast.classList.remove("toast-paused");
+    timerStartedAt = Date.now();
+    if (timerBar) {
+      timerBar.style.transition = "none";
+      timerBar.style.width = `${(remaining / duration) * 100}%`;
+      void timerBar.offsetWidth;
+      timerBar.style.transition = `width ${remaining}ms linear`;
+      timerBar.style.width = "0";
+    }
+    timeoutId = setTimeout(dismiss, remaining);
+  };
+
+  closeButton?.addEventListener("click", dismiss);
+  pinButton?.addEventListener("click", () => {
+    isPinned = !isPinned;
+    toast.classList.toggle("toast-pinned", isPinned);
+    pinButton.setAttribute("aria-pressed", String(isPinned));
+    pinButton.setAttribute("aria-label", isPinned ? "Allow notification to dismiss automatically" : "Keep notification open");
+    pinButton.setAttribute("title", isPinned ? "Allow notification to dismiss automatically" : "Keep notification open");
+    if (isPinned) {
+      pauseDismissTimer();
+    } else if (!toast.matches(":hover") && !toast.contains(document.activeElement)) {
+      resumeDismissTimer();
+    }
+  });
+  toast.addEventListener("mouseenter", pauseDismissTimer);
+  toast.addEventListener("mouseleave", () => {
+    if (!toast.contains(document.activeElement)) resumeDismissTimer();
+  });
+  toast.addEventListener("focusin", pauseDismissTimer);
+  toast.addEventListener("focusout", (event) => {
+    if (!toast.contains(event.relatedTarget)) resumeDismissTimer();
+  });
+
+  resumeDismissTimer();
 }
 
-// View Switching: login, 2fa, forgot, setup, app
+// View Switching: login, 2fa, forgot, setup, mailbox-password, app
 function showView(name) {
+  // Clear any sensitive inputs from previously viewed screens
+  clearSensitiveInputsInElement(document);
+
   $("view-login")?.classList.toggle("hidden", name !== "login");
   $("view-2fa")?.classList.toggle("hidden", name !== "2fa");
   $("view-forgot")?.classList.toggle("hidden", name !== "forgot");
   $("view-setup")?.classList.toggle("hidden", name !== "setup");
+  $("view-mailbox-password")?.classList.toggle("hidden", name !== "mailbox-password");
   $("view-app")?.classList.toggle("hidden", name !== "app");
+
+  if (name === "mailbox-password") {
+    // Reset any previous state/messages
+    $("mailbox-password-error")?.classList.add("hidden");
+    $("mailbox-password-success")?.classList.add("hidden");
+    // Pre-populate email from URL hash or query if present
+    try {
+      const hash = window.location.hash || "";
+      if (hash.includes("email=")) {
+        const email = decodeURIComponent(hash.split("email=")[1]?.split("&")[0] || "");
+        if (email && $("mb-self-email")) {
+          $("mb-self-email").value = email;
+        }
+      }
+    } catch {
+      // Ignore malformed URL params
+    }
+  }
 
   if (name === "app") {
     updateUserInfo();
     startEventStream();
+    startLiveMonitor();
   } else {
     stopEventStream();
+    stopLiveMonitor();
+  }
+}
+
+// Per-Tab Live Loaders
+
+async function loadMailboxes() {
+  try {
+    const data = await request("/api/mailboxes");
+    state.mailboxes = Array.isArray(data) ? data : [];
+    if ($("badge-nav-mailboxes")) $("badge-nav-mailboxes").textContent = state.mailboxes.length;
+    renderMailboxes();
+  } catch (err) {
+    console.error("Failed to load mailboxes", err);
+  }
+}
+
+async function loadDomains() {
+  try {
+    const data = await request("/api/domains");
+    state.domains = Array.isArray(data) ? data : [];
+    if ($("badge-nav-domains")) $("badge-nav-domains").textContent = state.domains.length;
+    renderDomains();
+    populateDomainSelectors();
+  } catch (err) {
+    console.error("Failed to load domains", err);
+  }
+}
+
+async function loadAliases() {
+  try {
+    const data = await request("/api/aliases");
+    state.aliases = Array.isArray(data) ? data : [];
+    if ($("badge-nav-aliases")) $("badge-nav-aliases").textContent = state.aliases.length;
+    renderAliases();
+  } catch (err) {
+    console.error("Failed to load aliases", err);
+  }
+}
+
+async function loadOverview() {
+  try {
+    const [dashboard, clientConfig] = await Promise.all([
+      request("/api/dashboard"),
+      request("/api/mailboxes/client-config").catch(() => null)
+    ]);
+    state.dashboardData = dashboard;
+    if (clientConfig) state.clientConfig = clientConfig;
+    renderOverview();
+    if (dashboard.services) {
+      renderServicesHealth(dashboard.services);
+      renderInfrastructureSummary(dashboard.services);
+      renderServicesLatencyChart(dashboard.services);
+    }
+    if (dashboard.queue) renderQueueStats(dashboard.queue, dashboard.taskQueue);
+    renderOverviewConnectionReference(clientConfig);
+  } catch (err) {
+    console.error("Failed to load overview", err);
+  }
+}
+
+async function loadDashboard() {
+  try {
+    const periodDays = Number($("mail-analytics-period")?.value || 30);
+    const [dashboard, analytics] = await Promise.all([
+      request("/api/dashboard"),
+      request(`/api/analytics/mail?days=${periodDays}`).catch(() => null)
+    ]);
+    state.dashboardData = dashboard;
+    if (analytics) state.mailAnalytics = analytics;
+    renderDashboardVisuals();
+    if (state.mailAnalytics) renderMailFlowAnalytics(state.mailAnalytics);
+  } catch (err) {
+    console.error("Failed to load dashboard", err);
   }
 }
 
@@ -335,21 +595,23 @@ function switchTab(tabId) {
   };
   $("page-title").textContent = titles[tabId] || "Control Panel";
 
+  if (tabId === "overview") {
+    loadOverview();
+  }
   if (tabId === "dashboard") {
-    renderDashboardVisuals();
-    renderMailFlowAnalytics(state.mailAnalytics);
+    loadDashboard();
   }
-  if (tabId === "backups") {
-    renderBackupsView();
+  if (tabId === "mailboxes") {
+    loadMailboxes();
   }
-  if (tabId === "audit" && state.auditLogs.length === 0) {
-    loadAuditLogs();
+  if (tabId === "domains") {
+    loadDomains();
   }
-  if (tabId === "events") {
-    loadEvents();
+  if (tabId === "aliases") {
+    loadAliases();
   }
   if (tabId === "services") {
-    runDiagnosticsNow();
+    pollFastMetrics();
   }
   if (tabId === "quarantine") {
     loadQuarantine();
@@ -357,8 +619,21 @@ function switchTab(tabId) {
   if (tabId === "security-policies") {
     loadSecurityPolicies();
   }
+  if (tabId === "audit") {
+    loadAuditLogs();
+  }
+  if (tabId === "events") {
+    loadEvents();
+    loadEventNotifications();
+  }
+  if (tabId === "backups") {
+    refreshBackupsData();
+  }
   if (tabId === "administrators") {
     loadAdministrators();
+  }
+  if (tabId === "settings") {
+    request("/api/company").then((comp) => { state.company = comp; renderCompanyForm(); }).catch(() => {});
   }
 }
 
@@ -398,6 +673,7 @@ function closeModal(id) {
   const el = $(id);
   if (!el) return;
   el.classList.add("hidden");
+  clearSensitiveInputsInElement(el);
   lastModalTrigger?.focus?.();
   lastModalTrigger = null;
 }
@@ -617,6 +893,7 @@ async function refreshAllData() {
     if (dashboard.queue) renderQueueStats(dashboard.queue, dashboard.taskQueue);
 
     showToast("Synchronized", "Mail server records updated.", "info", 1500);
+    void checkAndPrompt2Fa();
   } catch (err) {
     if (!err.message.includes("Session expired")) {
       showToast("Sync Error", err.message, "error");
@@ -740,6 +1017,7 @@ function sortTable(table, column) {
     state.sort[table].column = column;
     state.sort[table].order = "asc";
   }
+  resetTablePagination(table);
 
   if (table === "mailboxes") renderMailboxes();
   else if (table === "domains") renderDomains();
@@ -755,6 +1033,73 @@ function updateSortIndicators(table, sort) {
   if (activeEl) {
     activeEl.textContent = sort.order === "asc" ? "▲" : "▼";
   }
+}
+
+function resetTablePagination(table) {
+  if (state.pagination?.[table]) state.pagination[table].offset = 0;
+}
+
+function getTablePage(table, items) {
+  const pagination = state.pagination?.[table] || { limit: 25, offset: 0 };
+  const limit = Number(pagination.limit) || 25;
+  const lastOffset = Math.max(0, Math.floor((items.length - 1) / limit) * limit);
+  const offset = Math.min(Math.max(0, Number(pagination.offset) || 0), lastOffset);
+  state.pagination[table] = { limit, offset, total: items.length };
+  return { items: items.slice(offset, offset + limit), limit, offset };
+}
+
+function renderTablePagination(table, totalItems) {
+  const container = $(`table-pagination-${table}`);
+  if (!container) return;
+  if (totalItems === 0) {
+    container.innerHTML = "";
+    container.classList.add("hidden");
+    return;
+  }
+
+  const { limit, offset } = state.pagination[table];
+  const firstItem = offset + 1;
+  const lastItem = Math.min(offset + limit, totalItems);
+  const hasPrevious = offset > 0;
+  const hasNext = offset + limit < totalItems;
+  container.classList.remove("hidden");
+  container.innerHTML = `
+    <span class="table-pagination-summary">Showing ${firstItem}–${lastItem} of ${totalItems}</span>
+    <label class="table-page-size">Rows
+      <select aria-label="Rows per page" onchange="setTablePageSize('${table}', this.value)">
+        ${[25, 50, 100].map((size) => `<option value="${size}"${size === limit ? " selected" : ""}>${size}</option>`).join("")}
+      </select>
+    </label>
+    <div class="table-pagination-actions">
+      <button class="btn btn-secondary btn-sm" type="button" onclick="changeTablePage('${table}', 'first')" ${hasPrevious ? "" : "disabled"} aria-label="First page">«</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="changeTablePage('${table}', 'previous')" ${hasPrevious ? "" : "disabled"} aria-label="Previous page">‹</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="changeTablePage('${table}', 'next')" ${hasNext ? "" : "disabled"} aria-label="Next page">›</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="changeTablePage('${table}', 'last', ${totalItems})" ${hasNext ? "" : "disabled"} aria-label="Last page">»</button>
+    </div>
+  `;
+}
+
+function changeTablePage(table, direction, totalItems) {
+  const pagination = state.pagination?.[table];
+  if (!pagination) return;
+  const total = Number(totalItems) || pagination.total || ({ mailboxes: state.mailboxes, domains: state.domains, aliases: state.aliases }[table] || []).length;
+  const lastOffset = Math.max(0, Math.floor((total - 1) / pagination.limit) * pagination.limit);
+  if (direction === "first") pagination.offset = 0;
+  else if (direction === "previous") pagination.offset = Math.max(0, pagination.offset - pagination.limit);
+  else if (direction === "next") pagination.offset = Math.min(lastOffset, pagination.offset + pagination.limit);
+  else if (direction === "last") pagination.offset = lastOffset;
+  if (table === "mailboxes") renderMailboxes();
+  else if (table === "domains") renderDomains();
+  else if (table === "aliases") renderAliases();
+}
+
+function setTablePageSize(table, value) {
+  const limit = Number(value);
+  if (!state.pagination?.[table] || ![25, 50, 100].includes(limit)) return;
+  state.pagination[table] = { limit, offset: 0 };
+  if (table === "mailboxes") renderMailboxes();
+  else if (table === "domains") renderDomains();
+  else if (table === "aliases") renderAliases();
 }
 
 // 2. Mailbox Management
@@ -829,6 +1174,7 @@ function renderMailboxes() {
   if (filtered.length === 0) {
     tbody.innerHTML = "";
     empty.classList.remove("hidden");
+    renderTablePagination("mailboxes", 0);
     return;
   }
 
@@ -859,7 +1205,9 @@ function renderMailboxes() {
     return 0;
   });
   updateSortIndicators("mailboxes", sort);
-  tbody.innerHTML = filtered.map((m) => {
+  const page = getTablePage("mailboxes", filtered);
+  renderTablePagination("mailboxes", filtered.length);
+  tbody.innerHTML = page.items.map((m) => {
     const isSuspended = !m.active;
     const usedBytes = Number(m.storage_used_bytes || 0);
     const quotaBytes = Number(m.quota_bytes || 0);
@@ -878,6 +1226,9 @@ function renderMailboxes() {
                 <button class="btn-copy-sm" onclick="copyText('${m.address}', this)" title="Copy Email">Copy</button>
               </div>
               <div class="mailbox-name">${escapeHtml(m.display_name || "—")}</div>
+              ${m.password_changed_at
+                ? `<div class="text-muted" style="font-size: 0.72rem; color: #10b981;" title="Password updated on ${formatDate(m.password_changed_at)}">✓ Password updated</div>`
+                : `<div class="text-muted" style="font-size: 0.72rem; color: #f59e0b;" title="Still using initial password set by administrator">⚠ Initial password</div>`}
             </div>
           </div>
         </td>
@@ -909,6 +1260,9 @@ function renderMailboxes() {
         <td>${formatDate(m.created_at)}</td>
         <td class="text-right">
           <div class="table-actions">
+            <button class="btn-action-icon" title="Copy User Password Change Link" onclick="copyPasswordChangeLink('${m.address}', this)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            </button>
             <button class="btn-action-icon" title="Mail Client Setup Guide" onclick="openClientGuide('${m.address}', '${m.domain_name}')">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
             </button>
@@ -939,6 +1293,7 @@ function renderMailboxes() {
 }
 
 function filterMailboxes() {
+  resetTablePagination("mailboxes");
   renderMailboxes();
 }
 
@@ -1264,6 +1619,8 @@ async function openClientGuide(address = "", domain = "") {
   $("guide-smtp-port").textContent = config.outgoing.port;
   $("guide-smtp-alt-port").textContent = config.outgoing.alternativePort;
   $("guide-smtp-plain-port").textContent = config.outgoing.plaintextPort;
+  const selfServiceUrl = `${window.location.origin}/#mailbox-password${userAddr ? `?email=${encodeURIComponent(userAddr)}` : ""}`;
+  if ($("guide-self-service-url")) $("guide-self-service-url").textContent = selfServiceUrl;
   openModal("modal-client-guide");
 }
 
@@ -1342,6 +1699,7 @@ function setDomainFilterStatus(status) {
 }
 
 function filterDomains() {
+  resetTablePagination("domains");
   renderDomains();
 }
 
@@ -1372,6 +1730,7 @@ function renderDomains() {
   if (filtered.length === 0) {
     tbody.innerHTML = "";
     empty.classList.remove("hidden");
+    renderTablePagination("domains", 0);
     return;
   }
 
@@ -1400,7 +1759,9 @@ function renderDomains() {
   });
   updateSortIndicators("domains", sort);
 
-  tbody.innerHTML = filtered.map((d) => {
+  const page = getTablePage("domains", filtered);
+  renderTablePagination("domains", filtered.length);
+  tbody.innerHTML = page.items.map((d) => {
     const isVerified = Boolean(d.verified_at);
     return `
       <tr>
@@ -1565,6 +1926,7 @@ function setAliasFilterStatus(status) {
 }
 
 function filterAliases() {
+  resetTablePagination("aliases");
   renderAliases();
 }
 
@@ -1598,6 +1960,7 @@ function renderAliases() {
   if (filtered.length === 0) {
     tbody.innerHTML = "";
     empty.classList.remove("hidden");
+    renderTablePagination("aliases", 0);
     return;
   }
 
@@ -1629,7 +1992,9 @@ function renderAliases() {
   });
   updateSortIndicators("aliases", sort);
 
-  tbody.innerHTML = filtered.map((a) => `
+  const page = getTablePage("aliases", filtered);
+  renderTablePagination("aliases", filtered.length);
+  tbody.innerHTML = page.items.map((a) => `
     <tr>
       <td>
         <strong class="font-mono">${escapeHtml(a.source)}</strong>
@@ -1984,14 +2349,14 @@ async function exportEventsCsv() {
 }
 
 function scheduleEventUiRefresh() {
-  // Coalesce bursts of Postfix lifecycle events so high-volume mail traffic
-  // does not trigger one REST refresh per recipient delivery log line.
+  // Coalesce bursts of Postfix lifecycle events (increased to 5s to prevent request storms)
   if (eventUiRefreshTimer) return;
   eventUiRefreshTimer = setTimeout(() => {
     eventUiRefreshTimer = null;
     void loadEventNotifications();
     if (state.currentTab === "events") void loadEvents({ silent: true });
-  }, 600);
+    if (state.currentTab === "quarantine") void loadQuarantine({ silent: true });
+  }, 5000);
 }
 
 function startEventStream() {
@@ -2021,6 +2386,133 @@ function stopEventStream() {
   if (eventStream) eventStream.close();
   eventStream = null;
   if ($("events-live-status")) { $("events-live-status").textContent = "Live stream disconnected"; $("events-live-status").className = "badge badge-secondary"; }
+}
+
+// --- LIVE BACKGROUND MONITOR ENGINE ---
+let fastPollingTimer = null;
+let mediumPollingTimer = null;
+
+async function pollFastMetrics() {
+  if (!state.adminUser || document.hidden) return;
+  try {
+    const [services, queue, taskQueue] = await Promise.all([
+      request("/api/system/services").catch(() => null),
+      request("/api/system/queue").catch(() => null),
+      request("/api/system/task-queue").catch(() => null)
+    ]);
+
+    if (services && Array.isArray(services)) {
+      renderServicesHealth(services);
+      renderInfrastructureSummary(services);
+      renderServicesLatencyChart(services);
+
+      // Update the topbar status pill dynamically
+      const pill = $("server-status-pill");
+      const text = $("server-status-text");
+      if (pill && text) {
+        const hasDown = services.some((s) => s.status === "down");
+        const hasDegraded = services.some((s) => s.status === "degraded");
+        if (hasDown) {
+          pill.className = "server-status-pill offline";
+          text.textContent = "Service Offline";
+        } else if (hasDegraded) {
+          pill.className = "server-status-pill degraded";
+          text.textContent = "Services Degraded";
+        } else {
+          pill.className = "server-status-pill";
+          text.textContent = "Mail Services Active";
+        }
+      }
+    }
+
+    if (queue) {
+      renderQueueStats(queue, taskQueue);
+    }
+  } catch (err) {
+    // Silent fail during background polling
+  }
+}
+
+async function pollMediumMetrics() {
+  if (!state.adminUser || document.hidden) return;
+  try {
+    const promises = [
+      loadEventNotifications().catch(() => null)
+    ];
+
+    if (["owner", "admin"].includes(state.adminUser.role)) {
+      promises.push(
+        request("/api/quarantine").then((res) => {
+          const items = Array.isArray(res?.items) ? res.items : [];
+          if ($("badge-nav-quarantine")) $("badge-nav-quarantine").textContent = String(items.length);
+          if ($("quarantine-count")) $("quarantine-count").textContent = `${items.length} held`;
+          if (state.currentTab === "quarantine") {
+            loadQuarantine({ silent: true });
+          }
+        }).catch(() => null)
+      );
+    }
+
+    // Active tab dynamic sync
+    if (state.currentTab === "overview") {
+      promises.push(loadOverview().catch(() => null));
+    } else if (state.currentTab === "dashboard") {
+      promises.push(loadDashboard().catch(() => null));
+    } else if (state.currentTab === "mailboxes") {
+      promises.push(loadMailboxes().catch(() => null));
+    } else if (state.currentTab === "domains") {
+      promises.push(loadDomains().catch(() => null));
+    } else if (state.currentTab === "aliases") {
+      promises.push(loadAliases().catch(() => null));
+    } else if (state.currentTab === "events") {
+      promises.push(loadEvents({ silent: true }).catch(() => null));
+    } else if (state.currentTab === "backups") {
+      promises.push(refreshBackupsData().catch(() => null));
+    }
+
+    await Promise.all(promises);
+  } catch (err) {
+    // Silent fail during background polling
+  }
+}
+
+async function handleVisibilityChange() {
+  if (document.hidden) return;
+  if (state.adminUser) {
+    void pollFastMetrics();
+    void pollMediumMetrics();
+  } else {
+    // Check if user signed in from another tab while this tab was in the background
+    try {
+      const profile = await request("/auth/me");
+      if (profile?.admin) {
+        handleRemoteLogin(profile.admin);
+      }
+    } catch {
+      // Still unauthenticated
+    }
+  }
+}
+
+function startLiveMonitor() {
+  stopLiveMonitor();
+  void pollFastMetrics();
+  void pollMediumMetrics();
+
+  // Fast interval (30s): Services health, latency, Postfix mail queue
+  fastPollingTimer = setInterval(() => {
+    if (!document.hidden) void pollFastMetrics();
+  }, 30000);
+
+  // Medium interval (60s): Quarantine counter, Notifications badge, Active tab live data
+  mediumPollingTimer = setInterval(() => {
+    if (!document.hidden) void pollMediumMetrics();
+  }, 60000);
+}
+
+function stopLiveMonitor() {
+  if (fastPollingTimer) { clearInterval(fastPollingTimer); fastPollingTimer = null; }
+  if (mediumPollingTimer) { clearInterval(mediumPollingTimer); mediumPollingTimer = null; }
 }
 
 // 5b. Audit Log Renderer
@@ -2473,33 +2965,6 @@ function renderQueueStats(queue = {}, taskQueue = {}) {
       : `${queue.totalCount} messages awaiting delivery in spool`;
   }
 
-  async function runDeliverabilityCheck() {
-    const domain = $("deliverability-domain")?.value;
-    const result = $("deliverability-result");
-    if (!domain || !result) return;
-
-    result.innerHTML = `<p class="text-muted">Checking DNS and reverse DNS for ${escapeHtml(domain)}...</p>`;
-    try {
-      const report = await request(`/api/system/deliverability?domain=${encodeURIComponent(domain)}`);
-      const statusClass = report.status === "pass"
-        ? "alert-success"
-        : report.status === "warn" ? "alert-warning" : "alert-danger";
-      result.className = `alert-box ${statusClass}`;
-      result.innerHTML = `
-        <strong>Deliverability status: ${escapeHtml(report.status.toUpperCase())}</strong>
-        <div class="mt-3">${report.checks.map((check) => `
-          <div class="flex-between" style="gap: 12px; margin: 6px 0;">
-            <span>${escapeHtml(check.name)}</span>
-            <span><strong>${escapeHtml(check.status.toUpperCase())}</strong> — ${escapeHtml(check.details)}</span>
-          </div>
-        `).join("")}</div>
-      `;
-    } catch (err) {
-      result.className = "alert-box alert-danger";
-      result.textContent = err.message;
-    }
-  }
-
   if (taskQueue) {
     if ($("taskqueue-pending")) $("taskqueue-pending").textContent = taskQueue.pendingCount || 0;
     if ($("taskqueue-completed")) $("taskqueue-completed").textContent = taskQueue.completedCount || 0;
@@ -2511,6 +2976,38 @@ function renderQueueStats(queue = {}, taskQueue = {}) {
     }
   }
 }
+
+async function runDeliverabilityCheck() {
+  const domain = $("deliverability-domain")?.value;
+  const result = $("deliverability-result");
+  if (!result) return;
+  if (!domain) {
+    showToast("Domain Required", "Please select a domain from the dropdown to check deliverability.", "info");
+    return;
+  }
+
+  result.innerHTML = `<p class="text-muted">Checking DNS and reverse DNS for ${escapeHtml(domain)}...</p>`;
+  try {
+    const report = await request(`/api/system/deliverability?domain=${encodeURIComponent(domain)}`);
+    const statusClass = report.status === "pass"
+      ? "alert-success"
+      : report.status === "warn" ? "alert-warning" : "alert-danger";
+    result.className = `alert-box ${statusClass}`;
+    result.innerHTML = `
+      <strong>Deliverability status: ${escapeHtml(report.status.toUpperCase())}</strong>
+      <div class="mt-3">${report.checks.map((check) => `
+        <div class="flex-between" style="gap: 12px; margin: 6px 0;">
+          <span>${escapeHtml(check.name)}</span>
+          <span><strong>${escapeHtml(check.status.toUpperCase())}</strong> — ${escapeHtml(check.details)}</span>
+        </div>
+      `).join("")}</div>
+    `;
+  } catch (err) {
+    result.className = "alert-box alert-danger";
+    result.textContent = err.message;
+  }
+}
+window.runDeliverabilityCheck = runDeliverabilityCheck;
 
 async function runDiagnosticsNow() {
   try {
@@ -2555,9 +3052,12 @@ async function triggerFlushQueue() {
   }
 }
 
-async function loadQuarantine() {
+async function loadQuarantine(options = {}) {
+  const silent = Boolean(options && options.silent);
   const tbody = $("quarantine-tbody");
-  if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-muted">Loading held messages...</td></tr>';
+  if (tbody && !silent && (!tbody.children.length || tbody.querySelector(".text-muted"))) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-muted">Loading held messages...</td></tr>';
+  }
   try {
     const response = await request("/api/quarantine");
     const items = Array.isArray(response.items) ? response.items : [];
@@ -2587,8 +3087,10 @@ async function loadQuarantine() {
       </tr>`;
     }).join("");
   } catch (err) {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="text-danger">${escapeHtml(err.message)}</td></tr>`;
-    showToast("Quarantine Load Failed", err.message, "error");
+    if (!silent) {
+      if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="text-danger">${escapeHtml(err.message)}</td></tr>`;
+      showToast("Quarantine Load Failed", err.message, "error");
+    }
   }
 }
 
@@ -3334,6 +3836,7 @@ $("login-form").onsubmit = async (event) => {
       showView("setup");
     } else {
       showView("app");
+      notifyOtherTabsOfLogin(state.adminUser);
       await refreshAllData();
     }
   } catch (err) {
@@ -3347,6 +3850,7 @@ $("login-form").onsubmit = async (event) => {
     });
     showToast("Authentication Failed", err.message, "error");
   } finally {
+    if ($("password")) $("password").value = "";
     btn.disabled = false;
   }
 };
@@ -3388,6 +3892,10 @@ async function handleMfaSubmit(event) {
   const code = $("mfa-totp-code")?.value.trim();
   const recoveryCode = $("mfa-recovery-code")?.value.trim();
 
+  // Clear sensitive 2FA inputs immediately for security
+  if ($("mfa-totp-code")) $("mfa-totp-code").value = "";
+  if ($("mfa-recovery-code")) $("mfa-recovery-code").value = "";
+
   try {
     const payload = {
       mfaToken: state.pendingMfa.mfaToken
@@ -3413,6 +3921,7 @@ async function handleMfaSubmit(event) {
       showView("setup");
     } else {
       showView("app");
+      notifyOtherTabsOfLogin(state.adminUser);
       await refreshAllData();
     }
   } catch (err) {
@@ -3441,6 +3950,10 @@ async function handleForgotPasswordSubmit(event) {
   const recoveryCode = $("forgot-recovery-code").value.trim();
   const newPassword = $("forgot-new-password").value;
 
+  // Clear sensitive credential inputs immediately from memory and DOM
+  $("forgot-recovery-code").value = "";
+  $("forgot-new-password").value = "";
+
   try {
     const data = await request("/auth/reset-password", {
       method: "POST",
@@ -3448,8 +3961,6 @@ async function handleForgotPasswordSubmit(event) {
     });
 
     showToast("Password Reset Successful", data.message || "You can now sign in with your new password.", "success", 6000);
-    $("forgot-recovery-code").value = "";
-    $("forgot-new-password").value = "";
     $("username").value = username;
     $("password").value = "";
     showView("login");
@@ -3464,6 +3975,7 @@ async function handleForgotPasswordSubmit(event) {
     });
     showToast("Recovery Failed", err.message, "error");
   } finally {
+    clearSensitiveInputsInElement($("forgot-form"));
     btn.disabled = false;
   }
 }
@@ -3474,6 +3986,89 @@ function copyCliRecoveryCommand() {
     showToast("Copied to Clipboard", "Paste and replace <new_password> in terminal.", "info");
   }).catch(() => {
     prompt("Copy emergency recovery command:", cmd);
+  });
+}
+
+// Mailbox Self-Service Password Change Handler
+async function handleMailboxChangePasswordSubmit(event) {
+  event.preventDefault();
+  const btn = $("btn-mb-self-submit");
+  const errorDiv = $("mailbox-password-error");
+  const errorText = $("mailbox-password-error-text");
+  const successDiv = $("mailbox-password-success");
+  const successText = $("mailbox-password-success-text");
+
+  errorDiv?.classList.add("hidden");
+  successDiv?.classList.add("hidden");
+
+  const email = $("mb-self-email").value.trim().toLowerCase();
+  const currentPassword = $("mb-self-current-password").value;
+  const newPassword = $("mb-self-new-password").value;
+  const confirmPassword = $("mb-self-confirm-password").value;
+
+  // Clear sensitive credentials immediately from DOM
+  $("mb-self-current-password").value = "";
+  $("mb-self-new-password").value = "";
+  $("mb-self-confirm-password").value = "";
+
+  if (newPassword !== confirmPassword) {
+    if (errorText) errorText.textContent = "New password and confirm password do not match.";
+    errorDiv?.classList.remove("hidden");
+    return;
+  }
+
+  if (newPassword.length < 12) {
+    if (errorText) errorText.textContent = "New password must be at least 12 characters long.";
+    errorDiv?.classList.remove("hidden");
+    return;
+  }
+
+  if (newPassword === currentPassword) {
+    if (errorText) errorText.textContent = "New password must be different from the current password.";
+    errorDiv?.classList.remove("hidden");
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = "Updating Password...";
+
+  try {
+    const res = await request("/auth/mailbox/change-password", {
+      method: "POST",
+      body: JSON.stringify({ email, currentPassword, newPassword })
+    });
+
+    if (successText) {
+      successText.textContent = res.message || "Password updated successfully. You can now use your new password with your mail client.";
+    }
+    successDiv?.classList.remove("hidden");
+    $("mb-self-current-password").value = "";
+    $("mb-self-new-password").value = "";
+    $("mb-self-confirm-password").value = "";
+    showToast("Password Updated", `Mailbox password for ${email} has been changed.`, "success");
+  } catch (err) {
+    if (errorText) errorText.textContent = err.message || "Failed to update mailbox password.";
+    errorDiv?.classList.remove("hidden");
+    showToast("Update Failed", err.message, "error");
+  } finally {
+    clearSensitiveInputsInElement($("mailbox-change-password-form"));
+    btn.disabled = false;
+    btn.textContent = "Update Mailbox Password";
+  }
+}
+
+// Copy self-service password link for admin
+function copyPasswordChangeLink(address, btn) {
+  const url = `${window.location.origin}/#mailbox-password${address ? `?email=${encodeURIComponent(address)}` : ""}`;
+  navigator.clipboard?.writeText(url).then(() => {
+    showToast("Link Copied", `Self-service password link copied for ${address || "mailboxes"}.`, "success");
+    if (btn) {
+      const oldHtml = btn.innerHTML;
+      btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`;
+      setTimeout(() => { btn.innerHTML = oldHtml; }, 2000);
+    }
+  }).catch(() => {
+    prompt("Copy this self-service password change link:", url);
   });
 }
 
@@ -3523,6 +4118,7 @@ async function handlePasskeyLogin() {
       showView("setup");
     } else {
       showView("app");
+      notifyOtherTabsOfLogin(state.adminUser);
       await refreshAllData();
     }
   } catch (err) {
@@ -3622,6 +4218,48 @@ $("admin-create-form")?.addEventListener("submit", async (event) => {
     showToast("Creation Failed", err.message, "error");
   } finally { if (submit) submit.disabled = false; }
 });
+
+// 2FA Enablement Prompt Functions
+async function checkAndPrompt2Fa() {
+  if (!state.adminUser) return;
+  const username = state.adminUser.username || "admin";
+  const dismissedPermanently = localStorage.getItem(`mailAdminDismiss2FaPrompt_${username}`);
+  if (dismissedPermanently === "true") return;
+
+  const remindedThisSession = sessionStorage.getItem(`mailAdminRemind2FaLater_${username}`);
+  if (remindedThisSession === "true") return;
+
+  try {
+    const status = await request("/auth/security-status");
+    if (!status.totpEnabled) {
+      setTimeout(() => {
+        if (!state.adminUser) return;
+        const anyModalOpen = document.querySelector(".modal-backdrop:not(.hidden)");
+        if (!anyModalOpen) {
+          openModal("modal-2fa-prompt");
+        }
+      }, 800);
+    }
+  } catch {
+    // Ignore security status check errors on prompt
+  }
+}
+
+function dismiss2FaPrompt(neverShowAgain = false) {
+  closeModal("modal-2fa-prompt");
+  const username = state.adminUser?.username || "admin";
+  if (neverShowAgain) {
+    localStorage.setItem(`mailAdminDismiss2FaPrompt_${username}`, "true");
+    showToast("Preference Saved", "You won't be prompted to enable 2FA again.", "info");
+  } else {
+    sessionStorage.setItem(`mailAdminRemind2FaLater_${username}`, "true");
+  }
+}
+
+function enable2FaFromPrompt() {
+  closeModal("modal-2fa-prompt");
+  openAdminSecurityModal();
+}
 
 // Admin Security Modal & 2FA Setup Functions
 async function openAdminSecurityModal() {
@@ -3993,20 +4631,122 @@ $("password-form").onsubmit = async (event) => {
 
     showToast("Password Updated", "Security credential configured.", "success");
     showView("app");
+    notifyOtherTabsOfLogin(state.adminUser);
     await refreshAllData();
   } catch (err) {
     showToast("Setup Failed", err.message, "error");
   }
 };
 
+function endLocalAdminSession(message) {
+  state.adminUser = null;
+  state.pendingMfa = null;
+  showView("login");
+  if (message) showToast("Signed Out", message, "info");
+}
+
+let isSyncingRemoteSession = false;
+
+// Broadcast non-sensitive session sync events. BroadcastChannel reaches active
+// same-origin tabs immediately; localStorage storage event covers older browsers or idle tabs.
+function notifyOtherTabsOfLogin(admin) {
+  const event = { type: "login", admin: admin || null, occurredAt: Date.now() };
+  sessionChannel?.postMessage(event);
+  try {
+    localStorage.setItem(CROSS_TAB_SESSION_KEY, JSON.stringify(event));
+    setTimeout(() => {
+      try { localStorage.removeItem(CROSS_TAB_SESSION_KEY); } catch {}
+    }, 200);
+  } catch {
+    // BroadcastChannel remains available when storage is blocked.
+  }
+}
+
+function notifyOtherTabsOfLogout() {
+  const event = { type: "logout", occurredAt: Date.now() };
+  sessionChannel?.postMessage(event);
+  try {
+    localStorage.setItem(CROSS_TAB_LOGOUT_KEY, JSON.stringify(event));
+    localStorage.setItem(CROSS_TAB_SESSION_KEY, JSON.stringify(event));
+    setTimeout(() => {
+      try {
+        localStorage.removeItem(CROSS_TAB_LOGOUT_KEY);
+        localStorage.removeItem(CROSS_TAB_SESSION_KEY);
+      } catch {}
+    }, 200);
+  } catch {
+    // BroadcastChannel remains available when storage is blocked.
+  }
+}
+
+async function handleRemoteLogin(admin) {
+  if (isSyncingRemoteSession) return;
+  // If this tab is already logged in and showing app view, nothing to do
+  if (state.adminUser && $("view-app") && !$("view-app").classList.contains("hidden")) {
+    return;
+  }
+  isSyncingRemoteSession = true;
+  try {
+    // Verify session with the backend using the shared cookie
+    const profile = await request("/auth/me");
+    state.adminUser = profile.admin || admin || null;
+    state.pendingMfa = null;
+
+    // Close any open auth/login modals
+    document.querySelectorAll(".modal-backdrop:not(.hidden)").forEach((m) => closeModal(m.id));
+
+    if (state.adminUser?.mustChangePassword) {
+      showView("setup");
+    } else {
+      showView("app");
+      await refreshAllData();
+      showToast("Signed In", "Session synchronized from another tab.", "success");
+    }
+  } catch {
+    // If backend returns 401 or network error, stay in login
+  } finally {
+    isSyncingRemoteSession = false;
+  }
+}
+
+function handleRemoteLogout() {
+  if (!state.adminUser && $("view-login") && !$("view-login").classList.contains("hidden")) {
+    return;
+  }
+  // Close any open modals
+  document.querySelectorAll(".modal-backdrop:not(.hidden)").forEach((m) => closeModal(m.id));
+  endLocalAdminSession("You were signed out from another MailCore tab.");
+}
+
+function handleSessionSyncEvent(eventData) {
+  if (!eventData || typeof eventData !== "object") return;
+  if (eventData.type === "logout") {
+    handleRemoteLogout();
+  } else if (eventData.type === "login") {
+    void handleRemoteLogin(eventData.admin);
+  }
+}
+
+sessionChannel?.addEventListener("message", (event) => {
+  handleSessionSyncEvent(event.data);
+});
+
+window.addEventListener("storage", (event) => {
+  if ((event.key === CROSS_TAB_SESSION_KEY || event.key === CROSS_TAB_LOGOUT_KEY) && event.newValue) {
+    try {
+      const data = JSON.parse(event.newValue);
+      handleSessionSyncEvent(data);
+    } catch {}
+  }
+});
+
 // Logout
 async function signOut() {
   try {
     await request("/auth/logout", { method: "POST" });
   } catch {}
-  state.adminUser = null;
-  showView("login");
-  showToast("Signed Out", "Session ended securely.", "info");
+  notifyOtherTabsOfLogout();
+  endLocalAdminSession("Session ended securely.");
 }
 
 $("btn-logout").onclick = signOut;
@@ -4110,12 +4850,21 @@ document.addEventListener("submit", (event) => {
   window.setTimeout(() => clearSubmittedPasswordFields(form), 0);
 }, true);
 
+window.addEventListener("offline", () => setApiConnectionStatus("offline"));
+window.addEventListener("online", () => {
+  setApiConnectionStatus("reconnecting");
+  if (state.adminUser) void refreshAllData();
+});
+
 // App Boot
 (async function init() {
   enhanceUiAccessibility();
   const savedTheme = localStorage.getItem("mailAdminTheme") ||
     (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   applyTheme(savedTheme);
+
+  // Keep visibility listener active across views so returning to an idle/background tab syncs session
+  document.addEventListener("visibilitychange", handleVisibilityChange);
 
   try {
     const profile = await request("/auth/me");
@@ -4128,9 +4877,27 @@ document.addEventListener("submit", (event) => {
     }
   } catch {
     state.adminUser = null;
-    showView("login");
+    if (window.location.hash.startsWith("#mailbox-password") || window.location.hash.startsWith("#change-password")) {
+      showView("mailbox-password");
+    } else if (window.location.hash === "#forgot") {
+      showView("forgot");
+    } else {
+      showView("login");
+    }
   }
 })();
+
+window.addEventListener("hashchange", () => {
+  if (!state.adminUser) {
+    if (window.location.hash.startsWith("#mailbox-password") || window.location.hash.startsWith("#change-password")) {
+      showView("mailbox-password");
+    } else if (window.location.hash === "#forgot") {
+      showView("forgot");
+    } else if (window.location.hash === "#login" || !window.location.hash) {
+      showView("login");
+    }
+  }
+});
 
 const mailAnalyticsPeriodHandler = () => request(`/api/analytics/mail?days=${Number($("mail-analytics-period")?.value || 30)}`).then((data) => { state.mailAnalytics = data; renderMailFlowAnalytics(data); }).catch((error) => showToast("Analytics unavailable", error.message, "error"));
 $("mail-analytics-period")?.addEventListener("change", mailAnalyticsPeriodHandler);

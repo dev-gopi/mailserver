@@ -54,6 +54,7 @@ app.use("/auth/mfa/verify", rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, stan
 app.use("/auth/reset-password", rateLimit({ windowMs: 15 * 60 * 1000, limit: 3, standardHeaders: "draft-7", legacyHeaders: false }));
 app.use("/auth/passkey/login-options", rateLimit({ windowMs: 15 * 60 * 1000, limit: 8, standardHeaders: "draft-7", legacyHeaders: false }));
 app.use("/auth/passkey/login-verify", rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: "draft-7", legacyHeaders: false }));
+app.use("/auth/mailbox/change-password", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: "draft-7", legacyHeaders: false }));
 app.get("/health", async (_req, res) => { try { await db.query("SELECT 1"); res.json({ status: "ok" }); } catch { res.status(503).json({ status: "database unavailable" }); } });
 app.get("/metrics", async (req, res) => {
   const supplied = req.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";

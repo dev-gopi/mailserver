@@ -30,6 +30,7 @@ export interface MailboxEntity {
   quota_bytes: number | null;
   storage_used_bytes?: number;
   active: boolean;
+  password_changed_at?: string | Date | null;
   created_at: string | Date;
   updated_at: string | Date;
 }
@@ -41,6 +42,7 @@ export interface AliasEntity {
   source: string;
   destination: string;
   active: boolean;
+  password_changed_at?: string | Date | null;
   created_at: string | Date;
 }
 

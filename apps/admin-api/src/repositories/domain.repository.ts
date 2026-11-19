@@ -22,6 +22,18 @@ export class DomainRepository {
     return res.rows;
   }
 
+  async findPage(limit: number, offset: number): Promise<{ items: DomainEntity[]; total: number }> {
+    const [items, count] = await Promise.all([
+      db.query<DomainEntity>(
+        `SELECT id, name, verification_token, active, verified_at, created_at, updated_at
+         FROM domains ORDER BY name ASC LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      ),
+      db.query<{ total: string }>("SELECT count(*)::text AS total FROM domains")
+    ]);
+    return { items: items.rows, total: Number(count.rows[0]?.total || 0) };
+  }
+
   async findById(id: number): Promise<DomainEntity | null> {
     const res = await db.query<DomainEntity>(
       `SELECT id, name, verification_token, active, verified_at, created_at, updated_at

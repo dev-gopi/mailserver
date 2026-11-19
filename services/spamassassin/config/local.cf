@@ -57,7 +57,7 @@ bayes_auto_learn_threshold_nonspam -0.1
 #   Whether to decode non- UTF-8 and non-ASCII textual parts and recode
 #   them to UTF-8 before the text is given over to rules processing.
 #
-# normalize_charset 1
+normalize_charset 1
 
 #   Textual body scan limit    (default: 50000)
 #
@@ -66,14 +66,14 @@ bayes_auto_learn_threshold_nonspam -0.1
 #   perhaps having very large textual attachments.  There should be no need
 #   to change this well tested default.
 #
-# body_part_scan_size 50000
+body_part_scan_size 200000
 
 #   Textual rawbody data scan limit    (default: 500000)
 #
 #   Amount of data per email text/* mimepart, that will be run through
 #   rawbody rules.
 #
-# rawbody_part_scan_size 500000
+rawbody_part_scan_size 1000000
 
 #   Some shortcircuiting, if the plugin is enabled
 # 

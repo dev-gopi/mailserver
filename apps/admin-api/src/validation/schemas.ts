@@ -54,6 +54,12 @@ export const mailboxTestAuthSchema = z.object({
   password: z.string().min(1, "Password is required").max(256)
 });
 
+export const mailboxChangePasswordSchema = z.object({
+  email: z.string().trim().email("A valid email address is required").max(254),
+  currentPassword: z.string().min(1, "Current password is required"),
+  newPassword: z.string().min(12, "New password must be at least 12 characters").max(128)
+});
+
 export const aliasCreateSchema = z.object({
   source: z.string().email("Invalid source email address"),
   destination: z.string().email("Invalid destination email address")
@@ -61,6 +67,11 @@ export const aliasCreateSchema = z.object({
 
 export const aliasPatchSchema = z.object({
   active: z.boolean({ message: "active boolean is required" })
+});
+
+export const listPaginationQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).max(1_000_000).optional()
 });
 
 export const testSmtpSchema = z.object({
