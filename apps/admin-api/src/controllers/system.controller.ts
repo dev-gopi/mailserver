@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { systemService } from "../services/system.service";
+import { systemRepository } from "../repositories/system.repository";
 
 const canWrite = (req: Request) => req.admin?.role !== "viewer";
 
@@ -80,10 +81,23 @@ export class SystemController {
 
   async getQuarantine(req: Request, res: Response) {
     try {
-      const messages = await systemService.getQuarantineMessages();
-      return res.json({ items: messages, count: messages.length });
+      const offset = Number(req.query.offset ?? 0);
+      const limit = Number(req.query.limit ?? 50);
+      const page = await systemRepository.getQuarantineMessagesPage(offset, limit);
+      return res.json(page);
     } catch (err: any) {
       return res.status(500).json({ error: err.message || "Failed to inspect quarantine" });
+    }
+  }
+
+  async previewQuarantine(req: Request, res: Response) {
+    try {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
+      res.setHeader("Pragma", "no-cache");
+      return res.json(await systemService.previewQuarantinedMessage(req.params.queueId));
+    } catch (err: any) {
+      const status = err.statusCode || 503;
+      return res.status(status).json({ error: err.message || "Failed to preview quarantined message" });
     }
   }
 

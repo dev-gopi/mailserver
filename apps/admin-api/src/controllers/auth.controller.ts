@@ -16,9 +16,19 @@ export class AuthController {
     return res.json(result);
   }
 
+  async getCaptcha(_req: Request, res: Response) {
+    try {
+      const captcha = authService.getCaptcha();
+      return res.json(captcha);
+    } catch (err: any) {
+      return res.status(500).json({ error: "Failed to generate CAPTCHA" });
+    }
+  }
+
   async login(req: Request, res: Response) {
     try {
-      const { username, password } = req.body;
+      const { username, password, captchaId, captchaAnswer } = req.body;
+      authService.verifyCaptcha(captchaId, captchaAnswer);
       const result = await authService.login(req, username, password);
       return this.sendLoginResult(req, res, result);
     } catch (err: any) {

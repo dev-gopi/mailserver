@@ -18,6 +18,11 @@ import {
 export const authRouter = Router();
 
 // Public auth endpoints
+authRouter.get(
+  "/captcha",
+  authController.getCaptcha.bind(authController)
+);
+
 authRouter.post(
   "/login",
   rejectCrossSiteRequest,

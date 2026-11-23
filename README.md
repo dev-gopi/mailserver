@@ -255,12 +255,14 @@ patching, or deliverability monitoring.
   available in the administration console.
 - The optional SpamAssassin profile is not active by default and must not be
   enabled as a second production filter without a reviewed A/B plan.
-- The admin Quarantine page exposes held-message metadata only, not message
-  bodies or attachments. Owners and admins can inspect and re-scan held queue
-  IDs before release; only the owner can delete them. The API and private Postfix
-  bridge verify the scanned content hash before releasing a held message.
+- The admin Quarantine page lists held-message metadata and provides a bounded,
+  text-only message preview (headers, decoded text body, and attachment metadata).
+  It never renders email HTML or exposes attachment bytes. Owners and admins can
+  preview and re-scan held queue IDs before release; only the owner can delete
+  them. The API and private Postfix bridge verify the scanned content hash before
+  releasing a held message.
   Postfix HOLD items do not automatically expire, so define and operate a
-  manual retention/review process; the UI lists at most 500 entries per view.
+  manual retention/review process; the UI uses server-side pagination, displays the full queue count, and fetches at most 100 entries per view.
 - Dovecot stores Maildir data in `maildata` and reads virtual mailbox/alias
   configuration from PostgreSQL. OpenDKIM signs mail with per-domain keys
   managed by the administration service.
@@ -409,22 +411,35 @@ mandatory ClamAV inspection remain active.
 The PostgreSQL-backed `system_events` timeline and transactional
 `event_outbox`. Administrator audit actions persist the legacy audit row, event
 record, and outbox row in one transaction. A `SKIP LOCKED` dispatcher creates
-rule-matched administrator notifications and publishes committed event IDs over
-PostgreSQL `NOTIFY` for replayable SSE streams.
+rule-matched notifications (with critical/security-sensitive events always retained) and publishes committed event IDs over
+PostgreSQL `NOTIFY` for authenticated WebSocket delivery to active owner/admin
+sessions. The browser receives only event summaries over the socket; it fetches
+notification details and event history from the authenticated API.
 
 Postfix queue lifecycle logs are forwarded by rsyslog over the dedicated
 internal `postfixcontrolnet` to the API's private event listener. The event
 collector stores selected queue metadata, not raw mail content. Delivery
 `status=sent` means the next SMTP/LMTP hop accepted the message; it does not
 prove Inbox placement. The outbox uses bounded exponential retries and a
-visible dead-letter state; owners can requeue a reviewed item. SSE reconnects
-resume from `Last-Event-ID`, and a database catch-up poll recovers temporary
-PostgreSQL listener gaps. Nginx disables buffering for the SSE endpoint and
-keeps the stream open with heartbeats; the API caps concurrent streams. Postfix
-syslog ingestion applies TCP backpressure, keeps idle rsyslog connections alive,
-and retries database writes while the API is alive. Event retention archives
-older rows in PostgreSQL by default. The legacy `audit_log` remains separate and is
-not deleted by event retention.
+visible dead-letter state; owners can requeue a reviewed item. The admin UI uses
+an authenticated same-origin WebSocket at `/realtime/events` for live event,
+notification, service-health, and quarantine status updates. The endpoint checks
+admin session validity, role, origin, expiry, idle timeout, and revocation; it
+revalidates active sessions on its heartbeat and only sends event summaries to
+owner/admin sessions. PostgreSQL catch-up polling recovers temporary listener
+gaps before events are broadcast. Notifications are displayed inside the signed-in
+admin UI as live toasts, an unread Alerts badge, and persistent Event Explorer
+history. As an optional enhancement, the browser Notification constructor is
+used only when permission is already `granted`; the app never calls
+`Notification.requestPermission()` or triggers a permission prompt. In-app
+notifications remain available when permission is `default` or `denied`.
+Nginx proxies the WebSocket upgrade without buffering and explicitly preserves
+the public `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `Origin`, and upgrade
+headers in the WebSocket location (Nginx does not inherit parent `proxy_set_header`
+directives once a location defines its own). Postfix syslog ingestion applies TCP backpressure, keeps idle rsyslog
+connections alive, and retries database writes while the API is alive. Event
+retention archives older rows in PostgreSQL by default. The legacy `audit_log`
+remains separate and is not deleted by event retention.
 
 
 ## Monitoring and analytics
@@ -451,3 +466,26 @@ archives; CycloneDX SBOM and npm/Trivy/Syft scanning; and an incident ledger
 with evidence collection and HTTPS alert escalation. Live security certification
 requires host/provider evidence and controlled staging tests; repository checks
 alone do not certify a deployment.
+
+### Administrator desktop notifications
+
+The admin UI always provides in-app toast alerts and a persistent unread notification list. For critical events, security-sensitive events, and quarantine lifecycle alerts, it also creates an operating-system/browser notification **only when** the signed-in administrator's browser has already granted notification permission. The UI does not call `Notification.requestPermission()` and will never trigger a permission prompt automatically. If permission is `default` or `denied`, in-app alerts continue to work normally.
+
+Run the API build and complete regression suite (including desktop-notification,
+password-reset, and Postfix quarantine pagination tests) from `apps/admin-api`:
+
+```bash
+npm test
+```
+
+The Docker image compiles the hardened administrator reset utility to
+`/app/dist/scripts/reset-password.js`. Reset a password from the project root
+with:
+
+```bash
+docker compose exec app node dist/scripts/reset-password.js admin "YOUR_NEW_PASSWORD"
+```
+
+The command enforces the shared 14–128 character administrator password policy,
+rejects reuse of the current password, clears lockout/reset-token state, revokes
+active administrator sessions, and writes a metadata-only audit record.

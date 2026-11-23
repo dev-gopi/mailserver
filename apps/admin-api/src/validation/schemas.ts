@@ -2,7 +2,9 @@ import { z } from "zod";
 
 export const loginSchema = z.object({
   username: z.string().min(1, "Username is required").max(64),
-  password: z.string().min(1, "Password is required").max(256)
+  password: z.string().min(1, "Password is required").max(256),
+  captchaId: z.string().min(1, "CAPTCHA verification is required"),
+  captchaAnswer: z.string().min(1, "Please enter the CAPTCHA text").max(16)
 });
 
 export const changePasswordSchema = z.object({
@@ -167,6 +169,11 @@ export const administratorIdParamSchema = z.object({ id: z.coerce.number().int()
 
 export const quarantineQueueIdParamSchema = z.object({
   queueId: z.string().min(5).max(64).regex(/^[A-Za-z0-9]+$/, "Invalid Postfix queue ID")
+});
+
+export const quarantineListQuerySchema = z.object({
+  offset: z.coerce.number().int().min(0).max(1_000_000_000).default(0),
+  limit: z.coerce.number().int().min(1).max(100).default(50)
 });
 
 

@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { db } from "../db/pool";
 import { ServiceHealthStatus, MailQueueStatus, CertificateHealthStatus } from "../models/entities";
 import { env } from "../config/env";
+import { parseQuarantineQueuePage, QuarantineQueueMessage, QuarantineQueuePage } from "../utils/quarantine-queue";
 
 export class SystemRepository {
   private probeTcp(
@@ -251,6 +252,36 @@ export class SystemRepository {
     });
   }
 
+  private async probePostfixBridge(): Promise<ServiceHealthStatus> {
+    const started = Date.now();
+    const checkedAt = new Date().toISOString();
+    try {
+      // HOLD_LIST is read-only and exercises the same private bridge command
+      // used by quarantine listing and preview/re-scan operations. Its explicit
+      // marker distinguishes a healthy empty queue from a failed postqueue/jq.
+      const output = await this.postfixBridge("HOLD_LIST:0:1", 64 * 1024, 3500);
+      this.assertHealthyQuarantineBridgeResponse(output);
+      return {
+        service: "postfix-bridge",
+        displayName: "Postfix Quarantine Queue Bridge",
+        port: env.services.postfixBridgePort,
+        status: "healthy",
+        latencyMs: Date.now() - started,
+        lastChecked: checkedAt
+      };
+    } catch (error) {
+      return {
+        service: "postfix-bridge",
+        displayName: "Postfix Quarantine Queue Bridge",
+        port: env.services.postfixBridgePort,
+        status: "down",
+        latencyMs: Date.now() - started,
+        error: error instanceof Error ? error.message.slice(0, 240) : "Quarantine bridge unavailable",
+        lastChecked: checkedAt
+      };
+    }
+  }
+
   async checkAllServices(): Promise<ServiceHealthStatus[]> {
     const dbStart = Date.now();
     let dbStatus: ServiceHealthStatus;
@@ -282,6 +313,7 @@ export class SystemRepository {
       this.probeTcp("dovecot", "Dovecot MDA (IMAP)", env.services.dovecotHost, env.services.dovecotPort, undefined, true, true),
       this.probeRspamd(),
       this.probeClamAV(),
+      this.probePostfixBridge(),
       this.probeTcp(
         "redis",
         "Redis Queue & Cache",
@@ -356,31 +388,54 @@ export class SystemRepository {
     });
   }
 
-  async getQuarantineMessages(): Promise<Array<{
-    queueId: string; arrivalTime: string | null; sizeBytes: number; sender: string; recipients: string[];
-  }>> {
-    const output = await this.postfixBridge("HOLD_LIST");
-    const held: Array<{ queueId: string; arrivalTime: string | null; sizeBytes: number; sender: string; recipients: string[] }> = [];
-    for (const line of output.split(/\r?\n/).filter(Boolean)) {
-      try {
-        const item = JSON.parse(line) as Record<string, unknown>;
-        if (item.queue_name !== "hold" || typeof item.queue_id !== "string") continue;
-        const recipientsRaw = Array.isArray(item.recipients) ? item.recipients : [];
-        const recipients = recipientsRaw.map((recipient: any) => typeof recipient === "string" ? recipient : String(recipient?.address ?? ""))
-          .filter((address: string) => Boolean(address)).slice(0, 50);
-        const arrival = Number(item.arrival_time);
-        held.push({
-          queueId: item.queue_id,
-          arrivalTime: Number.isFinite(arrival) && arrival > 0 ? new Date(arrival * 1000).toISOString() : null,
-          sizeBytes: Number.isFinite(Number(item.message_size)) ? Number(item.message_size) : 0,
-          sender: typeof item.sender === "string" ? item.sender : "(empty sender)",
-          recipients
-        });
-      } catch {
-        // Ignore malformed/partial rows from postqueue; never expose raw spool data.
-      }
+  private assertHealthyQuarantineBridgeResponse(output: string): void {
+    parseQuarantineQueuePage(output, 0, 1);
+  }
+
+  async getQuarantineMessagesPage(offset = 0, limit = 100): Promise<QuarantineQueuePage> {
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000_000) {
+      throw new Error("Invalid quarantine queue offset");
     }
-    return held.sort((a, b) => (b.arrivalTime || "").localeCompare(a.arrivalTime || ""));
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error("Quarantine page size must be between 1 and 500");
+    }
+    const output = await this.postfixBridge(`HOLD_LIST:${offset}:${limit}`, 4 * 1024 * 1024, 5000);
+    return parseQuarantineQueuePage(output, offset, limit);
+  }
+
+  /** Retrieve every held-mail metadata page for monitoring and internal lookups. */
+  async getQuarantineMessages(): Promise<QuarantineQueueMessage[]> {
+    const pageSize = 500;
+    const messages: QuarantineQueueMessage[] = [];
+    let offset = 0;
+    let expectedTotal = 0;
+
+    do {
+      const page = await this.getQuarantineMessagesPage(offset, pageSize);
+      expectedTotal = page.count;
+      if (page.items.length === 0 && offset < expectedTotal) {
+        throw new Error(`Quarantine queue changed while paging; expected more messages after offset ${offset}`);
+      }
+      messages.push(...page.items);
+      offset += page.items.length;
+    } while (offset < expectedTotal);
+
+    return messages.sort((a, b) => (b.arrivalTime || "").localeCompare(a.arrivalTime || ""));
+  }
+
+  async findQuarantineMessage(queueId: string): Promise<QuarantineQueueMessage | null> {
+    const pageSize = 500;
+    let offset = 0;
+    let expectedTotal = 0;
+    do {
+      const page = await this.getQuarantineMessagesPage(offset, pageSize);
+      expectedTotal = page.count;
+      const match = page.items.find((item) => item.queueId === queueId);
+      if (match) return match;
+      if (page.items.length === 0) break;
+      offset += page.items.length;
+    } while (offset < expectedTotal);
+    return null;
   }
 
   async getHeldMessageForRescan(queueId: string): Promise<{ message: Buffer; sha256: string }> {
@@ -504,7 +559,7 @@ export class SystemRepository {
   }
 
   private postfixBridge(
-    command: "STATUS" | "DETAIL" | "FLUSH" | "HOLD_LIST" | `HOLD_FETCH:${string}` | `HOLD_RELEASE_IF_HASH:${string}:${string}` | `HOLD_RELEASE:${string}` | `HOLD_DELETE:${string}`,
+    command: "STATUS" | "DETAIL" | "FLUSH" | "HOLD_LIST" | `HOLD_LIST:${number}:${number}` | `HOLD_FETCH:${string}` | `HOLD_RELEASE_IF_HASH:${string}:${string}` | `HOLD_RELEASE:${string}` | `HOLD_DELETE:${string}`,
     maxResponseBytes = 4 * 1024 * 1024,
     timeoutMs = 3000
   ): Promise<string> {
