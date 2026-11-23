@@ -58,8 +58,19 @@ smtpd_sender_login_maps = proxy:pgsql:/etc/postfix/pgsql-sender-login.cf
 
 # The default mail.local domain is development-only. Submission listeners
 # invoke this class for mail.local senders; it permits local recipients only.
-smtpd_restriction_classes = local_only_sender
+smtpd_restriction_classes = local_only_sender, submission_recipient_checks, submission_sender_checks
+# Restriction-class maps are opened through proxymap by smtpd.  Define the
+# complete PostgreSQL allowlist here, because setting proxy_read_maps replaces
+# Postfix's default allowlist.
+proxy_read_maps =
+    proxy:pgsql:/etc/postfix/pgsql-sender-login.cf,
+    proxy:pgsql:/etc/postfix/pgsql-local-sender.cf,
+    proxy:pgsql:/etc/postfix/pgsql-local-recipient.cf,
+    proxy:pgsql:/etc/postfix/pgsql-virtual-domains.cf,
+    proxy:pgsql:/etc/postfix/pgsql-virtual-users.cf,
+    proxy:pgsql:/etc/postfix/pgsql-virtual-aliases.cf
 local_only_sender = check_recipient_access proxy:pgsql:/etc/postfix/pgsql-local-recipient.cf, reject
+mua_sender_restrictions = reject_sender_login_mismatch, check_sender_access proxy:pgsql:/etc/postfix/pgsql-local-sender.cf
 
 # Workaround for some old mail clients
 broken_sasl_auth_clients = yes
@@ -114,8 +125,6 @@ virtual_alias_maps      = proxy:pgsql:/etc/postfix/pgsql-virtual-aliases.cf
 submission_recipient_checks = reject_unknown_recipient_domain,permit_sasl_authenticated,reject_unauth_destination
 
 submission_sender_checks = reject_sender_login_mismatch
-
-smtpd_restriction_classes = submission_recipient_checks, submission_sender_checks
 #
 
 virtual_mailbox_base    = /var/mail/vhosts/
