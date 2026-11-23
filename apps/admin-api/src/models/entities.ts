@@ -17,6 +17,18 @@ export interface DomainEntity {
   updated_at: string | Date;
 }
 
+export interface MailDnsSettingsEntity {
+  id: boolean;
+  mail_domain: string;
+  mail_hostname: string;
+  mail_public_ip: string | null;
+  mx_priority: number;
+  spf_record: string;
+  dmarc_policy: "none" | "quarantine" | "reject";
+  rbl_providers?: Array<{ name: string; host: string }>;
+  updated_at: string | Date;
+}
+
 export interface MailboxEntity {
   id: number;
   domain_id: number;

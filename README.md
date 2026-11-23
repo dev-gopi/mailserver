@@ -59,13 +59,18 @@ profile for controlled A/B comparison; it is not in the default message path.
    cp .env.example .env
    ~~~
 
-2. Edit `.env`. Replace the placeholder database and initial administrator
-   values. Put a bcrypt hash in `MAIL_ADMIN_PASSWORD_HASH`. The API no longer
-   receives the PostgreSQL bootstrap password. Its runtime DB password and the
-   mail-daemon DB passwords are generated and persisted as Docker secret files.
-   If you already have an `apps/admin-api/.env` from an earlier version, keep
-   it during the upgrade: the secret bootstrapper can use its existing
-   `AUTH_ENCRYPTION_KEY` to preserve encrypted MFA data.
+2. The copied file is immediately usable for local development: it starts with
+   the `mail.local` domain and the administrator login `admin` /
+   `MailCoreLocalOnly2026!`. Change both the database password and administrator
+   password before exposing the server to any network. `mail.local` is a
+   local-only domain: its mailboxes may send only to other `@mail.local`
+   recipients. It cannot be used to relay to the public Internet.
+
+   The API no longer receives the PostgreSQL bootstrap password. Its runtime DB
+   password and the mail-daemon DB passwords are generated and persisted as
+   Docker secret files. If you already have an `apps/admin-api/.env` from an
+   earlier version, keep it during the upgrade: the secret bootstrapper can use
+   its existing `AUTH_ENCRYPTION_KEY` to preserve encrypted MFA data.
 
    ~~~sh
    cd apps/admin-api
@@ -74,8 +79,9 @@ profile for controlled A/B comparison; it is not in the default message path.
    cd ../..
    ~~~
 
-   Copy the resulting password hash into the root `.env`. The root file drives
-   Compose and database seeding.
+   Copy the resulting password hash into the root `.env` if you change the
+   initial administrator password. The root file drives Compose and database
+   seeding.
 
 3. Create the persistent Docker secrets:
 
@@ -126,6 +132,24 @@ existing installation, `secrets/runtime/postgres_password` must continue
 matching the current database owner password. `POSTGRES_PASSWORD` in `.env` is
 used only to create this file when it does not already exist. Changing a
 Compose environment value does not rotate a live PostgreSQL account.
+
+## Local domain and public domains
+
+`mail.local` is the default, verified local-development domain. Create
+mailboxes for it to test IMAP and mail delivery between local users. Authenticated
+SMTP submissions from a `@mail.local` sender are rejected when the recipient is
+outside `mail.local`; this prevents accidental public delivery from the default
+configuration.
+
+To send mail to remote addresses, use the **Hosted Domains** page in the admin
+console: add a real domain, publish the ownership TXT record, verify it, publish
+the MX/SPF/DKIM/DMARC records shown by the wizard, then create a mailbox on that
+domain. First configure a real public `MAIL_HOSTNAME`, `MAIL_PUBLIC_IP`, and
+trusted certificate as described below. The dynamic domain list is used by
+Postfix, Dovecot, and OpenDKIM, so a verified custom domain does not require
+editing the mail-daemon domain list. DNS, certificates, reverse DNS,
+firewall/provider access, and the external network are outside the application’s
+control; see the public-deployment section below.
 
 ## Published ports
 

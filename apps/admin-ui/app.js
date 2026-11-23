@@ -870,7 +870,7 @@ function escapeHtml(str) {
 // Master Refresh
 async function refreshAllData() {
   try {
-    const [dashboard, company, domains, mailboxes, aliases, clientConfig, backupData, mailAnalytics] = await Promise.all([
+    const [dashboard, company, domains, mailboxes, aliases, clientConfig, backupData, mailAnalytics, dnsSettings] = await Promise.all([
       request("/api/dashboard"),
       request("/api/company"),
       request("/api/domains"),
@@ -878,7 +878,8 @@ async function refreshAllData() {
       request("/api/aliases"),    // Admin view — includes inactive aliases
       request("/api/mailboxes/client-config"),
       request("/api/backups").catch(() => null),
-      request(`/api/analytics/mail?days=${Number($("mail-analytics-period")?.value || 30)}`).catch(() => null)
+      request(`/api/analytics/mail?days=${Number($("mail-analytics-period")?.value || 30)}`).catch(() => null),
+      request("/api/system/dns-settings").catch(() => null)
     ]);
 
     state.dashboardData = dashboard;
@@ -888,6 +889,7 @@ async function refreshAllData() {
     state.mailboxes = mailboxes;
     state.aliases = aliases;
     state.clientConfig = clientConfig;
+    state.dnsSettings = dnsSettings;
 
     if (backupData) {
       state.backups = backupData.backups || [];
@@ -904,6 +906,7 @@ async function refreshAllData() {
     renderAliases();
     renderBackupsView();
     renderCompanyForm();
+    renderMailDnsSettingsForm();
     renderConnectionHelp(clientConfig);
     populateDomainSelectors();
 
@@ -1861,16 +1864,29 @@ async function handleAddDomainSubmit(event) {
     showToast("Domain Added", `Registered ${domainName}. Opening DNS setup instructions...`, "success");
 
     await refreshAllData();
-    openDnsWizard(data.id);
+    await openDnsWizard(data.id);
   } catch (err) {
     showToast("Add Domain Failed", err.message, "error");
   }
 }
 
 // DNS Wizard
-function openDnsWizard(domainId) {
-  const domain = state.domains.find((d) => String(d.id) === String(domainId));
+async function openDnsWizard(domainId) {
+  let domain = state.domains.find((d) => String(d.id) === String(domainId));
   if (!domain) return;
+
+  // DNS records are generated from the server's current mail-host settings.
+  // Always fetch this domain again before displaying the wizard so a tab that
+  // was open during a configuration change cannot show an old hostname.
+  try {
+    const freshDomain = await request(`/api/domains/${domainId}`, { cache: "no-store" });
+    domain = freshDomain;
+    const domainIndex = state.domains.findIndex((item) => String(item.id) === String(domainId));
+    if (domainIndex >= 0) state.domains[domainIndex] = freshDomain;
+  } catch (err) {
+    showToast("DNS Setup Unavailable", err.message, "error");
+    return;
+  }
 
   state.activeDnsDomain = domain;
   $("dns-modal-domain-name").textContent = domain.name;
@@ -1885,14 +1901,14 @@ function openDnsWizard(domainId) {
   $("dns-txt-name").textContent = `_mail-admin.${domain.name}`;
   const records = domain.dnsRecords;
   $("dns-txt-val").textContent = records?.verification?.value || "Token pending...";
-  $("dns-a-name").textContent = records?.mailHost?.name || "mail hostname";
-  $("dns-a-val").textContent = records?.mailHost?.value || "Set MAIL_PUBLIC_IP";
+  $("dns-a-name").textContent = records?.mailHost?.name || `mail.${domain.name}`;
+  $("dns-a-val").textContent = (records?.mailHost?.value || "Set MAIL_PUBLIC_IP").replace(/\/32\b/g, "");
   $("dns-a-guidance").textContent = records?.mailHost?.guidance ||
     "The mail hostname must resolve to this server's public IP. Configure reverse DNS/PTR for the same hostname with your VPS or network provider.";
-  $("dns-mx-val").textContent = records?.mx?.value || "mail hostname";
-  $("dns-mx-priority").textContent = records?.mx?.priority ?? "—";
-  $("dns-spf-val").textContent = records?.spf?.value || "SPF value unavailable";
-  $("dns-dkim-host").textContent = records?.dkim?.name || "DKIM hostname unavailable";
+  $("dns-mx-val").textContent = records?.mx?.value || `mail.${domain.name}`;
+  $("dns-mx-priority").textContent = records?.mx?.priority ?? "10";
+  $("dns-spf-val").textContent = (records?.spf?.value || "SPF value unavailable").replace(/\/32\b/g, "");
+  $("dns-dkim-host").textContent = records?.dkim?.name || `mail._domainkey.${domain.name}`;
   $("dns-dkim-val").textContent = records?.dkim?.value || "DKIM key pending...";
   $("dns-dmarc-host").textContent = records?.dmarc?.name || `_dmarc.${domain.name}`;
   $("dns-dmarc-val").textContent = records?.dmarc?.value || "DMARC value unavailable";
@@ -1920,7 +1936,7 @@ async function verifyDomainNow() {
     const result = await request(`/api/domains/${domain.id}/verify`, { method: "POST" });
     showToast("Verification Succeeded!", `Domain ${result.name} is now verified.`, "success");
     await refreshAllData();
-    openDnsWizard(domain.id);
+    await openDnsWizard(domain.id);
   } catch (err) {
     recordFailureAlert({
       category: "DNS Verification",
@@ -3067,6 +3083,53 @@ $("settings-password-form").onsubmit = async (event) => {
   }
 };
 
+// Mail & DNS Settings Form
+function renderMailDnsSettingsForm() {
+  if (!state.dnsSettings) return;
+  const s = state.dnsSettings;
+  const domainInput = $("dns-mail-domain");
+  const hostInput = $("dns-mail-hostname");
+  const ipInput = $("dns-mail-public-ip");
+  const mxInput = $("dns-mx-priority-input");
+  const spfInput = $("dns-spf-record-input");
+  const dmarcSelect = $("dns-dmarc-policy-input");
+
+  if (domainInput) domainInput.value = s.mail_domain || "";
+  if (hostInput) hostInput.value = s.mail_hostname || "";
+  if (ipInput) ipInput.value = (s.mail_public_ip || "").replace(/\/32\b/g, "");
+  if (mxInput) mxInput.value = s.mx_priority ?? 10;
+  if (spfInput) spfInput.value = (s.spf_record || "v=spf1 mx ~all").replace(/\/32\b/g, "");
+  if (dmarcSelect) dmarcSelect.value = s.dmarc_policy || "quarantine";
+}
+
+async function handleSaveMailDnsSettings(event) {
+  event.preventDefault();
+  const btn = $("btn-save-dns-settings");
+  if (btn) btn.disabled = true;
+  try {
+    const body = {
+      mailDomain: $("dns-mail-domain").value.trim().toLowerCase(),
+      mailHostname: $("dns-mail-hostname").value.trim().toLowerCase(),
+      mailPublicIp: $("dns-mail-public-ip").value.trim() || null,
+      mxPriority: Number($("dns-mx-priority-input").value),
+      spfRecord: $("dns-spf-record-input").value.trim(),
+      dmarcPolicy: $("dns-dmarc-policy-input").value
+    };
+    const updated = await request("/api/system/dns-settings", {
+      method: "PUT",
+      body: JSON.stringify(body)
+    });
+    state.dnsSettings = updated;
+    renderMailDnsSettingsForm();
+    showToast("DNS Settings Saved", "Mail cluster host and DNS settings have been saved to database.", "success");
+    await refreshAllData();
+  } catch (err) {
+    showToast("Save Failed", err.message, "error");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 // 7. Services & Mail Queue Diagnostics
 function renderServicesHealth(services = []) {
   const container = $("services-health-grid");
@@ -3739,12 +3802,16 @@ async function handleTestSpam(event) {
 }
 
 function insertGtubeSpam() {
-  $("test-spam-content").value = "From: sender@example.com\nTo: recipient@example.com\nSubject: GTUBE Spam Filter Test\nDate: Tue, 17 Nov 2026 12:00:00 +0000\nMessage-ID: <gtube-test@mailcore.invalid>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\n\nThis is a standard test for spam filtering.\nXJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X\n";
+  const domain = state.domains[0]?.name || "mailcore.invalid";
+  const now = new Date().toUTCString();
+  $("test-spam-content").value = `From: sender@${domain}\nTo: recipient@${domain}\nSubject: GTUBE Spam Filter Test\nDate: ${now}\nMessage-ID: <gtube-test-${Date.now()}@${domain}>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\n\nThis is a standard test for spam filtering.\nXJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X\n`;
   showToast("GTUBE Inserted", "GTUBE standard test pattern loaded for the Rspamd engine.", "info", 1500);
 }
 
 function insertCleanEmail() {
-  $("test-spam-content").value = "From: team@example.invalid\nTo: john@example.invalid\nSubject: Meeting Schedule for Next Week\nDate: Tue, 17 Nov 2026 12:00:00 +0000\nMessage-ID: <meeting-schedule@mailcore.invalid>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\n\nHi John,\nJust checking in on the quarterly report progress. Let me know when you are free.\nBest regards,\nJane\n";
+  const domain = state.domains[0]?.name || "mailcore.invalid";
+  const now = new Date().toUTCString();
+  $("test-spam-content").value = `From: team@${domain}\nTo: recipient@${domain}\nSubject: Meeting Schedule for Next Week\nDate: ${now}\nMessage-ID: <meeting-schedule-${Date.now()}@${domain}>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\n\nHi,\nJust checking in on the quarterly progress. Let me know when you are free.\nBest regards,\nMail Administrator\n`;
   showToast("Clean Email Inserted", "Sample business email loaded.", "info", 1500);
 }
 
@@ -3958,6 +4025,15 @@ function renderDnsComplianceMatrix() {
   const totalDomains = state.domains.length;
   const verifiedDomains = state.domains.filter((d) => d.verified_at).length;
   const verifiedPercent = totalDomains > 0 ? Math.round((verifiedDomains / totalDomains) * 100) : 0;
+  // DNS records come from the API/database. Do not show policy or priority
+  // values in the dashboard unless the server has supplied them.
+  const records = state.domains.find((domain) => domain.dnsRecords)?.dnsRecords;
+  const mxPriority = records?.mx?.priority;
+  const spfRecord = records?.spf?.value;
+  const dkimName = records?.dkim?.name;
+  const mxConfigured = Number.isInteger(mxPriority);
+  const spfConfigured = typeof spfRecord === "string" && spfRecord.length > 0;
+  const dkimConfigured = typeof dkimName === "string" && dkimName.length > 0;
 
   container.innerHTML = `
     <div class="compliance-grid">
@@ -3970,21 +4046,21 @@ function renderDnsComplianceMatrix() {
       </div>
 
       <div class="compliance-card">
-        <div class="compliance-icon pass">100%</div>
-        <div class="compliance-title">MX Priority 10</div>
-        <div class="compliance-sub">${totalDomains > 0 ? "Active Spool" : "Standby"}</div>
+        <div class="compliance-icon ${mxConfigured ? "pass" : "warn"}">${mxConfigured ? escapeHtml(mxPriority) : "—"}</div>
+        <div class="compliance-title">MX Priority</div>
+        <div class="compliance-sub">${mxConfigured ? "Configured by server" : "No MX configuration available"}</div>
       </div>
 
       <div class="compliance-card">
-        <div class="compliance-icon pass">100%</div>
-        <div class="compliance-title">SPF1 Policy</div>
-        <div class="compliance-sub">v=spf1 ~all Active</div>
+        <div class="compliance-icon ${spfConfigured ? "pass" : "warn"}">${spfConfigured ? "SPF" : "—"}</div>
+        <div class="compliance-title">SPF Policy</div>
+        <div class="compliance-sub">${escapeHtml(spfRecord || "No SPF configuration available")}</div>
       </div>
 
       <div class="compliance-card">
-        <div class="compliance-icon pass">2048</div>
+        <div class="compliance-icon ${dkimConfigured ? "pass" : "warn"}">${dkimConfigured ? "DKIM" : "—"}</div>
         <div class="compliance-title">DKIM Signing</div>
-        <div class="compliance-sub">mail._domainkey RSA</div>
+        <div class="compliance-sub">${escapeHtml(dkimName || "No DKIM selector available")}</div>
       </div>
     </div>
   `;

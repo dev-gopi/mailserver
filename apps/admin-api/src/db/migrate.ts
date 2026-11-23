@@ -219,7 +219,35 @@ export async function runMigrations(): Promise<void> {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
       INSERT INTO event_retention_settings (id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING;
+
+      CREATE TABLE IF NOT EXISTS mail_dns_settings (
+        id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+        mail_domain TEXT NOT NULL,
+        mail_hostname TEXT NOT NULL,
+        mail_public_ip INET,
+        mx_priority INTEGER NOT NULL DEFAULT 10 CHECK (mx_priority BETWEEN 0 AND 65535),
+        spf_record TEXT NOT NULL,
+        dmarc_policy TEXT NOT NULL CHECK (dmarc_policy IN ('none', 'quarantine', 'reject')),
+        rbl_providers JSONB NOT NULL DEFAULT '[{"name":"Spamhaus ZEN","host":"zen.spamhaus.org"},{"name":"Barracuda RBL","host":"b.barracudacentral.org"},{"name":"SpamCop BL","host":"bl.spamcop.net"}]'::jsonb,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
     `);
+
+    // Supports installations that applied an earlier version of this table.
+    await db.query("ALTER TABLE mail_dns_settings ADD COLUMN IF NOT EXISTS mail_domain TEXT");
+    await db.query("ALTER TABLE mail_dns_settings ADD COLUMN IF NOT EXISTS rbl_providers JSONB NOT NULL DEFAULT '[{\"name\":\"Spamhaus ZEN\",\"host\":\"zen.spamhaus.org\"},{\"name\":\"Barracuda RBL\",\"host\":\"b.barracudacentral.org\"},{\"name\":\"SpamCop BL\",\"host\":\"bl.spamcop.net\"}]'::jsonb");
+
+    // Seed only once. After bootstrap, the DNS setup API reads this row rather
+    // than process environment variables, so configuration changes are visible
+    // to every API request without a container restart.
+    await db.query(
+      `INSERT INTO mail_dns_settings (id, mail_domain, mail_hostname, mail_public_ip, mx_priority, spf_record, dmarc_policy)
+       VALUES (TRUE, $1, $2, NULLIF($3, '')::inet, $4, $5, $6)
+       ON CONFLICT (id) DO NOTHING`,
+      [env.mailDomain, env.mailHostname, env.mailPublicIp, env.dns.mxPriority, env.dns.spfRecord, env.dns.dmarcPolicy]
+    );
+    await db.query("UPDATE mail_dns_settings SET mail_domain = $1 WHERE id = TRUE AND (mail_domain IS NULL OR mail_domain = '')", [env.mailDomain]);
+    await db.query("ALTER TABLE mail_dns_settings ALTER COLUMN mail_domain SET NOT NULL");
 
     // Upgrade existing installations without leaving MFA material readable in the database.
     const admins = await db.query<{ id: number; totp_secret: string | null; recovery_codes: string[] }>(

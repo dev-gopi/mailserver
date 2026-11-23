@@ -98,7 +98,7 @@ export class MailboxController {
 
   async getClientConfig(req: Request, res: Response) {
     const target = (req.query.email || req.query.domain || "") as string;
-    const config = mailboxService.getClientConfig(target);
+    const config = await mailboxService.getClientConfig(target);
 
     if (req.query.format === "xml") {
       res.setHeader("Content-Type", "application/xml");

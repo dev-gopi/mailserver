@@ -1,0 +1,7 @@
+# A mail.local sender may deliver only to this local development domain. A
+# lookup miss lets the local_only_sender restriction class reject the RCPT.
+user = __MAIL_DB_USER__
+password = __MAIL_DB_PASSWORD__
+hosts = __MAIL_DB_HOST__
+dbname = __MAIL_DB_NAME__
+query = SELECT 'OK' WHERE split_part(lower('%s'), '@', 2) = 'mail.local'

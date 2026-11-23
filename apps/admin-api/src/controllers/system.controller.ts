@@ -134,6 +134,26 @@ export class SystemController {
       return res.status(500).json({ error: err.message || "Deliverability check failed" });
     }
   }
+
+  async getDnsSettings(req: Request, res: Response) {
+    try {
+      return res.json(await systemService.getDnsSettings());
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Failed to load DNS settings" });
+    }
+  }
+
+  async updateDnsSettings(req: Request, res: Response) {
+    if (!canWrite(req)) {
+      return res.status(403).json({ error: "Read-only administrator" });
+    }
+    try {
+      const result = await systemService.updateDnsSettings(req, req.body);
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Failed to update DNS settings" });
+    }
+  }
 }
 
 export const systemController = new SystemController();

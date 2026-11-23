@@ -367,6 +367,12 @@ services:
       OPENDKIM_DB_PASSWORD_FILE: /run/secrets/opendkim_db_password
       AUTH_ENCRYPTION_KEY_FILE: /run/secrets/auth_encryption_key
       SESSION_COOKIE_SECURE: "true"
+      MAIL_DOMAIN: ${MAIL_DOMAIN:?set MAIL_DOMAIN in .env}
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME:?set MAIL_HOSTNAME in .env}
+      MAIL_PUBLIC_IP: ${MAIL_PUBLIC_IP:-}
+      MX_PRIORITY: ${MX_PRIORITY:-10}
+      SPF_RECORD: ${SPF_RECORD:-v=spf1 mx ~all}
+      DMARC_POLICY: ${DMARC_POLICY:-quarantine}
     secrets:
       - postgres_password
       - api_db_password

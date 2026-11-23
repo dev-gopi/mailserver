@@ -36,6 +36,18 @@ export class DomainController {
     }
   }
 
+  async get(req: Request, res: Response) {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id)) {
+      return res.status(400).json({ error: "Invalid domain ID" });
+    }
+    try {
+      return res.json(await domainService.getDomainById(id));
+    } catch (err: unknown) {
+      return res.status(404).json({ error: (err as Error).message });
+    }
+  }
+
   async create(req: Request, res: Response) {
     if (!canWrite(req)) {
       return res.status(403).json({ error: "Read-only administrator" });

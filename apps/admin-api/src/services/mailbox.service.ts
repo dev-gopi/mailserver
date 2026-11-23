@@ -4,6 +4,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { mailboxRepository } from "../repositories/mailbox.repository";
 import { domainRepository } from "../repositories/domain.repository";
+import { mailDnsSettingsRepository } from "../repositories/mail-dns-settings.repository";
 import { auditService } from "./audit";
 import { env } from "../config/env";
 
@@ -297,8 +298,9 @@ export class MailboxService {
    * Returns Thunderbird / Apple Mail / Outlook auto-configure payload for a
    * given email address or domain.
    */
-  getClientConfig(emailOrDomain?: string) {
-    let domain = env.mailDomain;
+  async getClientConfig(emailOrDomain?: string) {
+    const settings = await mailDnsSettingsRepository.get();
+    let domain = settings.mail_domain;
     let email = `user@${domain}`;
 
     if (emailOrDomain) {
@@ -311,8 +313,8 @@ export class MailboxService {
       }
     }
 
-    const mailHost = domain === env.mailDomain && env.mailHostname
-      ? env.mailHostname
+    const mailHost = domain.toLowerCase() === settings.mail_domain.toLowerCase()
+      ? settings.mail_hostname
       : `mail.${domain}`;
 
     const xmlDomain = this.escapeXml(domain);

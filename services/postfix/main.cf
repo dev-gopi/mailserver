@@ -56,6 +56,11 @@ smtpd_sasl_authenticated_header = yes
 smtpd_sasl_security_options = noanonymous
 smtpd_sender_login_maps = proxy:pgsql:/etc/postfix/pgsql-sender-login.cf
 
+# The default mail.local domain is development-only. Submission listeners
+# invoke this class for mail.local senders; it permits local recipients only.
+smtpd_restriction_classes = local_only_sender
+local_only_sender = check_recipient_access proxy:pgsql:/etc/postfix/pgsql-local-recipient.cf, reject
+
 # Workaround for some old mail clients
 broken_sasl_auth_clients = yes
 
