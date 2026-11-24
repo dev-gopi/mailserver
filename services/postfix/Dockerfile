@@ -40,6 +40,8 @@ COPY config/pgsql-virtual-users.cf /etc/postfix/pgsql-virtual-users.cf
 COPY config/pgsql-virtual-domains.cf /etc/postfix/pgsql-virtual-domains.cf
 COPY config/pgsql-virtual-aliases.cf /etc/postfix/pgsql-virtual-aliases.cf
 COPY config/pgsql-sender-login.cf /etc/postfix/pgsql-sender-login.cf
+COPY config/pgsql-local-sender.cf /etc/postfix/pgsql-local-sender.cf
+COPY config/pgsql-local-recipient.cf /etc/postfix/pgsql-local-recipient.cf
 RUN chown root:root /etc/postfix/main.cf /etc/postfix/master.cf \
     && chown root:postfix /etc/postfix/pgsql-*.cf \
     && chmod 0644 /etc/postfix/main.cf /etc/postfix/master.cf \

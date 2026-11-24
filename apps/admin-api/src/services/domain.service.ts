@@ -6,6 +6,7 @@ import { Request } from "express";
 import { env } from "../config/env";
 import { DomainEntity } from "../models/entities";
 import { domainRepository } from "../repositories/domain.repository";
+import { mailDnsSettingsRepository } from "../repositories/mail-dns-settings.repository";
 import { auditService } from "./audit";
 
 export class DomainService {
@@ -62,7 +63,22 @@ export class DomainService {
     };
   }
 
-  private dnsRecords(domain: DomainEntity, dkimTxtRecord: { name: string; value: string }) {
+  private async dnsRecords(domain: DomainEntity, dkimTxtRecord: { name: string; value: string }) {
+    const settings = await mailDnsSettingsRepository.get();
+    const cleanPublicIp = settings.mail_public_ip
+      ? settings.mail_public_ip.split("/")[0].trim()
+      : null;
+
+    // Per-domain mail host:
+    // If the domain is the server's primary domain, use settings.mail_hostname (e.g. mail.example.com).
+    // For any custom/tenant domain, the mail host is mail.<domain.name>.
+    const domainMailHost = domain.name.toLowerCase() === settings.mail_domain.toLowerCase()
+      ? settings.mail_hostname
+      : `mail.${domain.name}`;
+
+    // Clean any /32 from SPF record
+    const cleanSpf = (settings.spf_record || "v=spf1 mx ~all").replace(/\/32\b/g, "");
+
     return {
       verification: {
         type: "TXT",
@@ -71,22 +87,22 @@ export class DomainService {
       },
       mailHost: {
         type: "A",
-        name: env.mailHostname,
-        value: env.mailPublicIp || null,
-        guidance: env.mailPublicIp
+        name: domainMailHost,
+        value: cleanPublicIp,
+        guidance: cleanPublicIp
           ? undefined
           : "Set MAIL_PUBLIC_IP to show the server address. The hostname must resolve to this server's public IP."
       },
       mx: {
         type: "MX",
         name: "@",
-        priority: env.dns.mxPriority,
-        value: env.mailHostname
+        priority: settings.mx_priority,
+        value: domainMailHost
       },
       spf: {
         type: "TXT",
         name: "@",
-        value: env.dns.spfRecord
+        value: cleanSpf
       },
       dkim: {
         type: "TXT",
@@ -96,7 +112,7 @@ export class DomainService {
       dmarc: {
         type: "TXT",
         name: `_dmarc.${domain.name}`,
-        value: `v=DMARC1; p=${env.dns.dmarcPolicy}; rua=mailto:postmaster@${domain.name}`
+        value: `v=DMARC1; p=${settings.dmarc_policy}; rua=mailto:postmaster@${domain.name}`
       }
     };
   }
@@ -105,7 +121,7 @@ export class DomainService {
     const withDkim = await this.withDkimRecord(domain);
     return {
       ...withDkim,
-      dnsRecords: this.dnsRecords(domain, withDkim.dkimTxtRecord)
+      dnsRecords: await this.dnsRecords(domain, withDkim.dkimTxtRecord)
     };
   }
 

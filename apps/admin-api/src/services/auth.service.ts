@@ -4,6 +4,7 @@ import { Request } from "express";
 import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
 import { env } from "../config/env";
 import { adminRepository } from "../repositories/admin.repository";
+import { companyRepository } from "../repositories/company.repository";
 import { createToken, tokenHash } from "../middleware/auth";
 import { auditService } from "./audit";
 import { totpService } from "./totp.service";
@@ -360,8 +361,11 @@ export class AuthService {
     const admin = await adminRepository.findById(req.admin!.id);
     if (!admin) throw new Error("Admin not found");
 
+    const profile = await companyRepository.get().catch(() => null);
+    const issuer = env.webauthnRpName || profile?.name || "MailCore";
+
     const secret = totpService.generateSecret();
-    const uri = totpService.generateUri(secret, admin.username);
+    const uri = totpService.generateUri(secret, admin.username, issuer);
     const qrSvg = await totpService.generateQrSvg(uri);
     const recoveryCodes = totpService.generateRecoveryCodes(8);
 
@@ -438,10 +442,11 @@ export class AuthService {
     const challenge = Uint8Array.from(randomBytes(32));
     const rpId = this.getWebAuthnRpId(req);
     const origin = this.getWebAuthnOrigin(req);
+    const profile = await companyRepository.get().catch(() => null);
 
     const options = await generateRegistrationOptions({
       rpID: rpId,
-      rpName: env.webauthnRpName || "MailCore Admin Console",
+      rpName: env.webauthnRpName || profile?.name || "MailCore Admin Console",
       userID: new TextEncoder().encode(String(admin.id)),
       userName: admin.username,
       userDisplayName: admin.username,

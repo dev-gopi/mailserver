@@ -136,7 +136,7 @@ export class SystemRepository {
       "From: mailcore-healthcheck@localhost",
       "To: mailcore-healthcheck@localhost",
       "Subject: MailCore ClamAV EICAR health probe",
-      "Date: Tue, 17 Nov 2026 12:00:00 +0000",
+      `Date: ${new Date().toUTCString()}`,
       "Message-ID: <mailcore-healthcheck@mailcore.invalid>",
       "MIME-Version: 1.0",
       'Content-Type: multipart/mixed; boundary="mailcore-health-probe"',
@@ -286,20 +286,21 @@ export class SystemRepository {
     const dbStart = Date.now();
     let dbStatus: ServiceHealthStatus;
     try {
-      await db.query("SELECT 1");
+      const vRes = await db.query<{ server_version?: string }>("SHOW server_version");
+      const ver = vRes.rows[0]?.server_version ? `PostgreSQL ${vRes.rows[0].server_version.split(" ")[0]}` : "PostgreSQL";
       dbStatus = {
         service: "postgresql",
-        displayName: "PostgreSQL 16",
+        displayName: ver,
         port: env.services.databasePort,
         status: "healthy",
         latencyMs: Date.now() - dbStart,
-        banner: "PostgreSQL Relational DB Connected",
+        banner: `${ver} Relational DB Connected`,
         lastChecked: new Date().toISOString()
       };
     } catch (err: any) {
       dbStatus = {
         service: "postgresql",
-        displayName: "PostgreSQL 16",
+        displayName: "PostgreSQL",
         port: env.services.databasePort,
         status: "down",
         latencyMs: Date.now() - dbStart,
@@ -357,12 +358,12 @@ export class SystemRepository {
     return { success: true, message: "Postfix queue flush requested", flushedAt: new Date().toISOString() };
   }
 
-  async getCertificateHealth(): Promise<CertificateHealthStatus> {
+  async getCertificateHealth(servername?: string): Promise<CertificateHealthStatus> {
     const host = env.services.postfixHost;
-    const port = 465;
+    const port = env.client.smtpAlternativePort || 465;
     const checkedAt = new Date().toISOString();
     return new Promise((resolve) => {
-      const socket = tls.connect({ host, port, servername: env.mailHostname || undefined, rejectUnauthorized: false });
+      const socket = tls.connect({ host, port, servername, rejectUnauthorized: false });
       socket.setTimeout(5000);
       const unavailable = (error: string): CertificateHealthStatus => ({
         status: "unavailable", subject: "", issuer: "", validFrom: null, validTo: null,

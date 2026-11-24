@@ -1,0 +1,7 @@
+# Give the local development domain a dedicated restriction class. This map is
+# used only by authenticated submission listeners (587 and 465).
+user = __MAIL_DB_USER__
+password = __MAIL_DB_PASSWORD__
+hosts = __MAIL_DB_HOST__
+dbname = __MAIL_DB_NAME__
+query = SELECT 'local_only_sender' WHERE split_part(lower('%s'), '@', 2) = 'mail.local'

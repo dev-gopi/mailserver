@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { loginSchema, changePasswordSchema, clientConfigQuerySchema, mailboxChangePasswordSchema } = require("../dist/validation/schemas");
+const { loginSchema, changePasswordSchema, clientConfigQuerySchema, mailboxChangePasswordSchema, mailDnsSettingsUpdateSchema } = require("../dist/validation/schemas");
 const { validate } = require("../dist/validation/validate");
 
 test("login validation rejects empty credentials", () => {
@@ -53,4 +53,21 @@ test("validate middleware handles getter-only req.query (Express 5 compatibility
 
   assert.equal(nextCalled, true);
   assert.equal(req.query.format, "xml");
+});
+
+test("mailDnsSettingsUpdateSchema validates dynamic DNS settings", () => {
+  assert.throws(() => mailDnsSettingsUpdateSchema.parse({}));
+  assert.throws(() => mailDnsSettingsUpdateSchema.parse({ mailDomain: "not a domain" }));
+  assert.throws(() => mailDnsSettingsUpdateSchema.parse({ mailPublicIp: "999.999.999.999" }));
+  assert.throws(() => mailDnsSettingsUpdateSchema.parse({ spfRecord: "invalid spf" }));
+  assert.throws(() => mailDnsSettingsUpdateSchema.parse({ dmarcPolicy: "invalid" }));
+  assert.doesNotThrow(() => mailDnsSettingsUpdateSchema.parse({
+    mailDomain: "testdomain.com",
+    mailHostname: "mail.testdomain.com",
+    mailPublicIp: "14.194.177.90",
+    mxPriority: 10,
+    spfRecord: "v=spf1 mx ~all",
+    dmarcPolicy: "quarantine",
+    rblProviders: [{ name: "Spamhaus", host: "zen.spamhaus.org" }]
+  }));
 });

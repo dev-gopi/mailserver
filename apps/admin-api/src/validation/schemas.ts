@@ -274,3 +274,25 @@ export const eventRetentionSettingsSchema = z.object({
 export const eventOutboxIdParamSchema = z.object({ id: z.string().regex(/^\d{1,18}$/) });
 
 export const mailAnalyticsQuerySchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(30) });
+
+const isValidIpv4 = (ip: string) => {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return false;
+  return parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) >= 0 && Number(p) <= 255);
+};
+
+export const mailDnsSettingsUpdateSchema = z.object({
+  mailDomain: z.string().trim().toLowerCase().regex(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i, "Invalid mail domain format").optional(),
+  mailHostname: z.string().trim().toLowerCase().regex(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i, "Invalid mail hostname format").optional(),
+  mailPublicIp: z.string().trim().refine(isValidIpv4, "Invalid IPv4 address format").nullable().optional(),
+  mxPriority: z.number().int().min(0).max(65535).optional(),
+  spfRecord: z.string().trim().min(3).max(255).refine((val) => val.toLowerCase().startsWith("v=spf1"), "SPF record must start with v=spf1").optional(),
+  dmarcPolicy: z.enum(["none", "quarantine", "reject"]).optional(),
+  rblProviders: z.array(z.object({
+    name: z.string().trim().min(1).max(80),
+    host: z.string().trim().min(1).max(255)
+  })).optional()
+}).refine((data) => Object.values(data).some((val) => val !== undefined), {
+  message: "At least one DNS setting field is required"
+});
+

@@ -1,6 +1,7 @@
 import { Request } from "express";
 import { systemRepository } from "../repositories/system.repository";
 import { domainRepository } from "../repositories/domain.repository";
+import { mailDnsSettingsRepository } from "../repositories/mail-dns-settings.repository";
 import { mailboxRepository } from "../repositories/mailbox.repository";
 import { aliasRepository } from "../repositories/alias.repository";
 import { companyRepository } from "../repositories/company.repository";
@@ -20,16 +21,16 @@ export class SystemService {
    * also accepts a quick body-only sample, so give that form the minimum
    * well-formed message envelope instead of scoring it as malformed mail.
    */
-  private toDiagnosticMessage(content: string) {
+  private toDiagnosticMessage(content: string, domain = "mailcore.invalid") {
     const hasHeaderBlock = /^(?:[!-9;-~]+:[^\r\n]*\r?\n)+\r?\n/.test(content);
     if (hasHeaderBlock) return { message: content, inputNormalized: false };
 
     const message = [
-      "From: diagnostic-sender@example.invalid",
-      "To: diagnostic-recipient@example.invalid",
+      `From: diagnostic-sender@${domain}`,
+      `To: diagnostic-recipient@${domain}`,
       "Subject: MailCore spam-filter diagnostic",
       `Date: ${new Date().toUTCString()}`,
-      `Message-ID: <${randomUUID()}@mailcore.invalid>`,
+      `Message-ID: <${randomUUID()}@${domain}>`,
       "MIME-Version: 1.0",
       "Content-Type: text/plain; charset=UTF-8",
       "Content-Transfer-Encoding: 8bit",
@@ -39,7 +40,9 @@ export class SystemService {
     return { message, inputNormalized: true };
   }
 
-  async checkDeliverability(domain = env.mailDomain) {
+  async checkDeliverability(domain?: string) {
+    const settings = await mailDnsSettingsRepository.get();
+    const checkedDomain = domain ?? settings.mail_domain;
     const checks: Array<{
       name: string;
       status: "pass" | "warn" | "fail";
@@ -59,50 +62,52 @@ export class SystemService {
     };
 
     await check("Mail hostname A record", async () => {
-      const addresses = await resolve4(env.mailHostname);
+      const addresses = await resolve4(settings.mail_hostname);
       return addresses.join(", ");
-    }, (value) => `${env.mailHostname} resolves to ${value}`);
+    }, (value) => `${settings.mail_hostname} resolves to ${value}`);
 
     await check("Domain MX record", async () => {
-      const records = await resolveMx(domain);
+      const records = await resolveMx(checkedDomain);
       return records.map((record) => `${record.exchange} (priority ${record.priority})`).join(", ");
-    }, (value) => `${domain} routes mail to ${value}`);
+    }, (value) => `${checkedDomain} routes mail to ${value}`);
 
     await check("SPF record", async () => {
-      const records = await resolveTxt(domain);
+      const records = await resolveTxt(checkedDomain);
       const value = records.map((record) => record.join("")).find((item) => item.toLowerCase().startsWith("v=spf1"));
       if (!value) throw new Error("No v=spf1 TXT record found");
       return value;
     }, (value) => value ? `Published: ${value}` : "No v=spf1 TXT record found");
 
     await check("DKIM record", async () => {
-      const records = await resolveTxt(`mail._domainkey.${domain}`);
+      const records = await resolveTxt(`mail._domainkey.${checkedDomain}`);
       const value = records.map((record) => record.join("")).find((item) => item.toLowerCase().includes("v=dkim1"));
       if (!value) throw new Error("No DKIM TXT record found");
       return value;
     }, (value) => value ? "mail selector is published" : "No DKIM TXT record found");
 
     await check("DMARC record", async () => {
-      const records = await resolveTxt(`_dmarc.${domain}`);
+      const records = await resolveTxt(`_dmarc.${checkedDomain}`);
       const value = records.map((record) => record.join("")).find((item) => item.toLowerCase().startsWith("v=dmarc1"));
       if (!value) throw new Error("No DMARC TXT record found");
       return value;
     }, (value) => value ? `Published: ${value}` : "No DMARC TXT record found");
 
-    if (env.mailPublicIp) {
+    if (settings.mail_public_ip) {
       await check("Reverse DNS / PTR", async () => {
-        const names = await reverse(env.mailPublicIp);
+        const names = await reverse(settings.mail_public_ip!);
         return names.join(", ");
       }, (value) => `PTR resolves to ${value}`);
 
-      const ipParts = env.mailPublicIp.trim().split(".");
+      const ipParts = settings.mail_public_ip.trim().split(".");
       if (ipParts.length === 4) {
         const reversedIp = ipParts.reverse().join(".");
-        const rblProviders = [
-          { name: "Spamhaus ZEN", host: "zen.spamhaus.org" },
-          { name: "Barracuda RBL", host: "b.barracudacentral.org" },
-          { name: "SpamCop BL", host: "bl.spamcop.net" }
-        ];
+        const rblProviders = Array.isArray(settings.rbl_providers) && settings.rbl_providers.length > 0
+          ? settings.rbl_providers
+          : [
+              { name: "Spamhaus ZEN", host: "zen.spamhaus.org" },
+              { name: "Barracuda RBL", host: "b.barracudacentral.org" },
+              { name: "SpamCop BL", host: "bl.spamcop.net" }
+            ];
 
         for (const rbl of rblProviders) {
           try {
@@ -111,7 +116,7 @@ export class SystemService {
             checks.push({
               name: `RBL: ${rbl.name}`,
               status: "fail",
-              details: `IP ${env.mailPublicIp} listed on ${rbl.name} (${addresses.join(", ")})`
+              details: `IP ${settings.mail_public_ip} listed on ${rbl.name} (${addresses.join(", ")})`
             });
           } catch (err: unknown) {
             const code = err && typeof err === "object" && "code" in err ? (err as { code?: string }).code : undefined;
@@ -119,7 +124,7 @@ export class SystemService {
               checks.push({
                 name: `RBL: ${rbl.name}`,
                 status: "pass",
-                details: `IP ${env.mailPublicIp} is clean (not listed)`
+                details: `IP ${settings.mail_public_ip} is clean (not listed)`
               });
             } else {
               checks.push({
@@ -135,16 +140,16 @@ export class SystemService {
       checks.push({
         name: "Reverse DNS / PTR",
         status: "warn",
-        details: "MAIL_PUBLIC_IP is not configured"
+        details: "The mail public IP is not configured in the database"
       });
     }
 
     const failed = checks.filter((item) => item.status === "fail").length;
     const warnings = checks.filter((item) => item.status === "warn").length;
     return {
-      domain,
-      mailHostname: env.mailHostname,
-      publicIpConfigured: Boolean(env.mailPublicIp),
+      domain: checkedDomain,
+      mailHostname: settings.mail_hostname,
+      publicIpConfigured: Boolean(settings.mail_public_ip),
       status: failed ? "fail" : warnings ? "warn" : "pass",
       checks,
       checkedAt: new Date().toISOString()
@@ -250,7 +255,8 @@ export class SystemService {
   }
 
   async getCertificateHealth() {
-    return systemRepository.getCertificateHealth();
+    const settings = await mailDnsSettingsRepository.get();
+    return systemRepository.getCertificateHealth(settings.mail_hostname);
   }
 
   async flushMailQueue(req: Request) {
@@ -260,9 +266,10 @@ export class SystemService {
   }
 
   async testSmtp(req: Request, input: { recipient: string; subject: string; body: string; sender?: string }) {
-    if (!env.mailDomain || !env.services.postfixHost || !env.services.postfixPort) {
+    if (!env.services.postfixHost || !env.services.postfixPort) {
       throw new Error("SMTP diagnostic delivery is not configured");
     }
+    const settings = await mailDnsSettingsRepository.get();
 
     let sender = input.sender?.toLowerCase().trim();
     if (!sender) {
@@ -270,10 +277,10 @@ export class SystemService {
       if (verifiedDomains.length > 0) {
         sender = `diagnostic@${verifiedDomains[0].name}`;
       } else {
-        sender = `diagnostic@${env.mailDomain}`;
+        sender = `diagnostic@${settings.mail_domain}`;
       }
     }
-    const senderDomain = sender.split("@")[1] || env.mailDomain;
+    const senderDomain = sender.split("@")[1] || settings.mail_domain;
 
     const messageId = `<diagnostic-${Date.now()}@${senderDomain}>`;
     const message = [
@@ -287,7 +294,7 @@ export class SystemService {
       ""
     ].join("\r\n");
 
-    const response = await this.sendSmtpDiagnostic(sender, input.recipient, message);
+    const response = await this.sendSmtpDiagnostic(sender, input.recipient, message, settings.mail_hostname);
     const result = {
       success: true,
       message: `Diagnostic email accepted by Postfix for ${input.recipient}`,
@@ -305,7 +312,7 @@ export class SystemService {
     return result;
   }
 
-  private sendSmtpDiagnostic(sender: string, recipient: string, message: string): Promise<string> {
+  private sendSmtpDiagnostic(sender: string, recipient: string, message: string, mailHostname: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const socket = net.createConnection({
         host: env.services.postfixHost,
@@ -316,7 +323,7 @@ export class SystemService {
       let dataSent = false;
       let lastResponse = "";
       const commands = [
-        `EHLO ${env.mailHostname || "localhost"}`,
+        `EHLO ${mailHostname}`,
         `MAIL FROM:<${sender}>`,
         `RCPT TO:<${recipient}>`,
         "DATA"
@@ -375,7 +382,9 @@ export class SystemService {
     const content = input.content.trim();
     if (!content) throw new Error("Message content is required");
     if (Buffer.byteLength(content, "utf8") > 256 * 1024) throw new Error("Message is too large for an interactive scan (maximum 256 KiB)");
-    const { message, inputNormalized } = this.toDiagnosticMessage(content);
+    const settings = await mailDnsSettingsRepository.get().catch(() => null);
+    const domain = settings?.mail_domain || "mailcore.invalid";
+    const { message, inputNormalized } = this.toDiagnosticMessage(content, domain);
 
     const url = `http://${env.services.rspamdHost}:${env.services.rspamdPort}/checkv2`;
     const response = await fetch(url, {
@@ -542,6 +551,32 @@ export class SystemService {
 
   async getTaskQueueStats() {
     return taskQueue.getStats();
+  }
+
+  async getDnsSettings() {
+    return mailDnsSettingsRepository.get();
+  }
+
+  async updateDnsSettings(req: Request, data: {
+    mailDomain?: string;
+    mailHostname?: string;
+    mailPublicIp?: string | null;
+    mxPriority?: number;
+    spfRecord?: string;
+    dmarcPolicy?: "none" | "quarantine" | "reject";
+    rblProviders?: Array<{ name: string; host: string }>;
+  }) {
+    const updated = await mailDnsSettingsRepository.update({
+      mail_domain: data.mailDomain,
+      mail_hostname: data.mailHostname,
+      mail_public_ip: data.mailPublicIp,
+      mx_priority: data.mxPriority,
+      spf_record: data.spfRecord,
+      dmarc_policy: data.dmarcPolicy,
+      rbl_providers: data.rblProviders
+    });
+    await auditService.log(req, "system.dns_settings.update", "system", "dns_settings", updated);
+    return updated;
   }
 }
 

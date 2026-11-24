@@ -110,7 +110,7 @@ openssl pkey -in "$KEY_SOURCE" -out "$work/privkey.pem"
 cp "$CERT_SOURCE" "$work/fullchain.pem"
 chmod 0644 "$work/leaf.pem" "$work/fullchain.pem"
 chmod 0600 "$work/privkey.pem"
-openssl x509 -in "$work/leaf.pem" -noout -checkhost "$DOMAIN" >/dev/null || { echo "Certificate does not cover $DOMAIN" >&2; exit 1; }
+openssl x509 -in "$work/leaf.pem" -noout -checkhost "$DOMAIN" 2>&1 | grep -q 'does match certificate' || { echo "Certificate does not cover $DOMAIN" >&2; exit 1; }
 openssl x509 -in "$work/leaf.pem" -noout -checkend 2592000 >/dev/null || { echo 'Certificate expires in less than 30 days or is not yet valid' >&2; exit 1; }
 openssl pkey -in "$work/privkey.pem" -check -noout >/dev/null 2>&1 || { echo 'Private key validation failed' >&2; exit 1; }
 cert_pub="$(openssl x509 -in "$work/leaf.pem" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | awk '{print $1}')"

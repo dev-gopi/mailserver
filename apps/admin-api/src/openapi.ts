@@ -80,6 +80,10 @@ export const openapi = {
     "/api/system/queue/flush": { post: { security: [{ bearerAuth: [] }], summary: "Flush Postfix mail queue" } },
     "/api/system/test-smtp": { post: { security: [{ bearerAuth: [] }], summary: "Trigger diagnostic SMTP delivery test" } },
     "/api/system/test-spam": { post: { security: [{ bearerAuth: [] }], summary: "Test SpamAssassin filter score with custom content" } },
-    "/api/system/task-queue": { get: { security: [{ bearerAuth: [] }], summary: "Background task queue metrics and workers" } }
+    "/api/system/task-queue": { get: { security: [{ bearerAuth: [] }], summary: "Background task queue metrics and workers" } },
+    "/api/system/dns-settings": {
+      get: { security: [{ bearerAuth: [] }], summary: "Read dynamic mail domain, hostname, public IP, and DNS records configuration" },
+      put: { security: [{ bearerAuth: [] }], summary: "Update dynamic mail domain, hostname, public IP, and DNS records configuration (owner only)" }
+    }
   }
 };

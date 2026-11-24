@@ -21,7 +21,7 @@ chown -R opendkim:opendkim /var/lib/opendkim /var/run/opendkim
 sync_db_domains() {
   if [ -n "${MAIL_DB_HOST:-}" ] && [ -n "${MAIL_DB_PASSWORD:-}" ]; then
     local db_domains
-    db_domains=$(PGPASSWORD="$MAIL_DB_PASSWORD" psql -h "$MAIL_DB_HOST" -U "${MAIL_DB_USER:-mailuser}" -d "${MAIL_DB_NAME:-mailserver}" -t -A -c "SELECT name FROM virtual_domains;" 2>/dev/null || true)
+    db_domains=$(PGPASSWORD="$MAIL_DB_PASSWORD" psql -h "$MAIL_DB_HOST" -U "${MAIL_DB_USER:-mail_opendkim}" -d "${MAIL_DB_NAME:-mailserver}" -t -A -c "SELECT name FROM virtual_domains;" 2>/dev/null || true)
     for dom in $db_domains; do
       [ -z "$dom" ] && continue
       local dom_dir="$key_dir/$dom"

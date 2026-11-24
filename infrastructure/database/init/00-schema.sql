@@ -24,6 +24,18 @@ FROM aliases a
 JOIN domains d ON d.id = a.domain_id
 WHERE a.active AND d.active AND d.verified_at IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS mail_dns_settings (
+  id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+  mail_domain TEXT NOT NULL,
+  mail_hostname TEXT NOT NULL,
+  mail_public_ip INET,
+  mx_priority INTEGER NOT NULL DEFAULT 10 CHECK (mx_priority BETWEEN 0 AND 65535),
+  spf_record TEXT NOT NULL,
+  dmarc_policy TEXT NOT NULL CHECK (dmarc_policy IN ('none', 'quarantine', 'reject')),
+  rbl_providers JSONB NOT NULL DEFAULT '[{"name":"Spamhaus ZEN","host":"zen.spamhaus.org"},{"name":"Barracuda RBL","host":"b.barracudacentral.org"},{"name":"SpamCop BL","host":"bl.spamcop.net"}]'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS backup_settings (
   id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
   auto_backup_enabled BOOLEAN NOT NULL DEFAULT TRUE,

@@ -1348,7 +1348,7 @@
                 </div>
                 <div class="form-group">
                   <label for="test-smtp-recipient">Recipient Email</label>
-                  <input id="test-smtp-recipient" type="email" placeholder="recipient@example.com" required>
+                  <input id="test-smtp-recipient" type="email" placeholder="admin@yourdomain.com" required>
                 </div>
                 <div class="form-group">
                   <label for="test-smtp-subject">Subject</label>
@@ -1530,7 +1530,7 @@
                 </div>
                 <div class="form-group">
                   <label for="security-list-value">Value</label>
-                  <input id="security-list-value" type="text" maxlength="254" required placeholder="sender@example.com / example.com / exe" autocomplete="off">
+                  <input id="security-list-value" type="text" maxlength="254" required placeholder="sender@yourdomain.com / domain.com / exe" autocomplete="off">
                 </div>
                 <div class="form-group">
                   <label for="security-list-note">Administrative note (optional)</label>
@@ -2053,6 +2053,59 @@
                 <button type="submit" class="btn btn-primary">Update Password</button>
               </form>
             </div>
+
+            <!-- Mail Server & DNS Settings -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Mail & DNS Server Settings</h3>
+                  <p class="card-desc">Dynamic cluster routing, public IP, and authentication records stored in database</p>
+                </div>
+              </div>
+
+              <form id="mail-dns-settings-form" class="settings-form" onsubmit="handleSaveMailDnsSettings(event)">
+                <div class="form-group">
+                  <label for="dns-mail-domain">Primary Mail Domain</label>
+                  <input id="dns-mail-domain" type="text" required placeholder="e.g. example.com" pattern="^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$">
+                  <small class="form-hint">Default domain for mail delivery and system notices.</small>
+                </div>
+
+                <div class="form-group">
+                  <label for="dns-mail-hostname">Mail Hostname (FQDN)</label>
+                  <input id="dns-mail-hostname" type="text" required placeholder="e.g. mail.example.com" pattern="^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$">
+                  <small class="form-hint">Fully qualified domain name of this mail host presented during SMTP EHLO/HELO.</small>
+                </div>
+
+                <div class="form-group">
+                  <label for="dns-mail-public-ip">Public IPv4 Address</label>
+                  <input id="dns-mail-public-ip" type="text" placeholder="e.g. 203.0.113.10" pattern="^(\d{1,3}\.){3}\d{1,3}$">
+                  <small class="form-hint">Public server IP used for reverse DNS/PTR and A-record generation.</small>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group flex-1">
+                    <label for="dns-mx-priority-input">MX Priority</label>
+                    <input id="dns-mx-priority-input" type="number" min="0" max="65535" required value="10">
+                  </div>
+                  <div class="form-group flex-1">
+                    <label for="dns-dmarc-policy-input">DMARC Policy</label>
+                    <select id="dns-dmarc-policy-input" required>
+                      <option value="none">none (monitoring only)</option>
+                      <option value="quarantine" selected>quarantine</option>
+                      <option value="reject">reject</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label for="dns-spf-record-input">SPF Record Template</label>
+                  <input id="dns-spf-record-input" type="text" required placeholder="v=spf1 mx ~all">
+                  <small class="form-hint">Default TXT record published for sending server authorization.</small>
+                </div>
+
+                <button type="submit" id="btn-save-dns-settings" class="btn btn-primary">Save Mail DNS Settings</button>
+              </form>
+            </div>
           </div>
         </section>
       </div>
@@ -2527,7 +2580,7 @@
             </div>
             <div class="dns-field">
               <span class="dns-field-label">Value:</span>
-              <div class="val-copy"><code id="dns-spf-val">v=spf1 mx ~all</code> <button class="btn-copy-sm" onclick="copyElementText('dns-spf-val', this)">Copy</button></div>
+              <div class="val-copy"><code id="dns-spf-val">—</code> <button class="btn-copy-sm" onclick="copyElementText('dns-spf-val', this)">Copy</button></div>
             </div>
           </div>
         </div>
@@ -2561,7 +2614,7 @@
             </div>
             <div class="dns-field">
               <span class="dns-field-label">Value:</span>
-              <div class="val-copy"><code id="dns-dmarc-val">v=DMARC1; p=quarantine;</code> <button class="btn-copy-sm" onclick="copyElementText('dns-dmarc-val', this)">Copy</button></div>
+              <div class="val-copy"><code id="dns-dmarc-val">—</code> <button class="btn-copy-sm" onclick="copyElementText('dns-dmarc-val', this)">Copy</button></div>
             </div>
           </div>
         </div>
@@ -2599,7 +2652,7 @@
 
           <div class="form-group">
             <label for="alias-destination">Forwarding Destination (Deliver To)</label>
-            <input id="alias-destination" type="email" placeholder="recipient@example.com or external address" required>
+            <input id="alias-destination" type="email" placeholder="recipient@yourdomain.com or external address" required>
             <small class="form-hint">Can be an internal mailbox or an external mail provider.</small>
           </div>
         </div>

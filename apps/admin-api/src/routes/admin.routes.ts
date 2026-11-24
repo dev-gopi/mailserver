@@ -35,7 +35,8 @@ import {
   eventNotificationIdParamSchema,
   eventRetentionSettingsSchema,
   eventOutboxIdParamSchema,
-  mailAnalyticsQuerySchema
+  mailAnalyticsQuerySchema,
+  mailDnsSettingsUpdateSchema
 } from "../validation/schemas";
 import { companyController } from "../controllers/company.controller";
 import { domainController } from "../controllers/domain.controller";
@@ -109,6 +110,7 @@ adminRouter.get("/domains", validate({ query: listPaginationQuerySchema }), doma
 // IMPORTANT: /domains/active must come BEFORE /domains/:id to avoid Express
 // matching "active" as an id parameter.
 adminRouter.get("/domains/active", domainController.listActive);
+adminRouter.get("/domains/:id", domainController.get);
 adminRouter.post("/domains", requireRoles("admin"), validate({ body: domainCreateSchema }), domainController.create);
 adminRouter.post("/domains/:id/verify", requireRoles("admin"), domainController.verify);
 adminRouter.patch("/domains/:id", requireRoles("admin"), validate({ body: domainPatchSchema }), domainController.updateActive);
@@ -181,6 +183,8 @@ adminRouter.post("/security-policies/entries", requireRoles("owner", "admin"), s
 adminRouter.delete("/security-policies/entries/:id", requireRoles("owner", "admin"), securityPolicyMutationLimit, validate({ params: securityPolicyListEntryIdParamSchema }), securityPolicyController.deleteListEntry);
 adminRouter.get("/system/task-queue", requireRoles("admin"), systemController.getTaskQueueStats);
 adminRouter.get("/system/deliverability", validate({ query: deliverabilityQuerySchema }), systemController.checkDeliverability);
+adminRouter.get("/system/dns-settings", requireRoles("admin"), systemController.getDnsSettings);
+adminRouter.put("/system/dns-settings", requireRoles("owner"), validate({ body: mailDnsSettingsUpdateSchema }), systemController.updateDnsSettings);
 
 // ── Backups & Disaster Recovery ────────────────────────────────────────────────
 adminRouter.get("/backups", requireRoles("owner", "admin"), backupController.list);

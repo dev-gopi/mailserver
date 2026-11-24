@@ -7,11 +7,17 @@ apps/admin-api/.env
 infrastructure/performance/load-test.env
 
 # TLS and DKIM private material
-secrets/tls/*.key
-secrets/tls/*.pem
+secrets/tls/*
+!secrets/tls/.gitkeep
 secrets/runtime/*
 !secrets/runtime/.gitkeep
 opendkim/keys/
+
+# Reports and generated audits
+infrastructure/reports/*
+!infrastructure/reports/.gitkeep
+!infrastructure/reports/incidents/
+!infrastructure/reports/incidents/.gitkeep
 
 # Node build and dependency output
 apps/admin-api/node_modules/
