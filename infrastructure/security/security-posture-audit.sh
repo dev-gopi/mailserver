@@ -70,7 +70,7 @@ if [[ -L "$current" && "$(readlink "$current")" =~ ^releases/[A-Za-z0-9._-]{1,10
       openssl x509 -in "$cert_real" -checkend 2592000 -noout >/dev/null 2>&1 && pass 'TLS certificate has at least 30 days remaining' || fail 'TLS certificate expires within 30 days or is invalid'
       mail_host="${MAIL_HOSTNAME:-}"
       if [[ -z "$mail_host" && -f .env ]]; then mail_host="$(sed -n 's/^MAIL_HOSTNAME=//p' .env | tail -n1 | tr -d '"\047\r')"; fi
-      if [[ -n "$mail_host" ]] && openssl x509 -in "$cert_real" -checkhost "$mail_host" -noout >/dev/null 2>&1; then pass "TLS certificate covers MAIL_HOSTNAME=$mail_host"; elif [[ -n "$mail_host" ]]; then fail "TLS certificate does not cover MAIL_HOSTNAME=$mail_host"; else warn 'MAIL_HOSTNAME unavailable; skipped TLS hostname check'; fi
+      if [[ -n "$mail_host" ]] && openssl x509 -in "$cert_real" -checkhost "$mail_host" -noout 2>&1 | grep -q 'does match certificate'; then pass "TLS certificate covers MAIL_HOSTNAME=$mail_host"; elif [[ -n "$mail_host" ]]; then fail "TLS certificate does not cover MAIL_HOSTNAME=$mail_host"; else warn 'MAIL_HOSTNAME unavailable; skipped TLS hostname check'; fi
       chain_count="$(grep -c -- '-----BEGIN CERTIFICATE-----' "$cert_real" || true)"
       (( chain_count >= 2 )) && pass "TLS fullchain contains $chain_count certificates" || warn 'TLS PEM contains only a leaf certificate; verify intermediate-chain delivery'
     else

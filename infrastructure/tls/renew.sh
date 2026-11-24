@@ -18,7 +18,7 @@ validate_installed_pair() {
     echo 'TLS root certificate/key links must resolve to the active versioned release' >&2; return 1;
   }
   [[ -s "$cert_file" && -s "$key_file" ]] || { echo 'Installed TLS pair is empty' >&2; return 1; }
-  openssl x509 -in "$cert_file" -noout -checkhost "$CERTBOT_DOMAIN" >/dev/null 2>&1 || {
+  openssl x509 -in "$cert_file" -noout -checkhost "$CERTBOT_DOMAIN" 2>&1 | grep -q 'does match certificate' || {
     echo "Installed TLS certificate does not cover $CERTBOT_DOMAIN" >&2; return 1;
   }
   openssl x509 -in "$cert_file" -noout -checkend 2592000 >/dev/null 2>&1 || {
