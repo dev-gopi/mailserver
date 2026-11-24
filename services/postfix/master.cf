@@ -30,8 +30,8 @@ submission inet n       -       n       -       100     smtpd
 #  -o smtpd_client_restrictions=$mua_client_restrictions
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject_unauth_destination
   -o smtpd_helo_restrictions=
-  -o smtpd_sender_restrictions=$mua_sender_restrictions
-  -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_sender_restrictions=$submission_sender_checks
+  -o smtpd_recipient_restrictions=$submission_recipient_checks
   -o smtpd_relay_restrictions=permit_mynetworks,permit_sasl_authenticated,defer_unauth_destination
   -o milter_macro_daemon_name=ORIGINATING
 smtps     inet  n       -       n       -       100     smtpd
@@ -44,8 +44,8 @@ smtps     inet  n       -       n       -       100     smtpd
 #  -o smtpd_reject_unlisted_recipient=no
 #  -o smtpd_client_restrictions=$mua_client_restrictions
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject_unauth_destination
-  -o smtpd_sender_restrictions=$mua_sender_restrictions
-  -o smtpd_recipient_restrictions=reject_unknown_recipient_domain,permit_sasl_authenticated,reject_unauth_destination,reject
+  -o smtpd_sender_restrictions=$submission_sender_checks
+  -o smtpd_recipient_restrictions=$submission_recipient_checks
   -o smtpd_relay_restrictions=permit_mynetworks,permit_sasl_authenticated,defer_unauth_destination
   -o milter_macro_daemon_name=ORIGINATING
 #628       inet  n       -       y       -       -       qmqpd
