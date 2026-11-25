@@ -48,6 +48,11 @@ export class SystemService {
       status: "pass" | "warn" | "fail";
       details: string;
     }> = [];
+    let mxRecords: Awaited<ReturnType<typeof resolveMx>> | undefined;
+    const getMxRecords = async () => {
+      if (!mxRecords) mxRecords = await resolveMx(checkedDomain);
+      return mxRecords;
+    };
     const check = async (
       name: string,
       lookup: () => Promise<string>,
@@ -62,12 +67,20 @@ export class SystemService {
     };
 
     await check("Mail hostname A record", async () => {
-      const addresses = await resolve4(settings.mail_hostname);
-      return addresses.join(", ");
-    }, (value) => `${settings.mail_hostname} resolves to ${value}`);
+      // When checking a domain selected in the UI, validate the hostname that
+      // actually receives its mail (the highest-priority MX), not the global
+      // server setting. The latter can belong to a different deployment or be
+      // an internal hostname such as mail.local.
+      const hostname = domain
+        ? (await getMxRecords()).slice().sort((a, b) => a.priority - b.priority)[0]?.exchange
+        : settings.mail_hostname;
+      if (!hostname) throw new Error(`No MX hostname is published for ${checkedDomain}`);
+      const addresses = await resolve4(hostname);
+      return `${hostname} resolves to ${addresses.join(", ")}`;
+    }, (value) => value);
 
     await check("Domain MX record", async () => {
-      const records = await resolveMx(checkedDomain);
+      const records = await getMxRecords();
       return records.map((record) => `${record.exchange} (priority ${record.priority})`).join(", ");
     }, (value) => `${checkedDomain} routes mail to ${value}`);
 
@@ -392,7 +405,12 @@ export class SystemService {
       headers: {
         "Content-Type": "message/rfc822",
         "User-Agent": "MailCore-Admin-Diagnostic/1.0",
-        "Pass": "all"
+        "Pass": "all",
+        // /checkv2 has no SMTP peer by default.  Mark this as the local
+        // diagnostic caller so Rspamd does not greylist an otherwise clean
+        // sample solely because its connection context is absent.
+        "IP": "127.0.0.1",
+        "Helo": "localhost"
       },
       body: message,
       signal: AbortSignal.timeout(8000)
@@ -400,21 +418,37 @@ export class SystemService {
     if (!response.ok) throw new Error(`Rspamd scan failed with HTTP ${response.status}`);
 
     const payload = await response.json() as Record<string, unknown>;
-    if (payload.is_skipped === true) throw new Error("Rspamd skipped this message; no clean verdict is available");
-    const score = Number(payload.score);
+    const symbolPayload = payload.symbols && typeof payload.symbols === "object"
+      ? payload.symbols as Record<string, unknown>
+      : {};
+    const symbols = Object.keys(symbolPayload).slice(0, 30);
+    // GTUBE is deliberately handled by Rspamd's passthrough module.  That
+    // response is marked `is_skipped`, even though it is the successful,
+    // expected result of a GTUBE diagnostic.  Treat only that known case as a
+    // completed scan; all other skipped responses remain an error.
+    const isGtube = symbols.includes("GTUBE");
+    if (payload.is_skipped === true && !isGtube) throw new Error("Rspamd skipped this message; no clean verdict is available");
+    let score = Number(payload.score);
     if (!Number.isFinite(score)) throw new Error("Rspamd returned an invalid scan score");
     const action = typeof payload.action === "string" ? payload.action : "unknown";
     const normalizedAction = action.toLowerCase();
-    const symbols = payload.symbols && typeof payload.symbols === "object"
-      ? Object.keys(payload.symbols as Record<string, unknown>).slice(0, 30)
-      : [];
-    const scanBlocked = normalizedAction === "soft reject" || symbols.includes("CLAM_VIRUS_FAIL");
+    // Passthrough replies report the action threshold as `score`; expose the
+    // configured GTUBE rule score instead so the diagnostic result is honest.
+    const gtubePayload = symbolPayload.GTUBE;
+    const gtubeScore = gtubePayload && typeof gtubePayload === "object"
+      ? Number((gtubePayload as Record<string, unknown>).metric_score)
+      : Number.NaN;
+    if (isGtube && Number.isFinite(gtubeScore)) score = Math.max(score, gtubeScore);
+    // A soft reject can be an ordinary greylist decision.  It is not proof
+    // that ClamAV failed; only the scanner's explicit failure symbol blocks a
+    // diagnostic clean verdict.
+    const scanBlocked = symbols.includes("CLAM_VIRUS_FAIL");
     const isMalware = symbols.some((symbol) => symbol === "CLAM_VIRUS" || (symbol.startsWith("CLAM_VIRUS_") && symbol !== "CLAM_VIRUS_FAIL"));
     // The interactive diagnostic is organization-scoped, so use the live
     // database policy instead of hard-coding the initial deployment default.
     const threshold = (await securityPolicyService.getEffectiveGlobalPolicy()).spamTagScore;
     const isSpam = !scanBlocked && (isMalware || score >= threshold || ["add header", "greylist", "reject"].includes(normalizedAction));
-    const result = { score, threshold, isSpam, isMalware, scanBlocked, action, engine: "Rspamd", symbols, inputNormalized };
+    const result = { score, threshold, isSpam, isMalware, scanBlocked, action, engine: "Rspamd", symbols, inputNormalized, isGtube };
     await auditService.log(req, "system.test.rspamd", "system", "rspamd", result);
     return result;
   }

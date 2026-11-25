@@ -3772,12 +3772,13 @@ async function handleTestSpam(event) {
     });
 
     resultBox.classList.remove("hidden");
-    const title = res.scanBlocked ? "SCAN DEFERRED" : res.isMalware ? "MALWARE DETECTED" : res.isSpam ? "SPAM DETECTED" : "CLEAN MESSAGE";
+    const title = res.scanBlocked ? "SCAN DEFERRED" : res.isGtube ? "GTUBE TEST DETECTED" : res.isMalware ? "MALWARE DETECTED" : res.isSpam ? "SPAM DETECTED" : "CLEAN MESSAGE";
     const kind = res.scanBlocked || res.isMalware || res.isSpam ? "alert-warning" : "alert-success";
     resultBox.className = `alert-box mt-3 ${kind}`;
     resultBox.innerHTML = `
       <strong>${title}:</strong>
       Score: <b>${escapeHtml(res.score)}</b> (Tag threshold: ${escapeHtml(res.threshold)}) &bull; Action: <b>${escapeHtml(String(res.action).toUpperCase())}</b> &bull; Engine: ${escapeHtml(res.engine)}
+      ${res.isGtube ? `<div class="mt-2">The standard GTUBE test pattern was detected and correctly rejected.</div>` : ""}
       ${res.inputNormalized ? `<div class="mt-2 text-muted">Plain text was wrapped in standard diagnostic email headers before scanning.</div>` : ""}
       ${res.scanBlocked ? `<div class="mt-2">Mandatory malware scanning did not complete. Do not treat this message as clean.</div>` : ""}
       ${Array.isArray(res.symbols) && res.symbols.length ? `<div class="mt-2 text-muted">Signals: ${res.symbols.map(escapeHtml).join(", ")}</div>` : ""}
@@ -3804,15 +3805,27 @@ async function handleTestSpam(event) {
 function insertGtubeSpam() {
   const domain = state.domains[0]?.name || "mailcore.invalid";
   const now = new Date().toUTCString();
-  $("test-spam-content").value = `From: sender@${domain}\nTo: recipient@${domain}\nSubject: GTUBE Spam Filter Test\nDate: ${now}\nMessage-ID: <gtube-test-${Date.now()}@${domain}>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\n\nThis is a standard test for spam filtering.\nXJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X\n`;
+  setSpamSample(`From: sender@${domain}\nTo: recipient@${domain}\nSubject: GTUBE Spam Filter Test\nDate: ${now}\nMessage-ID: <gtube-test-${Date.now()}@${domain}>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\n\nThis is a standard test for spam filtering.\nXJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X\n`);
   showToast("GTUBE Inserted", "GTUBE standard test pattern loaded for the Rspamd engine.", "info", 1500);
 }
 
 function insertCleanEmail() {
   const domain = state.domains[0]?.name || "mailcore.invalid";
   const now = new Date().toUTCString();
-  $("test-spam-content").value = `From: team@${domain}\nTo: recipient@${domain}\nSubject: Meeting Schedule for Next Week\nDate: ${now}\nMessage-ID: <meeting-schedule-${Date.now()}@${domain}>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\n\nHi,\nJust checking in on the quarterly progress. Let me know when you are free.\nBest regards,\nMail Administrator\n`;
+  setSpamSample(`From: team@${domain}\nTo: recipient@${domain}\nSubject: Meeting Schedule for Next Week\nDate: ${now}\nMessage-ID: <meeting-schedule-${Date.now()}@${domain}>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\n\nHi,\nJust checking in on the quarterly progress. Let me know when you are free.\nBest regards,\nMail Administrator\n`);
   showToast("Clean Email Inserted", "Sample business email loaded.", "info", 1500);
+}
+
+function setSpamSample(content) {
+  const field = $("test-spam-content");
+  field.value = content;
+  // Reset the programmatic insertion to the start. Without this, browsers can
+  // preserve an old textarea scroll offset and hide the message headers.
+  field.selectionStart = 0;
+  field.selectionEnd = 0;
+  field.scrollTop = 0;
+  field.scrollLeft = 0;
+  $("spam-test-result").classList.add("hidden");
 }
 
 /* ==========================================================================

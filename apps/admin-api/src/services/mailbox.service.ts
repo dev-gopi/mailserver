@@ -313,9 +313,10 @@ export class MailboxService {
       }
     }
 
-    const mailHost = domain.toLowerCase() === settings.mail_domain.toLowerCase()
-      ? settings.mail_hostname
-      : `mail.${domain}`;
+    // Client-facing settings must always use the selected mailbox domain's
+    // public host. The server-level hostname may be an internal bootstrap
+    // value and must never be shown to an email client.
+    const mailHost = `mail.${domain}`;
 
     const xmlDomain = this.escapeXml(domain);
     const xmlEmail = this.escapeXml(email);

@@ -69,12 +69,11 @@ export class DomainService {
       ? settings.mail_public_ip.split("/")[0].trim()
       : null;
 
-    // Per-domain mail host:
-    // If the domain is the server's primary domain, use settings.mail_hostname (e.g. mail.example.com).
-    // For any custom/tenant domain, the mail host is mail.<domain.name>.
-    const domainMailHost = domain.name.toLowerCase() === settings.mail_domain.toLowerCase()
-      ? settings.mail_hostname
-      : `mail.${domain.name}`;
+    // Each hosted domain advertises its own public mail hostname.  Do not use
+    // the cluster's configured hostname here: it can be an internal name or
+    // belong to another primary domain, which would produce unusable DNS and
+    // client-setup instructions.
+    const domainMailHost = `mail.${domain.name}`;
 
     // Clean any /32 from SPF record
     const cleanSpf = (settings.spf_record || "v=spf1 mx ~all").replace(/\/32\b/g, "");
